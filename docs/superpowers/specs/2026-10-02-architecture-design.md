@@ -18,6 +18,8 @@ Chrome opens a web app served by the home server (through Cloudflare). The app:
 - Repo size: up to ~20k files.
 - Stack: C# / .NET 10. UI — Blazor WebAssembly.
 - Claude: the existing Claude Code CLI on the home server (subscription, plugins, MCP, `~/.claude` — used as-is).
+- Home server: Windows first. Must work after power-on **without anyone logging into Windows**. macOS (e.g. a Mac mini running a local model) later — Server is plain cross-platform .NET.
+- Model-agnostic: the same setup must work with a local model (Qwen via Ollama, Gemma via LM Studio, …) instead of Anthropic's API.
 
 ## Decisions
 
@@ -25,7 +27,13 @@ Chrome opens a web app served by the home server (through Cloudflare). The app:
 |---|---|---|
 | Data direction | Source of truth is the folder on the client machine. Server keeps a mirror. | The code lives there. |
 | Transport | WSS (SignalR) through Cloudflare Tunnel + Cloudflare Access. One hub, one channel: `Envelope { Type, Payload, CorrelationId }` routed by `Type` to handlers; client side behind `ITransport`. | TCP/443 passes corporate proxies; the tunnel handles NAT. WebRTC later, behind the same interface. |
-| Running Claude | Spawn `claude -p --output-format stream-json --verbose` in the mirror folder; multi-turn via `--resume <sessionId>`. | Zero config duplication, works with a subscription. |
+| Running Claude | Spawn `claude -p --output-format stream-json --verbose` in the mirror folder; multi-turn via `--resume <sessionId>`. Command, args and extra env come from config (`Agent:Command`, `Agent:Args`, `Agent:Env`). | Zero config duplication, works with a subscription. |
+| Local models | Configuration only: `Agent:Env` sets `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_MODEL` so Claude Code talks to a local Anthropic-compatible endpoint (Ollama, LM Studio, …); for OpenAI-only servers put a LiteLLM proxy in front. A different agent CLI later goes behind an `IAgentRunner` seam. | No second runner to build or maintain. |
+| Hosting on the home server | Server runs as an OS service with auto-start (Windows Service now; launchd/systemd later). **Runs under the user's own account**, not LocalSystem, so `claude` sees the user's `~/.claude` login, plugins and MCP. Logs go to files (`%ProgramData%\AiChromeProxy\logs` on Windows). | Works after power-on with nobody logged in. |
+| Tray app | Avalonia (cross-platform) tray: install/uninstall/start/stop the service (asks for the account password, grants "Log on as a service"), shows status, browses current and historical logs, opens the UI. OS-specific service management behind an interface. | One UI for Windows now and macOS/Linux later. |
+| Privacy modes | (1) Cloud model — code goes to the model provider. (2) Fully local — model on the home server, code must not leave the user's machines. **Cloudflare Tunnel terminates TLS at Cloudflare's edge**, so in mode 2 transit through it is not private. Fully-local mode therefore needs end-to-end encryption: WebRTC DataChannel (DTLS browser↔server; Cloudflare only for signaling/TURN, sees ciphertext) or app-level encryption of `Envelope`s over WSS. Both behind `ITransport`; not in MVP. | Honest threat model; the skeleton needs no change. |
+| Releases & install | Tag `v*` → GitHub Actions builds a GitHub Release with a single installer (`Setup.exe`, Velopack: install + auto-update, cross-platform later) containing Server + tray. A developer installs everything on the home server with that one setup; the tray's first-run wizard then: checks `claude` CLI (or a local-model endpoint), installs `cloudflared` and creates the tunnel (`cloudflared tunnel login` / `tunnel create` / `route dns`), collects Access team domain + AUD, asks the account password and installs the service. Persistent config lives in `%ProgramData%\AiChromeProxy\`. | One-setup install for a regular developer. |
+| Rust | Not used now. Candidates later: rsync-style block deltas in the browser (Rust→WASM, e.g. `fast_rsync`) if large-file sync becomes a bottleneck; a WebRTC sidecar (`webrtc-rs`). Both sit behind existing seams (SyncEngine, `ITransport`). | A second toolchain costs more than it buys today; hashing uses `crypto.subtle`. |
 | Conflicts | Auto-write Claude's edits to the client + hash-guard: write only if the file's current hash == `baseHash`. Otherwise show a conflict in the UI and leave the file untouched. | Speed without losing manual edits. |
 | Change detection on the client | `FileSystemObserver` where available + periodic full mtime scan as a safety net. | A full scan of <20k files is cheap. |
 | Blazor model | WebAssembly, hosted by the ASP.NET Core server. | Sync runs in the browser → C# only via WASM. UI doesn't round-trip home on every click. |
@@ -108,15 +116,18 @@ flowchart LR
 
 Each sub-project: its own spec → plan → SDD.
 
-1. **Skeleton + transport** ([spec](2026-10-02-skeleton-transport-design.md)) — 4-project solution (StyleCop via `Directory.Build.props`), Server hosts Client, single SignalR hub with envelope routing + client `ITransport`, Cloudflare Access JWT check, CI (build → test → coverage ≥ 85% via `coverlet.runsettings`), cloudflared + Access setup guide.
-2. **Sync** — fsaccess.js, SyncEngine, sync handlers, mirror, FileWatcher, hash-guard, conflict UI.
-3. **Claude chat** — ClaudeRunner, chat handlers, streaming, markdown + mermaid.
-4. **Code navigator** — tree, Monaco (read-only), highlighting via `path:line` / `path#Symbol`.
+1. **Skeleton + transport** ([spec](2026-10-02-skeleton-transport-design.md)) — 4-project solution (StyleCop via `Directory.Build.props`), Server hosts Client, single SignalR hub with envelope routing + client `ITransport`, Cloudflare Access JWT check, CI (build → test → coverage ≥ 85% via coverlet.MTP threshold), cloudflared + Access setup guide.
+2. **Windows host** — Server as a Windows Service under the user's account (auto-start, no login needed), file logging, persistent config in `%ProgramData%`, Avalonia tray: first-run wizard, install/uninstall/start/stop, status, log viewer (current + historical), open UI; Velopack `Setup.exe` built by a tag-triggered release workflow.
+3. **Sync** — fsaccess.js, SyncEngine, sync handlers, mirror, FileWatcher, hash-guard, conflict UI.
+4. **Claude chat** — ClaudeRunner (configurable `Agent:*`, local-model ready), chat handlers, streaming, markdown + mermaid.
+5. **Code navigator** — tree, Monaco (read-only), highlighting via `path:line` / `path#Symbol`.
 
 ## Out of scope (MVP)
 
-- WebRTC transport (`ITransport` seam kept).
+- WebRTC transport / end-to-end encryption for fully-local privacy mode (`ITransport` seam kept).
 - VS Code / Visual Studio extension.
 - Manual editing in Monaco.
 - Multiple repos at once.
 - Custom "ui" MCP server.
+- macOS/Linux service install (launchd/systemd) — after Windows host, behind the same interface.
+- Docker image.

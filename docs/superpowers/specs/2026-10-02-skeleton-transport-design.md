@@ -94,7 +94,7 @@ Configuration:
 
 Fail closed: outside Development, if `Enabled` is false or `TeamDomain`/`Audience` is empty, the Server refuses to start with a clear error.
 
-Secrets: none — TeamDomain and AUD are not secret, but they are per-user, so they live in `appsettings.Local.json` or env (`CloudflareAccess__TeamDomain`, `CloudflareAccess__Audience`), never in committed `appsettings.json`.
+Secrets: none — TeamDomain and AUD are not secret, but they are per-user, so they come from environment variables (`CloudflareAccess__TeamDomain`, `CloudflareAccess__Audience`), never from committed `appsettings.json`. No `appsettings.Local.json` loading: a local file would silently override test settings; the Windows host sub-project defines the persistent config location.
 
 ## UI
 
@@ -104,17 +104,22 @@ One page (`/`):
 
 No styling work, no layout beyond that.
 
+## Tooling (verified on a prototype)
+
+- `global.json`: SDK `10.0.100` with `rollForward: latestFeature`; `"test": { "runner": "Microsoft.Testing.Platform" }` — required by xunit v3 on the .NET 10 SDK.
+- Latest stable packages at the time of writing: ASP.NET Core / SignalR `10.0.x`, `Microsoft.IdentityModel.JsonWebTokens` `8.x`, `xunit.v3` `4.x`, `Microsoft.NET.Test.Sdk` `18.x`, `coverlet.MTP` `10.x`.
+- `StyleCop.Analyzers` `1.2.0-beta.556` (1.1.118 does not understand records / target-typed `new`). `SA1412` (BOM) set to `None` — repo is UTF-8 without BOM.
+- Code style enforced by the ruleset: no `this.` prefix (`SX1101`), private fields `_camelCase`.
+- Coverage: `coverlet.MTP` configured in `tests/AiChromeProxy.Tests/testconfig.json` (include `[AiChromeProxy.*]*`, exclude the test assembly, exclude by file `**/Program.cs,**/*.razor`, cobertura). Threshold enforced by coverlet itself. `coverlet.runsettings` (VSTest-only) is deleted.
+
 ## CI
 
 `.github/workflows/ci.yml`, on push and pull_request, `windows-latest`:
 
-1. `actions/setup-dotnet` 10.x.
+1. `actions/setup-dotnet` with `global-json-file: global.json`.
 2. `dotnet restore`.
 3. `dotnet build -c Release --no-restore` (StyleCop `Error` rules fail the build).
-4. `dotnet test -c Release --no-build --collect:"XPlat Code Coverage" --settings coverlet.runsettings`.
-5. Gate: parse `line-rate` from `coverage.cobertura.xml`; fail if < 0.85.
-
-Coverage excludes `**/Program.cs` and `**/*.razor` (UI checked manually; the gate counts logic). Add the `.razor` exclusion to `coverlet.runsettings` and verify the gate actually excludes generated component code.
+4. `dotnet test --project tests/AiChromeProxy.Tests -c Release --no-build --coverlet --coverlet-threshold 85 --coverlet-threshold-type line --coverlet-threshold-stat Total` — non-zero exit when line coverage < 85%.
 
 ## Testing
 
@@ -128,7 +133,7 @@ Coverage excludes `**/Program.cs` and `**/*.razor` (UI checked manually; the gat
 | Middleware: wrong `aud`, wrong `iss`, expired, foreign key, missing token → 401 | rejection paths |
 | Middleware: token in `CF_Authorization` cookie only → passes | cookie fallback |
 | Middleware: Development + `Enabled=false` → passes without token | dev mode |
-| Startup: non-Development + empty config → fails to start | fail closed |
+| Startup: non-Development + empty config → fails to start (test sets empty values explicitly so real env vars on the machine can't mask it) | fail closed |
 | Hub via `WebApplicationFactory` + SignalR client over WebSocket: `ping` → `pong` | end-to-end transport |
 | Hub without token (Access enabled) → connection rejected | hub is protected |
 

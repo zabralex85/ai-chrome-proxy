@@ -8,7 +8,7 @@ Open source (MIT). Everything in the repo is in English. No personal paths, doma
 
 ## Stack
 
-- .NET 10 (LTS), C#, `<Nullable>enable</Nullable>`, `<ImplicitUsings>enable</ImplicitUsings>`.
+- .NET 10 (LTS, latest stable) and latest stable packages, C#, `<Nullable>enable</Nullable>`, `<ImplicitUsings>enable</ImplicitUsings>`.
 - `Client` — Blazor WebAssembly, `Server` — ASP.NET Core (hosts Client, one SignalR hub routing `Envelope` by `Type`), `Shared` — protocol DTOs, `Tests` — xUnit.
 - JS only where C# can't: `fsaccess.js` (File System Access API), Monaco, mermaid.
 
@@ -24,11 +24,11 @@ Sub-projects in order: skeleton+transport → sync → Claude chat → code navi
 
 - All files are UTF-8 without BOM (enforced via `.editorconfig`). In PowerShell 5.1 pass `-Encoding utf8` explicitly when writing files.
 - Search with ripgrep (`rg`), not `find` / `git grep` / `Select-String` — the primary dev environment is Windows.
-- Style — `.editorconfig` + `StyleCop.ruleset` + `stylecop.json` (tabs, CRLF). StyleCop is applied to all projects via `Directory.Build.props`; rules with `Action="Error"` fail the build.
+- Style — `.editorconfig` + `StyleCop.ruleset` + `stylecop.json` (tabs, CRLF, no `this.` prefix, private fields `_camelCase`). StyleCop is applied to all projects via `Directory.Build.props`; rules with `Action="Error"` fail the build.
 - Interfaces prefixed with `I`; async methods suffixed `Async`, returning `Task`/`Task<T>`.
 - Logging — `ILogger<T>` via DI.
 - Pure logic (SyncEngine, manifest diff, hash-guard, path normalization, stream-json parser) has no browser/IO dependencies and is covered by xUnit.
-- Never commit secrets: `appsettings.json` holds non-secret defaults only; secrets go to env or `appsettings.Local.json` / `appsettings.Development.json` (gitignored).
+- Never commit secrets: `appsettings.json` holds non-secret defaults only; per-machine values and secrets come from environment variables.
 
 ## Security
 
@@ -37,12 +37,14 @@ Sub-projects in order: skeleton+transport → sync → Claude chat → code navi
 
 ## Tests and coverage
 
+xunit v3 on Microsoft.Testing.Platform (opted in via `global.json`), coverage via `coverlet.MTP` (`tests/AiChromeProxy.Tests/testconfig.json`).
+
 ```bash
 dotnet build -c Release
-dotnet test --collect:"XPlat Code Coverage" --settings coverlet.runsettings
+dotnet test --project tests/AiChromeProxy.Tests -c Release --no-build --coverlet --coverlet-threshold 85 --coverlet-threshold-type line --coverlet-threshold-stat Total
 ```
 
-Gate: `>= 85%` line coverage (`line-rate` in `coverage.cobertura.xml`). Gate failed — add tests, don't lower the threshold. Test failed — fix it, don't disable it.
+Gate: `>= 85%` line coverage (coverlet exits non-zero below it). Gate failed — add tests, don't lower the threshold. Test failed — fix it, don't disable it.
 
 ## PR workflow
 
