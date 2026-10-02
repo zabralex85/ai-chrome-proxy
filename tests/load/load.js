@@ -15,6 +15,7 @@ export const options = {
 	thresholds: {
 		pong_latency: ['p(95)<500'],
 		ping_errors: ['rate<0.01'],
+		checks: ['rate>0.99'],
 	},
 };
 

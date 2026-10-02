@@ -48,10 +48,13 @@ export function pingSession(seconds) {
 			}
 
 			pending.delete(envelope.correlationId);
-			pongLatency.add(Date.now() - sentAt);
 			const ok = check(envelope, {
 				'pong with serverTime': (e) => e.type === 'pong' && typeof e.payload.serverTime === 'string',
 			});
+			if (ok) {
+				pongLatency.add(Date.now() - sentAt);
+			}
+
 			pingErrors.add(!ok);
 			if (draining && pending.size === 0) {
 				socket.close();

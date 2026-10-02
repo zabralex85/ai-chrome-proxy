@@ -7,6 +7,7 @@ export const options = {
 	duration: '30s',
 	thresholds: {
 		pong_latency: ['p(95)<200'],
+		ping_errors: ['rate<0.01'],
 		checks: ['rate>0.99'],
 	},
 };
