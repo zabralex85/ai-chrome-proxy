@@ -14,6 +14,8 @@ jobs:
     env:
       # Keep in step with the Velopack package version in src/AiChromeProxy.Tray.
       VPK_VERSION: 1.2.161
+      # Passed through the environment, never interpolated into a script: a tag name is attacker-chosen text.
+      TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v5
 
@@ -24,8 +26,8 @@ jobs:
       - name: Version from tag (v1.2.3 -> 1.2.3)
         shell: pwsh
         run: |
-          $version = "${{ github.ref_name }}".TrimStart("v")
-          "VERSION=$version" >> $env:GITHUB_ENV
+          if ($env:TAG -cnotmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$') { throw "Tag '$env:TAG' is not vMAJOR.MINOR.PATCH[-suffix]." }
+          "VERSION=$($env:TAG.Substring(1))" >> $env:GITHUB_ENV
 
       - name: Restore
         run: dotnet restore
@@ -39,16 +41,22 @@ jobs:
       # Package layout: the tray at the root (main exe), the Server in server\ (the service binary path).
       # One command per step: a multi-line pwsh step only fails on the last command's exit code.
       - name: Publish Tray (self-contained, win-x64)
-        run: dotnet publish src/AiChromeProxy.Tray -c Release -r win-x64 --self-contained -p:Version=${{ env.VERSION }} -p:UpdateRepository=${{ github.server_url }}/${{ github.repository }} -o publish
+        run: dotnet publish src/AiChromeProxy.Tray -c Release -r win-x64 --self-contained -p:Version=$env:VERSION -p:UpdateRepository=$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY -o publish
 
       - name: Publish Server into server\ (self-contained, win-x64)
-        run: dotnet publish src/AiChromeProxy.Server -c Release -r win-x64 --self-contained -p:Version=${{ env.VERSION }} -o publish/server
+        run: dotnet publish src/AiChromeProxy.Server -c Release -r win-x64 --self-contained -p:Version=$env:VERSION -o publish/server
 
       - name: Install vpk
-        run: dotnet tool install -g vpk --version ${{ env.VPK_VERSION }}
+        run: dotnet tool install -g vpk --version $env:VPK_VERSION
 
       - name: Pack (Setup.exe + update packages)
-        run: vpk pack --packId AiChromeProxy --packVersion ${{ env.VERSION }} --runtime win-x64 --packDir publish --mainExe AiChromeProxy.Tray.exe --packTitle "AI Chrome Proxy" --packAuthors "AI Chrome Proxy contributors" --icon src/AiChromeProxy.Tray/Assets/tray.ico --outputDir releases
+        run: vpk pack --packId AiChromeProxy --packVersion $env:VERSION --runtime win-x64 --packDir publish --mainExe AiChromeProxy.Tray.exe --packTitle "AI Chrome Proxy" --packAuthors "AI Chrome Proxy contributors" --icon src/AiChromeProxy.Tray/Assets/tray.ico --outputDir releases
 
+      # A -suffix tag (v0.2.0-rc1) becomes a GitHub pre-release, which installed trays (stable channel) never offer.
       - name: Upload GitHub Release
-        run: vpk upload github --repoUrl ${{ github.server_url }}/${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }} --publish --releaseName "AI Chrome Proxy ${{ github.ref_name }}" --tag ${{ github.ref_name }} --outputDir releases
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $pre = @(if ($env:VERSION.Contains('-')) { '--pre' })
+          vpk upload github --repoUrl "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY" --token $env:GITHUB_TOKEN --publish --releaseName "AI Chrome Proxy $env:TAG" --tag $env:TAG --outputDir releases @pre
