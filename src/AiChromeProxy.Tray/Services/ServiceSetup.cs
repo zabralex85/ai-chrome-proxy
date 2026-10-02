@@ -63,8 +63,9 @@ public static class ServiceSetup
 	/// <summary>As above, refusing a root or <c>logs</c> that is a link or was created by an untrusted user (<c>%ProgramData%</c> lets standard users pre-create folders).</summary>
 	public static void PrepareDataDirectory(DataDirectory dataDir, SecurityIdentifier account, SecurityIdentifier controlUser)
 	{
-		EnsureDataDirectorySafe(dataDir, account, controlUser);
-		Directory.CreateDirectory(dataDir.Logs);
+		// Both handles stay open until the ACL is written, so neither folder can be swapped for a link after it was checked.
+		using var rootGuard = DataDirectoryGuard.Acquire(dataDir.Root);
+		using var logsGuard = DataDirectoryGuard.Acquire(dataDir.Logs);
 		EnsureDataDirectorySafe(dataDir, account, controlUser);
 		var root = new DirectoryInfo(dataDir.Root);
 		var security = root.GetAccessControl();

@@ -89,7 +89,6 @@ public sealed class ServiceSetupTests
 		}
 		finally
 		{
-			Directory.Delete(dataDir.Root, recursive: true);
 		}
 	}
 
@@ -129,7 +128,6 @@ public sealed class ServiceSetupTests
 		Assert.Equal(0, AdminCommand.RunUninstall(service, dataDir));
 		Assert.Equal(["uninstall"], service.Calls);
 		Assert.Equal(1, AdminCommand.RunUninstall(new FakeServiceControl { FailUninstall = new InvalidOperationException("access denied") }, dataDir));
-		Directory.Delete(dataDir.Root, recursive: true);
 	}
 
 	[Fact]

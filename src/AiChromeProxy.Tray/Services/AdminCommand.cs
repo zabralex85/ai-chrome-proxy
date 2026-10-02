@@ -33,7 +33,7 @@ public static class AdminCommand
 	/// <returns>Process exit code: 0 on success.</returns>
 	public static int RunUninstall(IServiceControl service) => RunUninstall(service, DataDirectory.FromEnvironment());
 
-	/// <summary>As above; on failure the reason is also written to <c>&lt;DataDir&gt;dmin-last-error.txt</c> (the headless instance has no UI).</summary>
+	/// <summary>As above; on failure the reason is also written to <c>&lt;DataDir&gt;\admin-last-error.txt</c> (the headless instance has no UI).</summary>
 	public static int RunUninstall(IServiceControl service, DataDirectory dataDir)
 	{
 		try
@@ -73,15 +73,21 @@ public static class AdminCommand
 	{
 		try
 		{
-			// Never follow a pre-planted link with elevated rights.
+			// Elevated write: only into a root that is not a link and is owned by Administrators/SYSTEM, never through a planted link.
 			var root = new DirectoryInfo(dataDir.Root);
-			if (root.Exists && (root.Attributes.HasFlag(FileAttributes.ReparsePoint) || root.LinkTarget is not null))
+			if (!root.Exists
+				|| root.Attributes.HasFlag(FileAttributes.ReparsePoint)
+				|| root.LinkTarget is not null
+				|| !ServiceSetup.IsTrustedOwner(root.GetAccessControl().GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier))
 			{
 				return;
 			}
 
-			Directory.CreateDirectory(dataDir.Root);
-			File.WriteAllText(Path.Combine(dataDir.Root, LastErrorFile), ex.InnerException?.Message ?? ex.Message);
+			var path = Path.Combine(dataDir.Root, LastErrorFile);
+			File.Delete(path); // removes a link at the file path itself, not its target
+			using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+			using var writer = new StreamWriter(stream);
+			writer.Write(ex.InnerException?.Message ?? ex.Message);
 		}
 		catch (Exception)
 		{
