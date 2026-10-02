@@ -68,7 +68,7 @@ public partial class App : Avalonia.Application
 		var dataDir = DataDirectory.FromEnvironment();
 		var service = new WindowsServiceControl();
 		var repository = typeof(App).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == "UpdateRepository")?.Value;
-		var updates = new UpdateOrchestrator(new VelopackUpdateSource(repository), service, Path.Combine(Path.GetTempPath(), "AiChromeProxy.update-pending"));
+		var updates = new UpdateOrchestrator(new VelopackUpdateSource(repository), service, UpdateOrchestrator.DefaultPendingMarker);
 		var vm = new TrayViewModel(service, AdminCommand.RunElevatedAsync, updates);
 		var update = new NativeMenuItem { Command = vm.UpdateCommand };
 		var status = new NativeMenuItem { IsEnabled = false };

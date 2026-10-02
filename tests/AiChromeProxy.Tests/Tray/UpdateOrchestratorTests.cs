@@ -52,6 +52,33 @@ public sealed class UpdateOrchestratorTests : IDisposable
 		Assert.False(File.Exists(_marker));
 	}
 
+	[Fact]
+	public async Task ApplyFails_RestartFails_ApplyErrorRethrown_MarkerDeleted()
+	{
+		var applyError = new InvalidOperationException("locked");
+		_source.FailApply = applyError;
+		_service.FailStart = new InvalidOperationException("timeout");
+
+		var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => _updates.UpdateAsync(TestContext.Current.CancellationToken));
+
+		Assert.Same(applyError, thrown);
+		Assert.Equal(["download", "stop", "apply", "start"], _service.Calls);
+		Assert.False(File.Exists(_marker));
+	}
+
+	[Fact]
+	public async Task StopFails_NotApplied_StartAttempted_MarkerDeleted()
+	{
+		var stopError = new InvalidOperationException("access denied");
+		_service.FailStop = stopError;
+
+		var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => _updates.UpdateAsync(TestContext.Current.CancellationToken));
+
+		Assert.Same(stopError, thrown);
+		Assert.Equal(["download", "stop", "start"], _service.Calls);
+		Assert.False(File.Exists(_marker));
+	}
+
 	[Theory]
 	[InlineData(ServiceState.Stopped)]
 	[InlineData(ServiceState.NotInstalled)]
@@ -162,25 +189,33 @@ public sealed class UpdateOrchestratorTests : IDisposable
 	}
 
 	[Theory]
-	[InlineData(ServiceState.Stopped, true)]
-	[InlineData(ServiceState.Running, false)]
-	[InlineData(ServiceState.NotInstalled, false)]
-	public void AfterUpdateHook_StartsStoppedService(ServiceState state, bool started)
+	[InlineData(true, ServiceState.Stopped, true)]
+	[InlineData(false, ServiceState.Stopped, false)]
+	[InlineData(true, ServiceState.Running, false)]
+	[InlineData(true, ServiceState.NotInstalled, false)]
+	public async Task AfterUpdateHook_StartsServiceOnlyWhenTheUpdateStoppedIt(bool marker, ServiceState state, bool started)
 	{
+		if (marker)
+		{
+			await File.WriteAllTextAsync(_marker, string.Empty, TestContext.Current.CancellationToken);
+		}
+
 		_service.State = state;
 
-		VelopackHooks.AfterUpdate(_service);
+		VelopackHooks.AfterUpdate(_service, _marker);
 
 		Assert.Equal(started ? ["start"] : [], _service.Calls);
+		Assert.Equal(marker, File.Exists(_marker));
 	}
 
 	[Fact]
-	public void AfterUpdateHook_StartFails_DoesNotThrow()
+	public async Task AfterUpdateHook_StartFails_DoesNotThrow()
 	{
+		await File.WriteAllTextAsync(_marker, string.Empty, TestContext.Current.CancellationToken);
 		_service.State = ServiceState.Stopped;
 		_service.FailStart = new InvalidOperationException("denied");
 
-		VelopackHooks.AfterUpdate(_service);
+		VelopackHooks.AfterUpdate(_service, _marker);
 
 		Assert.Equal(["start"], _service.Calls);
 	}

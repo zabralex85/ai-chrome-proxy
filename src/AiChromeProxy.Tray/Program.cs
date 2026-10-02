@@ -14,7 +14,7 @@ internal static class Program
 		// Must run first: handles Velopack's --veloapp-* hook invocations and exits.
 		VelopackApp.Build()
 			.SetAutoApplyOnStartup(false) // updates are applied only by UpdateOrchestrator, after it stopped the service
-			.OnAfterUpdateFastCallback(_ => VelopackHooks.AfterUpdate(new WindowsServiceControl()))
+			.OnAfterUpdateFastCallback(_ => VelopackHooks.AfterUpdate(new WindowsServiceControl(), UpdateOrchestrator.DefaultPendingMarker))
 			.OnBeforeUninstallFastCallback(_ => VelopackHooks.BeforeUninstall(new WindowsServiceControl(), AdminCommand.RunElevatedAsync, new RegistryAutoStart()))
 			.Run();
 

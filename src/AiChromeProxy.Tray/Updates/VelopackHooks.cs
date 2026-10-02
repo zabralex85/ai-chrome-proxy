@@ -8,12 +8,15 @@ public static class VelopackHooks
 	private static readonly TimeSpan AfterUpdateWait = TimeSpan.FromSeconds(10);
 	private static readonly TimeSpan BeforeUninstallWait = TimeSpan.FromSeconds(25);
 
-	/// <summary>The new version is in place: start the service the update stopped (the SCM finishes starting it even if this process is cut off).</summary>
-	public static void AfterUpdate(IServiceControl service)
+	/// <summary>
+	/// The new version is in place: start the service if the update stopped it (<paramref name="pendingMarker"/> exists; a service the user
+	/// stopped stays stopped). The SCM finishes starting it even if this process is cut off; the marker is left for the restarted tray to clear.
+	/// </summary>
+	public static void AfterUpdate(IServiceControl service, string pendingMarker)
 	{
 		try
 		{
-			if (service.GetState() == ServiceState.Stopped)
+			if (File.Exists(pendingMarker) && service.GetState() == ServiceState.Stopped)
 			{
 				service.StartAsync(CancellationToken.None).Wait(AfterUpdateWait);
 			}

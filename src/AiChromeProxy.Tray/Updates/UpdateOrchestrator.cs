@@ -4,12 +4,15 @@ namespace AiChromeProxy.Tray.Updates;
 
 /// <summary>
 /// Check at start and every 24 h; update = download, stop the service (its exe lives in the folder being replaced), apply and restart the tray.
-/// A failed download leaves everything untouched; a failed apply starts the service again.
+/// A failed download leaves everything untouched; a failed stop or apply starts the service again and rethrows that failure.
 /// </summary>
 /// <param name="pendingMarker">File recording "service stopped for an update", so the next tray start resumes it if Update.exe failed out of process.</param>
 public sealed class UpdateOrchestrator(IUpdateSource source, IServiceControl service, string pendingMarker)
 {
 	public static readonly TimeSpan CheckInterval = TimeSpan.FromHours(24);
+
+	/// <summary>Per user (the tray and Velopack's hooks run as the same user).</summary>
+	public static string DefaultPendingMarker => Path.Combine(Path.GetTempPath(), "AiChromeProxy.update-pending");
 
 	public string? AvailableVersion { get; private set; }
 
@@ -41,19 +44,30 @@ public sealed class UpdateOrchestrator(IUpdateSource source, IServiceControl ser
 		if (wasRunning)
 		{
 			await File.WriteAllTextAsync(pendingMarker, string.Empty, ct);
-			await service.StopAsync(ct);
 		}
 
 		try
 		{
+			if (wasRunning)
+			{
+				await service.StopAsync(ct);
+			}
+
 			source.ApplyAndRestart();
 		}
 		catch
 		{
 			if (wasRunning)
 			{
-				await service.StartAsync(CancellationToken.None);
 				File.Delete(pendingMarker);
+				try
+				{
+					await service.StartAsync(CancellationToken.None);
+				}
+				catch (Exception)
+				{
+					// The stop or apply error is the one to show; the tray status shows the service stopped.
+				}
 			}
 
 			throw;
