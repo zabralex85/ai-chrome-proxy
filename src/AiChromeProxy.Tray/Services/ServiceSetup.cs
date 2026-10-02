@@ -7,10 +7,10 @@ namespace AiChromeProxy.Tray.Services;
 /// <summary>The decisions behind service installation, kept out of the P/Invoke code so they are unit-tested.</summary>
 public static class ServiceSetup
 {
-	/// <summary>Inheritance of the rule on the data root.</summary>
-	public const InheritanceFlags Inherit = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
-
 	public const string DisplayName = "AI Chrome Proxy";
+
+	/// <summary><c>NT SERVICE\TrustedInstaller</c>.</summary>
+	public const string TrustedInstallerSid = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
 
 	/// <summary>SERVICE_QUERY_CONFIG | SERVICE_QUERY_STATUS | SERVICE_START | SERVICE_STOP: tray Start/Stop/Restart without UAC.</summary>
 	public const int UserControlRights = 0x0001 | 0x0004 | 0x0010 | 0x0020;
@@ -60,25 +60,30 @@ public static class ServiceSetup
 		return bytes;
 	}
 
-	/// <summary>Creates <c>&lt;DataDir&gt;</c> and <c>logs</c>; the root grants the service account inheritable Modify (written without touching existing children).</summary>
+	/// <summary>Creates <c>&lt;DataDir&gt;</c> and <c>logs</c> with the <see cref="DataDirectoryDacl"/> (existing children are not rewritten).</summary>
 	public static void PrepareDataDirectory(DataDirectory dataDir, SecurityIdentifier account) => PrepareDataDirectory(dataDir, account, account);
 
-	/// <summary>As above, refusing a root or <c>logs</c> that is a link or was created by an untrusted user (<c>%ProgramData%</c> lets standard users pre-create folders).</summary>
+	/// <summary>
+	/// As above, refusing a root or <c>logs</c> that is a link, and a root or <c>logs</c> (or an entry in them) created by an untrusted user:
+	/// <c>%ProgramData%</c> lets standard users pre-create folders and files.
+	/// </summary>
 	public static void PrepareDataDirectory(DataDirectory dataDir, SecurityIdentifier account, SecurityIdentifier controlUser)
 	{
-		// Root first: nothing is created inside it before it was checked. The handle stays open until the ACL is written.
+		var dacl = DataDirectoryDacl(account);
+
+		// Root first: nothing is created inside it before it was checked. The handle stays open until the DACL is written.
 		using var rootGuard = DataDirectoryGuard.Acquire(dataDir.Root);
 		EnsureDirectorySafe(dataDir.Root, account, controlUser);
-		var security = rootGuard.GetSecurity();
-		if (!HasModifyGrant(security, account))
-		{
-			security.AddAccessRule(new FileSystemAccessRule(account, FileSystemRights.Modify, Inherit, PropagationFlags.None, AccessControlType.Allow));
-			rootGuard.SetDacl(security);
-		}
+		WriteDacl(rootGuard, dacl);
 
-		// Created after the DACL is set, so it inherits the rule and no ACL is written on it (or on any pre-existing child).
+		// Checked after the DACL: from now on only SYSTEM, Administrators and the account can add entries, so the check cannot be raced.
+		EnsureEntriesTrusted(dataDir.Root, account, controlUser);
+
+		// A new logs inherits the set; an existing one (it may carry the inherited %ProgramData% ACEs) gets it written. Its files are left as they are.
 		using var logsGuard = DataDirectoryGuard.Acquire(dataDir.Logs);
 		EnsureDirectorySafe(dataDir.Logs, account, controlUser);
+		WriteDacl(logsGuard, dacl);
+		EnsureEntriesTrusted(dataDir.Logs, account, controlUser);
 
 		// The held handles share WRITE, so either could in theory be turned into a junction in place meanwhile: re-check.
 		foreach (var path in new[] { dataDir.Root, dataDir.Logs })
@@ -90,18 +95,42 @@ public static class ServiceSetup
 		}
 	}
 
-	/// <summary>Throws when <c>&lt;DataDir&gt;</c> or its <c>logs</c> already exists as a link or with an owner other than Administrators, SYSTEM, the service account or the control user.</summary>
+	/// <summary>
+	/// The protected DACL (no ACEs inherited from <c>%ProgramData%</c>) of the root and <c>logs</c>, as normalized SDDL: SYSTEM and Administrators
+	/// Full Control, the service account Modify, all inherited by new children; nothing for Users, Authenticated Users or Everyone.
+	/// </summary>
+	public static string DataDirectoryDacl(SecurityIdentifier account) =>
+		new RawSecurityDescriptor($"D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;{account.Value})").GetSddlForm(AccessControlSections.Access);
+
+	/// <summary>Throws when <c>&lt;DataDir&gt;</c> or its <c>logs</c> already exists as a link, or it or an entry in it has an untrusted owner (see <see cref="IsTrustedOwner"/>).</summary>
 	public static void EnsureDataDirectorySafe(DataDirectory dataDir, SecurityIdentifier account, SecurityIdentifier controlUser)
 	{
 		foreach (var path in new[] { dataDir.Root, dataDir.Logs })
 		{
 			EnsureDirectorySafe(path, account, controlUser);
+			if (Directory.Exists(path))
+			{
+				EnsureEntriesTrusted(path, account, controlUser);
+			}
 		}
 	}
 
+	/// <summary>Throws for the first path whose owner (read by <paramref name="ownerOf"/>) is not trusted: anyone else could still rewrite it.</summary>
+	public static void EnsureOwnersTrusted(IEnumerable<string> paths, Func<string, SecurityIdentifier?> ownerOf, params SecurityIdentifier[] trusted)
+	{
+		foreach (var path in paths)
+		{
+			if (!IsTrustedOwner(ownerOf(path), trusted))
+			{
+				throw new InvalidOperationException($"{path} was created by another user; delete it and retry.");
+			}
+		}
+	}
+
+	/// <summary>Administrators, SYSTEM, TrustedInstaller or one of <paramref name="trusted"/> (the service account).</summary>
 	public static bool IsTrustedOwner(SecurityIdentifier? owner, params SecurityIdentifier[] trusted) =>
 		owner is not null
-		&& (owner.IsWellKnown(WellKnownSidType.BuiltinAdministratorsSid) || owner.IsWellKnown(WellKnownSidType.LocalSystemSid) || trusted.Contains(owner));
+		&& (owner.IsWellKnown(WellKnownSidType.BuiltinAdministratorsSid) || owner.IsWellKnown(WellKnownSidType.LocalSystemSid) || owner.Value == TrustedInstallerSid || trusted.Contains(owner));
 
 	/// <summary>The service binary lives in the tray user's writable profile: running it as anyone else would hand that account to the user.</summary>
 	public static void EnsureServiceAccountIsControlUser(SecurityIdentifier account, SecurityIdentifier controlUser)
@@ -149,10 +178,15 @@ public static class ServiceSetup
 		}
 	}
 
-	private static bool HasModifyGrant(DirectorySecurity security, SecurityIdentifier account) =>
-		security.GetAccessRules(true, false, typeof(SecurityIdentifier)).Cast<FileSystemAccessRule>().Any(r =>
-			r.IdentityReference == account
-			&& r.AccessControlType == AccessControlType.Allow
-			&& (r.FileSystemRights & FileSystemRights.Modify) == FileSystemRights.Modify
-			&& r.InheritanceFlags == Inherit);
+	private static void EnsureEntriesTrusted(string directory, SecurityIdentifier account, SecurityIdentifier controlUser) =>
+		EnsureOwnersTrusted(Directory.EnumerateFileSystemEntries(directory), DataDirectoryGuard.OwnerOf, account, controlUser);
+
+	/// <summary>Writes the DACL only when the stored one differs in any way (protected flag, ACE, rights, inheritance or propagation flags).</summary>
+	private static void WriteDacl(DataDirectoryGuard guard, string dacl)
+	{
+		if (guard.GetDaclSddl() != dacl)
+		{
+			guard.SetDacl(dacl);
+		}
+	}
 }

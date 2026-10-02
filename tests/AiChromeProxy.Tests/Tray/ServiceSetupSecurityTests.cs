@@ -24,6 +24,7 @@ public sealed class ServiceSetupSecurityTests : IDisposable
 	{
 		Assert.True(ServiceSetup.IsTrustedOwner(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null)));
 		Assert.True(ServiceSetup.IsTrustedOwner(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null)));
+		Assert.True(ServiceSetup.IsTrustedOwner(new SecurityIdentifier(ServiceSetup.TrustedInstallerSid)));
 		Assert.True(ServiceSetup.IsTrustedOwner(Other, Other));
 		Assert.False(ServiceSetup.IsTrustedOwner(Other, Current));
 		Assert.False(ServiceSetup.IsTrustedOwner(null, Current));
@@ -49,6 +50,51 @@ public sealed class ServiceSetupSecurityTests : IDisposable
 
 		var ex = Assert.Throws<InvalidOperationException>(() => ServiceSetup.EnsureDataDirectorySafe(dataDir, Other, Other));
 		Assert.Contains("created by another user", ex.Message, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public void EnsureOwnersTrusted_FirstUntrustedEntry_Refused()
+	{
+		var owners = new Dictionary<string, SecurityIdentifier?>
+		{
+			["appsettings.json"] = Current,
+			["logs"] = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
+			["appsettings.json.tmp"] = Other,
+			["x"] = null,
+		};
+
+		ServiceSetup.EnsureOwnersTrusted(owners.Keys.Take(2), p => owners[p], Current);
+		var ex = Assert.Throws<InvalidOperationException>(() => ServiceSetup.EnsureOwnersTrusted(owners.Keys, p => owners[p], Current));
+		Assert.Equal("appsettings.json.tmp was created by another user; delete it and retry.", ex.Message);
+		Assert.Throws<InvalidOperationException>(() => ServiceSetup.EnsureOwnersTrusted(["x"], p => owners[p], Current));
+	}
+
+	[Fact]
+	public void EnsureDataDirectorySafe_EntriesOwnedByTrustedUser_Allowed()
+	{
+		var dataDir = new DataDirectory(Path.Combine(_temp, "entries"));
+		Directory.CreateDirectory(dataDir.Logs);
+		File.WriteAllText(dataDir.SettingsFile + ".tmp", "x");
+		File.WriteAllText(Path.Combine(dataDir.Logs, "server-20260101.clef"), "x");
+
+		ServiceSetup.EnsureDataDirectorySafe(dataDir, Current, Current);
+	}
+
+	[Fact]
+	public void OwnerOf_Link_NotFollowed()
+	{
+		var target = Directory.CreateDirectory(Path.Combine(_temp, "gone")).FullName;
+		var link = Path.Combine(_temp, "dangling");
+		Junction(link, target);
+		Directory.Delete(target);
+		try
+		{
+			Assert.Equal(OwnerOf(_temp), DataDirectoryGuard.OwnerOf(link));
+		}
+		finally
+		{
+			Directory.Delete(link);
+		}
 	}
 
 	[Fact]
@@ -93,13 +139,14 @@ public sealed class ServiceSetupSecurityTests : IDisposable
 		var dataDir = new DataDirectory(Path.Combine(_temp, "mine"));
 		Directory.CreateDirectory(dataDir.Root);
 
-		ServiceSetup.PrepareDataDirectory(dataDir, Other, Current);
+		// Authenticated Users stands in for another account: the test user stays able to work in (and delete) the folder.
+		ServiceSetup.PrepareDataDirectory(dataDir, new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null), Current);
 
 		Assert.True(Directory.Exists(dataDir.Logs));
 	}
 
 	[Fact]
-	public void PrepareDataDirectory_ExistingChildren_KeepTheirExactDacl()
+	public void PrepareDataDirectory_ExistingFiles_KeepTheirExactDacl()
 	{
 		var dataDir = new DataDirectory(Path.Combine(_temp, "children"));
 		Directory.CreateDirectory(dataDir.Logs);
@@ -107,7 +154,7 @@ public sealed class ServiceSetupSecurityTests : IDisposable
 		File.WriteAllText(file, "x");
 		var oldLog = Path.Combine(dataDir.Logs, "old.log");
 		File.WriteAllText(oldLog, "x");
-		string[] paths = [file, dataDir.Logs, oldLog];
+		string[] paths = [file, oldLog];
 		var before = paths.Select(RawDacl.Sddl).ToArray();
 
 		ServiceSetup.PrepareDataDirectory(dataDir, Current, Current);
@@ -116,31 +163,53 @@ public sealed class ServiceSetupSecurityTests : IDisposable
 	}
 
 	[Fact]
-	public void PrepareDataDirectory_Twice_RootDaclUnchanged()
+	public void PrepareDataDirectory_Twice_StoredDaclIsTheExpectedOne()
 	{
 		var dataDir = new DataDirectory(Path.Combine(_temp, "twice"));
 		ServiceSetup.PrepareDataDirectory(dataDir, Current, Current);
-		var first = RawDacl.Sddl(dataDir.Root);
 
 		ServiceSetup.PrepareDataDirectory(dataDir, Current, Current);
 
-		Assert.Equal(first, RawDacl.Sddl(dataDir.Root));
+		// Stored exactly as computed, so the second run's comparison finds nothing to write.
+		Assert.Equal(ServiceSetup.DataDirectoryDacl(Current), RawDacl.Sddl(dataDir.Root));
+		Assert.Equal(ServiceSetup.DataDirectoryDacl(Current), RawDacl.Sddl(dataDir.Logs));
 	}
 
 	[Fact]
-	public void PrepareDataDirectory_RootRuleIsModifyContainerAndObjectInherit_LogsInheritsIt()
+	public void DataDirectoryDacl_Protected_SystemAdminsFull_AccountModify_NoBroadGroups()
 	{
-		var dataDir = new DataDirectory(Path.Combine(_temp, "rule"));
-		Directory.CreateDirectory(dataDir.Root);
-		var account = new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null);
+		var descriptor = new RawSecurityDescriptor(ServiceSetup.DataDirectoryDacl(Other));
+		var aces = descriptor.DiscretionaryAcl!.Cast<CommonAce>().ToList();
 
-		ServiceSetup.PrepareDataDirectory(dataDir, account, Current);
+		Assert.True(descriptor.ControlFlags.HasFlag(ControlFlags.DiscretionaryAclProtected));
+		Assert.All(aces, a => Assert.Equal(AceType.AccessAllowed, a.AceType));
+		Assert.All(aces, a => Assert.Equal(AceFlags.ContainerInherit | AceFlags.ObjectInherit, a.AceFlags));
+		Assert.Equal(
+			[
+				(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), (int)FileSystemRights.FullControl),
+				(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), (int)FileSystemRights.FullControl),
+				(Other, (int)(FileSystemRights.Modify | FileSystemRights.Synchronize)),
+			],
+			aces.Select(a => (a.SecurityIdentifier, a.AccessMask)));
+	}
 
-		var rule = Rules(dataDir.Root, inherited: false).Single(r => r.IdentityReference == account);
-		Assert.Equal(FileSystemRights.Modify | FileSystemRights.Synchronize, rule.FileSystemRights);
-		Assert.Equal(InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, rule.InheritanceFlags);
-		Assert.Equal(PropagationFlags.None, rule.PropagationFlags);
-		Assert.Contains(Rules(dataDir.Logs, inherited: true), r => r.IdentityReference == account && r.IsInherited && r.FileSystemRights.HasFlag(FileSystemRights.Modify));
+	[Fact]
+	public void PrepareDataDirectory_RootAndLogsProtected_NewFilesInheritOnlyTheSet()
+	{
+		var dataDir = new DataDirectory(Path.Combine(_temp, "protected"));
+		Directory.CreateDirectory(dataDir.Logs);
+
+		ServiceSetup.PrepareDataDirectory(dataDir, Current, Current);
+		File.WriteAllText(dataDir.SettingsFile, "{}");
+
+		Assert.Equal(ServiceSetup.DataDirectoryDacl(Current), RawDacl.Sddl(dataDir.Root));
+		Assert.Equal(ServiceSetup.DataDirectoryDacl(Current), RawDacl.Sddl(dataDir.Logs));
+		var inherited = new RawSecurityDescriptor(RawDacl.Sddl(dataDir.SettingsFile)).DiscretionaryAcl!.Cast<CommonAce>().ToList();
+		Assert.Equal(3, inherited.Count);
+		Assert.All(inherited, a => Assert.True(a.IsInherited));
+		Assert.DoesNotContain(inherited, a => a.SecurityIdentifier.IsWellKnown(WellKnownSidType.BuiltinUsersSid)
+			|| a.SecurityIdentifier.IsWellKnown(WellKnownSidType.AuthenticatedUserSid)
+			|| a.SecurityIdentifier.IsWellKnown(WellKnownSidType.WorldSid));
 	}
 
 	[Fact]
@@ -256,7 +325,4 @@ public sealed class ServiceSetupSecurityTests : IDisposable
 		process.WaitForExit();
 		Assert.Equal(0, process.ExitCode);
 	}
-
-	private static IEnumerable<FileSystemAccessRule> Rules(string path, bool inherited) =>
-		new DirectoryInfo(path).GetAccessControl().GetAccessRules(true, inherited, typeof(SecurityIdentifier)).Cast<FileSystemAccessRule>();
 }
