@@ -1,0 +1,12 @@
+{
+  "platformOptions": {
+    "Coverlet": {
+      "include": "[AiChromeProxy.*]*",
+      "exclude": "[AiChromeProxy.Tests]*",
+      "excludeByAttribute": "GeneratedCode,GeneratedCodeAttribute,ExcludeFromCodeCoverage,ExcludeFromCodeCoverageAttribute,CompilerGeneratedAttribute",
+      "excludeByFile": "**/Program.cs,**/*.razor",
+      "format": "cobertura",
+      "excludeAssembliesWithoutSources": "MissingAll"
+    }
+  }
+}

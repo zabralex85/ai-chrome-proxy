@@ -1,0 +1,26 @@
+# Build outputs
+**/bin/
+**/obj/
+
+# IDE / OS
+**/.vs/
+**/.idea/
+**/*.user
+.vscode/
+
+# Git / docs / tests / tooling (not needed in image)
+.git/
+.gitignore
+.gitattributes
+.github/
+.codegraph/
+docs/
+tests/
+README.md
+CLAUDE.md
+.cursorrules
+
+# Local secrets / configs (read from env)
+**/appsettings.Local.json
+**/appsettings.Development.json
+**/.env
