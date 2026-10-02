@@ -3,12 +3,30 @@ using AiChromeProxy.Application;
 using AiChromeProxy.Infrastructure;
 using AiChromeProxy.Infrastructure.Hosting;
 using AiChromeProxy.Infrastructure.Security;
+using AiChromeProxy.Server.Hosting;
 using AiChromeProxy.Server.Security;
 using AiChromeProxy.Server.Transport;
 using Microsoft.AspNetCore.HostFiltering;
+using Microsoft.Extensions.Hosting.WindowsServices;
 using Microsoft.Extensions.Options;
 
-var builder = WebApplication.CreateBuilder(args);
+var isService = WindowsServiceHelpers.IsWindowsService();
+
+// A service starts in %WINDIR%\System32: content root (appsettings.json, wwwroot) must be the exe folder.
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+	Args = args,
+	ContentRootPath = isService ? AppContext.BaseDirectory : null,
+});
+builder.Host.UseWindowsService();
+
+var dataDir = DataDirectoryHosting.Select(isService, Environment.GetEnvironmentVariable(DataDirectory.OverrideVariable));
+if (dataDir is not null)
+{
+	builder.Configuration.AddPersistentSettings(dataDir);
+}
+
+builder.Services.AddServerLogging(builder.Configuration, dataDir);
 
 var server = builder.Configuration.GetSection(ServerOptions.Section).Get<ServerOptions>() ?? new ServerOptions();
 builder.WebHost.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, server.Port));
@@ -20,10 +38,20 @@ builder.Services.AddSignalR();
 
 var app = builder.Build();
 
-server.Validate(app.Environment);
-app.Services.GetRequiredService<IOptions<CloudflareAccessOptions>>().Value.Validate(app.Environment);
+var access = app.Services.GetRequiredService<IOptions<CloudflareAccessOptions>>().Value;
+try
+{
+	server.Validate(app.Environment);
+	access.Validate(app.Environment);
+}
+catch (InvalidOperationException ex)
+{
+	// A service has no console: the log file is the only place this reason shows up.
+	app.Logger.LogCritical(ex, "Invalid configuration, the Server will not start: {Reason}", ex.Message);
+	throw;
+}
 
-if (!app.Services.GetRequiredService<IOptions<CloudflareAccessOptions>>().Value.Enabled)
+if (!access.Enabled)
 {
 	app.Logger.LogWarning("Cloudflare Access check is DISABLED (Development only). Do not expose this server.");
 }
