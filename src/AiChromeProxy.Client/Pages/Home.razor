@@ -1,7 +1,68 @@
 @page "/"
+@using System.Diagnostics
+@using AiChromeProxy.Client.Transport
+@using AiChromeProxy.Shared
+@inject ITransport Transport
+@implements IDisposable
 
-<PageTitle>Home</PageTitle>
+<PageTitle>ai-chrome-proxy</PageTitle>
 
-<h1>Hello, world!</h1>
+<h1>ai-chrome-proxy</h1>
 
-Welcome to your new app.
+<p>Connection: <strong>@Transport.State</strong></p>
+
+<button @onclick="PingAsync" disabled="@(Transport.State != TransportState.Connected)">Ping</button>
+
+@if (lastResult is not null)
+{
+	<p>@lastResult</p>
+}
+
+@code {
+	private readonly Dictionary<string, Stopwatch> pending = new();
+	private string? lastResult;
+
+	protected override async Task OnInitializedAsync()
+	{
+		Transport.StateChanged += OnStateChanged;
+		Transport.Received += OnReceived;
+		if (Transport.State == TransportState.Disconnected)
+		{
+			try
+			{
+				await Transport.ConnectAsync();
+			}
+			catch (Exception ex)
+			{
+				lastResult = $"Connect failed: {ex.Message}";
+			}
+		}
+	}
+
+	public void Dispose()
+	{
+		Transport.StateChanged -= OnStateChanged;
+		Transport.Received -= OnReceived;
+	}
+
+	private async Task PingAsync()
+	{
+		var id = Guid.NewGuid().ToString("N");
+		pending[id] = Stopwatch.StartNew();
+		await Transport.SendAsync(Envelope.Create(MessageTypes.Ping, new { }, id));
+	}
+
+	private void OnStateChanged(TransportState state) => InvokeAsync(StateHasChanged);
+
+	private void OnReceived(Envelope envelope)
+	{
+		if (envelope.Type != MessageTypes.Pong || envelope.CorrelationId is null || !pending.Remove(envelope.CorrelationId, out var sw))
+		{
+			return;
+		}
+
+		var serverTime = envelope.Payload.GetProperty("serverTime").GetString();
+		lastResult = $"Pong in {sw.ElapsedMilliseconds} ms, server time {serverTime}";
+		InvokeAsync(StateHasChanged);
+	}
+}
