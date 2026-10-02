@@ -6,5 +6,5 @@ namespace AiChromeProxy.Shared;
 public sealed record Envelope(string Type, JsonElement Payload, string? CorrelationId = null)
 {
 	public static Envelope Create<T>(string type, T payload, string? correlationId = null) =>
-		new(type, JsonSerializer.SerializeToElement(payload), correlationId);
+		new(type, JsonSerializer.SerializeToElement(payload, JsonSerializerOptions.Web), correlationId);
 }
