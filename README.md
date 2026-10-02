@@ -10,4 +10,4 @@ Chrome opens a web app (served via Cloudflare Tunnel + Access) that syncs the re
 
 ## License
 
-MIT
+Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).

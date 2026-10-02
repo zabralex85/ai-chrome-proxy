@@ -4,7 +4,7 @@ Web app: Chrome on a locked-down machine syncs a repo folder to your home server
 
 Architecture and decisions: [docs/superpowers/specs/2026-10-02-architecture-design.md](docs/superpowers/specs/2026-10-02-architecture-design.md).
 
-Open source (MIT). Everything in the repo is in English. No personal paths, domains or secrets in committed files — make it configurable.
+Open source (Apache-2.0). Everything in the repo is in English. No personal paths, domains or secrets in committed files — make it configurable.
 
 ## Stack
 
