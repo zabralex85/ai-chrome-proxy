@@ -1,3 +1,5 @@
+#pragma warning disable SYSLIB1054 // Use LibraryImportAttribute instead of DllImportAttribute (file must not require unsafe code)
+
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using Microsoft.Win32.SafeHandles;
@@ -5,7 +7,7 @@ using Microsoft.Win32.SafeHandles;
 namespace AiChromeProxy.Tests.Tray;
 
 /// <summary>Reads the stored DACL of a file or folder exactly as NTFS holds it. The managed <c>GetAccessControl</c> re-evaluates inheritance against the parent and so hides what is really stored.</summary>
-internal static partial class RawDacl
+internal static class RawDacl
 {
 	private const uint ReadControl = 0x20000;
 	private const uint ShareAll = 0x7;
@@ -23,10 +25,10 @@ internal static partial class RawDacl
 		return new RawSecurityDescriptor(buffer, 0).GetSddlForm(AccessControlSections.Access);
 	}
 
-	[LibraryImport("kernel32.dll", EntryPoint = "CreateFileW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
-	private static partial SafeFileHandle CreateFileW(string fileName, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+	[DllImport("kernel32.dll", EntryPoint = "CreateFileW", SetLastError = true, CharSet = CharSet.Unicode)]
+	private static extern SafeFileHandle CreateFileW(string fileName, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
 
-	[LibraryImport("advapi32.dll", SetLastError = true)]
+	[DllImport("advapi32.dll", SetLastError = true)]
 	[return: MarshalAs(UnmanagedType.Bool)]
-	private static partial bool GetKernelObjectSecurity(SafeFileHandle handle, uint securityInformation, byte[]? descriptor, uint length, out uint needed);
+	private static extern bool GetKernelObjectSecurity(SafeFileHandle handle, uint securityInformation, byte[]? descriptor, uint length, out uint needed);
 }
