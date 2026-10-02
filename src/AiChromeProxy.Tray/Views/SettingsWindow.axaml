@@ -8,6 +8,8 @@
         Width="520" SizeToContent="Height" CanResize="False"
         WindowStartupLocation="CenterScreen">
   <StackPanel Margin="16" Spacing="8">
+    <TextBlock Text="{Binding EnvironmentWarning}" IsVisible="{Binding EnvironmentWarning, Converter={x:Static ObjectConverters.IsNotNull}}"
+               Foreground="#9D5D00" TextWrapping="Wrap" />
     <TextBlock Text="Cloudflare Access team domain" />
     <TextBox Text="{Binding TeamDomain}" PlaceholderText="team.cloudflareaccess.com" />
     <TextBlock Text="Cloudflare Access application audience (AUD tag)" />

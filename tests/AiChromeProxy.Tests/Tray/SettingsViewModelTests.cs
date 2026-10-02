@@ -22,6 +22,26 @@ public sealed class SettingsViewModelTests : IDisposable
 	}
 
 	[Fact]
+	public void OverridingVariables_AccessServerAndEnvironmentNames_CaseInsensitive_Sorted()
+	{
+		var environment = new Dictionary<string, string>
+		{
+			["Server__PublicHost"] = "code.example.com",
+			["PATH"] = @"C:\Windows",
+			["cloudflareaccess__Audience"] = "aud",
+			["ASPNETCORE_ENVIRONMENT"] = "Development",
+			["DOTNET_ENVIRONMENT"] = "Development",
+			["ASPNETCORE_URLS"] = "http://+:80",
+			["ServerName"] = "x",
+		};
+
+		Assert.Equal(
+			["ASPNETCORE_ENVIRONMENT", "cloudflareaccess__Audience", "DOTNET_ENVIRONMENT", "Server__PublicHost"],
+			SettingsViewModel.OverridingVariables(environment));
+		Assert.Empty(SettingsViewModel.OverridingVariables(new Dictionary<string, string> { ["PATH"] = "x" }));
+	}
+
+	[Fact]
 	public void ExistingFile_ValuesLoaded()
 	{
 		WriteFile("""{ "CloudflareAccess": { "TeamDomain": "t.cloudflareaccess.com", "Audience": "aud" }, "Server": { "Port": 6000, "PublicHost": "code.example.com" } }""");

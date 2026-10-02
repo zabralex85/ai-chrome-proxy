@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -39,6 +40,11 @@ public sealed partial class SettingsViewModel : ObservableObject
 		PublicHost = (string?)settings[ServerOptions.Section]?[nameof(ServerOptions.PublicHost)] ?? string.Empty;
 		Port = settings[ServerOptions.Section]?[nameof(ServerOptions.Port)]?.ToString() ?? ServerOptions.DefaultPort.ToString(CultureInfo.InvariantCulture);
 		StartWithWindows = autoStart.IsEnabled;
+
+		var overriding = OverridingVariables(Environment.GetEnvironmentVariables());
+		EnvironmentWarning = overriding.Count == 0
+			? null
+			: $"Environment variables override these settings if the service sees them: {string.Join(", ", overriding)}. Remove them.";
 	}
 
 	[ObservableProperty]
@@ -56,6 +62,9 @@ public sealed partial class SettingsViewModel : ObservableObject
 	[ObservableProperty]
 	public partial bool StartWithWindows { get; set; }
 
+	/// <summary>One line naming the variables from <see cref="OverridingVariables"/>; null when there are none.</summary>
+	public string? EnvironmentWarning { get; }
+
 	[ObservableProperty]
 	public partial IReadOnlyList<string> Errors { get; private set; } = [];
 
@@ -69,6 +78,19 @@ public sealed partial class SettingsViewModel : ObservableObject
 	/// <summary>The settings file as a JSON object (empty when it does not exist yet).</summary>
 	public static JsonObject Load(DataDirectory dataDir) =>
 		File.Exists(dataDir.SettingsFile) ? JsonNode.Parse(File.ReadAllText(dataDir.SettingsFile))?.AsObject() ?? [] : [];
+
+	/// <summary>
+	/// Variables of <paramref name="environment"/> that win over <c>appsettings.json</c> (env vars come later in the Server's configuration),
+	/// typically left over from running the Server from source.
+	/// </summary>
+	public static IReadOnlyList<string> OverridingVariables(IDictionary environment) =>
+		environment.Keys.Cast<string>()
+			.Where(name => name.StartsWith("CloudflareAccess__", StringComparison.OrdinalIgnoreCase)
+				|| name.StartsWith("Server__", StringComparison.OrdinalIgnoreCase)
+				|| name.Equals("ASPNETCORE_ENVIRONMENT", StringComparison.OrdinalIgnoreCase)
+				|| name.Equals("DOTNET_ENVIRONMENT", StringComparison.OrdinalIgnoreCase))
+			.Order(StringComparer.OrdinalIgnoreCase)
+			.ToList();
 
 	/// <summary>"Open UI": through the tunnel when a public host is set (local requests carry no Access token), else loopback.</summary>
 	public static Uri UiAddress(DataDirectory dataDir)
