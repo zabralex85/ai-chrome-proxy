@@ -3,9 +3,14 @@ using System.Text;
 namespace AiChromeProxy.Tray.Clef;
 
 /// <summary>Reads a CLEF file incrementally while the Server keeps writing it (shared read; a trailing partial line waits for its newline).</summary>
-public sealed class ClefTail(string path)
+public sealed class ClefTail(string path, long maxInitialBytes = ClefTail.InitialReadWindow)
 {
+	/// <summary>ponytail: a file is first read from its last 16 MB only; older lines are not shown. Page backwards if that ever matters.</summary>
+	public const long InitialReadWindow = 16L * 1024 * 1024;
+
 	private long _position;
+	private bool _started;
+	private bool _skipPartialLine;
 
 	public string Path { get; } = path;
 
@@ -13,6 +18,17 @@ public sealed class ClefTail(string path)
 	public IReadOnlyList<LogEntry> ReadNew()
 	{
 		using var stream = new FileStream(Path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+		if (!_started)
+		{
+			_started = true;
+			_position = Math.Max(0, stream.Length - maxInitialBytes);
+			_skipPartialLine = _position > 0;
+		}
+		else if (stream.Length < _position)
+		{
+			_position = 0;
+		}
+
 		if (stream.Length <= _position)
 		{
 			return [];

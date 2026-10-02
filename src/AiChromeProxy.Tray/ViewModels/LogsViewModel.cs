@@ -8,16 +8,23 @@ namespace AiChromeProxy.Tray.ViewModels;
 /// <summary>Logs window: CLEF files in <c>&lt;DataDir&gt;\logs</c> (newest first), level/text filters and Follow (tail the current file).</summary>
 public sealed partial class LogsViewModel : ObservableObject
 {
+	/// <summary>ponytail: at most 50,000 entries stay in memory (oldest dropped); a virtualised/on-disk view is the upgrade if more history is needed.</summary>
+	public const int MaxEntries = 50_000;
+
 	private readonly string _logsDir;
+	private readonly int _maxEntries;
+	private readonly long _readWindow;
 	private readonly List<LogEntry> _all = [];
 	private ClefTail? _tail;
 
-	public LogsViewModel(DataDirectory dataDir)
+	public LogsViewModel(DataDirectory dataDir, int maxEntries = MaxEntries, long readWindowBytes = ClefTail.InitialReadWindow)
 	{
 		_logsDir = dataDir.Logs;
-		RefreshFiles();
+		_maxEntries = maxEntries;
+		_readWindow = readWindowBytes;
+		var listed = RefreshFiles();
 		SelectedFile = Files.FirstOrDefault();
-		if (SelectedFile is null)
+		if (listed && SelectedFile is null)
 		{
 			Error = $"No log files yet in {_logsDir}.";
 		}
@@ -56,7 +63,11 @@ public sealed partial class LogsViewModel : ObservableObject
 			return;
 		}
 
-		RefreshFiles();
+		if (!RefreshFiles())
+		{
+			return;
+		}
+
 		if (Files.FirstOrDefault() is { } newest && newest != SelectedFile)
 		{
 			SelectedFile = newest;
@@ -66,12 +77,26 @@ public sealed partial class LogsViewModel : ObservableObject
 		Append(ReadNew());
 	}
 
+	/// <summary>Picking an older file turns Follow off; turning it back on jumps to the newest file.</summary>
+	partial void OnFollowChanged(bool value)
+	{
+		if (value)
+		{
+			Poll();
+		}
+	}
+
 	partial void OnSelectedFileChanged(string? value)
 	{
 		_all.Clear();
 		Entries = [];
 		Error = null;
-		_tail = value is null ? null : new ClefTail(Path.Combine(_logsDir, value));
+		if (value != Files.FirstOrDefault())
+		{
+			Follow = false;
+		}
+
+		_tail = value is null ? null : new ClefTail(Path.Combine(_logsDir, value), _readWindow);
 		Append(ReadNew());
 	}
 
@@ -85,9 +110,15 @@ public sealed partial class LogsViewModel : ObservableObject
 	{
 		try
 		{
-			return _tail?.ReadNew() ?? [];
+			var read = _tail?.ReadNew() ?? [];
+			if (_tail is not null)
+			{
+				Error = null;
+			}
+
+			return read;
 		}
-		catch (IOException ex)
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 		{
 			Error = ex.Message;
 			return [];
@@ -97,6 +128,13 @@ public sealed partial class LogsViewModel : ObservableObject
 	private void Append(IReadOnlyList<LogEntry> entries)
 	{
 		_all.AddRange(entries);
+		if (_all.Count > _maxEntries)
+		{
+			_all.RemoveRange(0, _all.Count - _maxEntries);
+			Entries = [.. _all.Where(Visible)];
+			return;
+		}
+
 		foreach (var entry in entries.Where(Visible))
 		{
 			Entries.Add(entry);
@@ -104,11 +142,21 @@ public sealed partial class LogsViewModel : ObservableObject
 	}
 
 	/// <summary>Syncs <see cref="Files"/> in place (no reset), so the bound selection survives a refresh.</summary>
-	private void RefreshFiles()
+	private bool RefreshFiles()
 	{
-		var names = Directory.Exists(_logsDir)
-			? Directory.GetFiles(_logsDir, "*.clef").Select(Path.GetFileName).OfType<string>().OrderDescending(StringComparer.OrdinalIgnoreCase).ToList()
-			: [];
+		List<string> names;
+		try
+		{
+			names = Directory.Exists(_logsDir)
+				? Directory.GetFiles(_logsDir, "*.clef").Select(Path.GetFileName).OfType<string>().OrderDescending(StringComparer.OrdinalIgnoreCase).ToList()
+				: [];
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			Error = ex.Message;
+			return false;
+		}
+
 		foreach (var gone in Files.Except(names).ToList())
 		{
 			Files.Remove(gone);
@@ -121,5 +169,7 @@ public sealed partial class LogsViewModel : ObservableObject
 				Files.Insert(i, names[i]);
 			}
 		}
+
+		return true;
 	}
 }
