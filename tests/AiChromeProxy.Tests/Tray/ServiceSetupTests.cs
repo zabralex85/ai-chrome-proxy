@@ -124,10 +124,12 @@ public sealed class ServiceSetupTests
 	public void AdminCommand_RunUninstall_ExitCodes()
 	{
 		var service = new FakeServiceControl();
+		var dataDir = new DataDirectory(Path.Combine(Path.GetTempPath(), "aicp-tests", Guid.NewGuid().ToString("N")));
 
-		Assert.Equal(0, AdminCommand.RunUninstall(service));
+		Assert.Equal(0, AdminCommand.RunUninstall(service, dataDir));
 		Assert.Equal(["uninstall"], service.Calls);
-		Assert.Equal(1, AdminCommand.RunUninstall(new FakeServiceControl { FailUninstall = new InvalidOperationException("access denied") }));
+		Assert.Equal(1, AdminCommand.RunUninstall(new FakeServiceControl { FailUninstall = new InvalidOperationException("access denied") }, dataDir));
+		Directory.Delete(dataDir.Root, recursive: true);
 	}
 
 	[Fact]

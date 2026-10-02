@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Security.Principal;
+using AiChromeProxy.Infrastructure.Hosting;
 
 namespace AiChromeProxy.Tray.Services;
 
@@ -16,6 +17,8 @@ public static class AdminCommand
 	public const string Install = "install";
 	public const string Uninstall = "uninstall";
 
+	public const string LastErrorFile = "admin-last-error.txt";
+
 	private const int ErrorCancelled = 1223;
 
 	public static string CurrentUser => WindowsIdentity.GetCurrent().Name;
@@ -28,15 +31,19 @@ public static class AdminCommand
 
 	/// <summary>The headless <c>--admin uninstall</c> instance (Velopack's before-uninstall hook and the tray menu).</summary>
 	/// <returns>Process exit code: 0 on success.</returns>
-	public static int RunUninstall(IServiceControl service)
+	public static int RunUninstall(IServiceControl service) => RunUninstall(service, DataDirectory.FromEnvironment());
+
+	/// <summary>As above; on failure the reason is also written to <c>&lt;DataDir&gt;dmin-last-error.txt</c> (the headless instance has no UI).</summary>
+	public static int RunUninstall(IServiceControl service, DataDirectory dataDir)
 	{
 		try
 		{
 			service.Uninstall();
 			return 0;
 		}
-		catch (Exception)
+		catch (Exception ex)
 		{
+			WriteLastError(dataDir, ex);
 			return 1;
 		}
 	}
@@ -59,6 +66,26 @@ public static class AdminCommand
 		catch (Win32Exception ex) when (ex.NativeErrorCode == ErrorCancelled)
 		{
 			return null;
+		}
+	}
+
+	private static void WriteLastError(DataDirectory dataDir, Exception ex)
+	{
+		try
+		{
+			// Never follow a pre-planted link with elevated rights.
+			var root = new DirectoryInfo(dataDir.Root);
+			if (root.Exists && (root.Attributes.HasFlag(FileAttributes.ReparsePoint) || root.LinkTarget is not null))
+			{
+				return;
+			}
+
+			Directory.CreateDirectory(dataDir.Root);
+			File.WriteAllText(Path.Combine(dataDir.Root, LastErrorFile), ex.InnerException?.Message ?? ex.Message);
+		}
+		catch (Exception)
+		{
+			// Best effort only.
 		}
 	}
 }

@@ -50,6 +50,9 @@ internal static partial class ServiceInstaller
 	public static void Install(string serviceName, string account, string password, string controlUser, DataDirectory dataDir)
 	{
 		var accountSid = ServiceSetup.Sid(account);
+		var controlSid = ServiceSetup.Sid(controlUser);
+		ServiceSetup.EnsureServiceAccountIsControlUser(accountSid, controlSid);
+		ServiceSetup.EnsureDataDirectorySafe(dataDir, accountSid, controlSid);
 
 		// "Log on as a service" first: LogonUser(LOGON32_LOGON_SERVICE) below then fails only for bad credentials.
 		GrantLogonAsService(accountSid);
@@ -60,8 +63,8 @@ internal static partial class ServiceInstaller
 		var binaryPath = ServiceSetup.BinaryPathName(ServiceSetup.ServerExecutable(AppContext.BaseDirectory));
 		using var service = CreateOrReconfigure(manager, serviceName, binaryPath, ServiceSetup.ServiceStartName(account), password);
 		SetFailureActions(service);
-		GrantUserControl(service, ServiceSetup.Sid(controlUser));
-		ServiceSetup.PrepareDataDirectory(dataDir, accountSid);
+		GrantUserControl(service, controlSid);
+		ServiceSetup.PrepareDataDirectory(dataDir, accountSid, controlSid);
 
 		using var controller = new ServiceController(serviceName);
 		if (controller.Status == ServiceControllerStatus.Stopped)
@@ -70,7 +73,7 @@ internal static partial class ServiceInstaller
 		}
 	}
 
-	/// <summary>Marks the service for deletion and stops it (deletion completes once it has stopped); the data directory is kept.</summary>
+	/// <summary>Marks the service for deletion, then stops it (deletion completes once it has stopped); the data directory is kept.</summary>
 	public static void Uninstall(string serviceName)
 	{
 		using var manager = OpenSCManager(null, null, ScManagerConnect);
@@ -83,18 +86,22 @@ internal static partial class ServiceInstaller
 
 		ThrowIfInvalid(service);
 		using var controller = new ServiceController(serviceName);
-		if (controller.Status is not (ServiceControllerStatus.Stopped or ServiceControllerStatus.StopPending))
-		{
-			controller.Stop(stopDependentServices: false);
-		}
-
-		// Delete before waiting: if the caller (Velopack's 30 s uninstall hook) is killed, the service still goes away once stopped.
-		if (!DeleteService(service) && Marshal.GetLastPInvokeError() != ErrorServiceMarkedForDelete)
-		{
-			throw new Win32Exception();
-		}
-
-		controller.WaitForStatus(ServiceControllerStatus.Stopped, StopTimeout);
+		ServiceSetup.RunUninstallSequence(
+			() =>
+			{
+				if (!DeleteService(service) && Marshal.GetLastPInvokeError() != ErrorServiceMarkedForDelete)
+				{
+					throw new Win32Exception();
+				}
+			},
+			() =>
+			{
+				if (controller.Status is not (ServiceControllerStatus.Stopped or ServiceControllerStatus.StopPending))
+				{
+					controller.Stop(stopDependentServices: false);
+				}
+			},
+			() => controller.WaitForStatus(ServiceControllerStatus.Stopped, StopTimeout));
 	}
 
 	private static void VerifyPassword(string account, string password)

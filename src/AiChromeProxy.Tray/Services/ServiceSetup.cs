@@ -58,9 +58,14 @@ public static class ServiceSetup
 	}
 
 	/// <summary>Creates <c>&lt;DataDir&gt;</c> and <c>logs</c> with inheritable full control for the service account.</summary>
-	public static void PrepareDataDirectory(DataDirectory dataDir, SecurityIdentifier account)
+	public static void PrepareDataDirectory(DataDirectory dataDir, SecurityIdentifier account) => PrepareDataDirectory(dataDir, account, account);
+
+	/// <summary>As above, refusing a root or <c>logs</c> that is a link or was created by an untrusted user (<c>%ProgramData%</c> lets standard users pre-create folders).</summary>
+	public static void PrepareDataDirectory(DataDirectory dataDir, SecurityIdentifier account, SecurityIdentifier controlUser)
 	{
+		EnsureDataDirectorySafe(dataDir, account, controlUser);
 		Directory.CreateDirectory(dataDir.Logs);
+		EnsureDataDirectorySafe(dataDir, account, controlUser);
 		var root = new DirectoryInfo(dataDir.Root);
 		var security = root.GetAccessControl();
 		security.AddAccessRule(new FileSystemAccessRule(
@@ -70,5 +75,59 @@ public static class ServiceSetup
 			PropagationFlags.None,
 			AccessControlType.Allow));
 		root.SetAccessControl(security);
+	}
+
+	/// <summary>Throws when <c>&lt;DataDir&gt;</c> or its <c>logs</c> already exists as a link or with an owner other than Administrators, SYSTEM, the service account or the control user.</summary>
+	public static void EnsureDataDirectorySafe(DataDirectory dataDir, SecurityIdentifier account, SecurityIdentifier controlUser)
+	{
+		foreach (var path in new[] { dataDir.Root, dataDir.Logs })
+		{
+			var info = new DirectoryInfo(path);
+			if (!info.Exists)
+			{
+				continue;
+			}
+
+			if (info.Attributes.HasFlag(FileAttributes.ReparsePoint) || info.LinkTarget is not null)
+			{
+				throw new InvalidOperationException($"{path} is a link; delete it and retry.");
+			}
+
+			var owner = info.GetAccessControl().GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
+			if (!IsTrustedOwner(owner, account, controlUser))
+			{
+				throw new InvalidOperationException($"{path} was created by another user; delete it and retry.");
+			}
+		}
+	}
+
+	public static bool IsTrustedOwner(SecurityIdentifier? owner, params SecurityIdentifier[] trusted) =>
+		owner is not null
+		&& (owner.IsWellKnown(WellKnownSidType.BuiltinAdministratorsSid) || owner.IsWellKnown(WellKnownSidType.LocalSystemSid) || trusted.Contains(owner));
+
+	/// <summary>The service binary lives in the tray user's writable profile: running it as anyone else would hand that account to the user.</summary>
+	public static void EnsureServiceAccountIsControlUser(SecurityIdentifier account, SecurityIdentifier controlUser)
+	{
+		if (account != controlUser)
+		{
+			throw new InvalidOperationException(
+				"The service binary is in your user profile, so the service must run as that same user. Enter your own account.");
+		}
+	}
+
+	/// <summary>Delete first (survives the caller being killed), then a best-effort stop, then wait for it to stop.</summary>
+	public static void RunUninstallSequence(Action delete, Action stop, Action waitStopped)
+	{
+		delete();
+		try
+		{
+			stop();
+		}
+		catch (InvalidOperationException)
+		{
+			// Already stopped or stopping (1061/1062): the wait below decides.
+		}
+
+		waitStopped();
 	}
 }

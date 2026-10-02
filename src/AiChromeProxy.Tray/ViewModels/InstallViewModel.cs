@@ -55,7 +55,7 @@ public sealed partial class InstallViewModel : ObservableObject
 		}
 		catch (Exception ex)
 		{
-			Error = ex.Message;
+			Error = ex.InnerException?.Message ?? ex.Message;
 		}
 		finally
 		{
