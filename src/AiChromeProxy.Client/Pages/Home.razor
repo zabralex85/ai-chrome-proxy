@@ -9,13 +9,13 @@
 
 <h1>ai-chrome-proxy</h1>
 
-<p>Connection: <strong>@Transport.State</strong></p>
+<p>Connection: <strong data-testid="connection-state">@Transport.State</strong></p>
 
-<button @onclick="PingAsync" disabled="@(Transport.State != TransportState.Connected)">Ping</button>
+<button data-testid="ping-button" @onclick="PingAsync" disabled="@(Transport.State != TransportState.Connected)">Ping</button>
 
 @if (lastResult is not null)
 {
-	<p>@lastResult</p>
+	<p data-testid="ping-result">@lastResult</p>
 }
 
 @code {
