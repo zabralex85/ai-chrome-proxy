@@ -29,7 +29,8 @@ public sealed class TestAccessIssuer
 		string issuer = "https://" + TeamDomain,
 		string audience = Audience,
 		DateTime? expires = null,
-		DateTime? notBefore = null)
+		DateTime? notBefore = null,
+		bool omitExpiry = false)
 	{
 		var exp = expires ?? DateTime.UtcNow.AddMinutes(10);
 		return new JsonWebTokenHandler { SetDefaultTimesOnTokenCreation = false }.CreateToken(new SecurityTokenDescriptor
@@ -38,10 +39,31 @@ public sealed class TestAccessIssuer
 			Audience = audience,
 			NotBefore = notBefore ?? exp.AddMinutes(-20),
 			IssuedAt = notBefore ?? exp.AddMinutes(-20),
-			Expires = exp,
+			Expires = omitExpiry ? null : exp,
 			Claims = new Dictionary<string, object> { ["email"] = "user@example.com" },
 			SigningCredentials = new SigningCredentials(_key, SecurityAlgorithms.RsaSha256),
 		});
+	}
+
+	/// <summary>Token signed with a symmetric key (HS256) but carrying the right iss/aud/kid.</summary>
+	public string HmacToken(string keyId = "kid-1") =>
+		new JsonWebTokenHandler().CreateToken(new SecurityTokenDescriptor
+		{
+			Issuer = "https://" + TeamDomain,
+			Audience = Audience,
+			Expires = DateTime.UtcNow.AddMinutes(10),
+			SigningCredentials = new SigningCredentials(
+				new SymmetricSecurityKey(RandomNumberGenerator.GetBytes(32)) { KeyId = keyId },
+				SecurityAlgorithms.HmacSha256),
+		});
+
+	/// <summary>Unsigned token: <c>alg=none</c> header, valid-looking claims, empty signature.</summary>
+	public string UnsignedToken(string keyId = "kid-1")
+	{
+		var header = Base64UrlEncoder.Encode($"{{\"alg\":\"none\",\"typ\":\"JWT\",\"kid\":\"{keyId}\"}}");
+		var exp = DateTimeOffset.UtcNow.AddMinutes(10).ToUnixTimeSeconds();
+		var payload = Base64UrlEncoder.Encode($"{{\"iss\":\"https://{TeamDomain}\",\"aud\":\"{Audience}\",\"exp\":{exp}}}");
+		return $"{header}.{payload}.";
 	}
 
 	/// <summary>HttpMessageHandler serving this issuer's JWKS; counts requests.</summary>

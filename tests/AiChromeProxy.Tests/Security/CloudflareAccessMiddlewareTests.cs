@@ -59,6 +59,46 @@ public sealed class CloudflareAccessMiddlewareTests
 	}
 
 	[Fact]
+	public async Task NoExpiry_401()
+	{
+		var token = _issuer.Token(omitExpiry: true);
+
+		var status = await RunAsync(ctx => ctx.Request.Headers[CloudflareAccessMiddleware.HeaderName] = token);
+
+		Assert.Equal(StatusCodes.Status401Unauthorized, status);
+	}
+
+	[Fact]
+	public async Task NotYetValid_401()
+	{
+		var token = _issuer.Token(notBefore: DateTime.UtcNow.AddMinutes(10));
+
+		var status = await RunAsync(ctx => ctx.Request.Headers[CloudflareAccessMiddleware.HeaderName] = token);
+
+		Assert.Equal(StatusCodes.Status401Unauthorized, status);
+	}
+
+	[Fact]
+	public async Task HmacSignedWithMatchingKid_401()
+	{
+		var token = _issuer.HmacToken();
+
+		var status = await RunAsync(ctx => ctx.Request.Headers[CloudflareAccessMiddleware.HeaderName] = token);
+
+		Assert.Equal(StatusCodes.Status401Unauthorized, status);
+	}
+
+	[Fact]
+	public async Task UnsignedAlgNone_401()
+	{
+		var token = _issuer.UnsignedToken();
+
+		var status = await RunAsync(ctx => ctx.Request.Headers[CloudflareAccessMiddleware.HeaderName] = token);
+
+		Assert.Equal(StatusCodes.Status401Unauthorized, status);
+	}
+
+	[Fact]
 	public async Task ForeignKey_401()
 	{
 		var foreign = new TestAccessIssuer("kid-1");
