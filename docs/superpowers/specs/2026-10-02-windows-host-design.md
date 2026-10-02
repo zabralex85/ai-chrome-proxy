@@ -14,7 +14,7 @@ Sub-project 2b (later, separate spec): first-run wizard automating `cloudflared`
 - **Logging:** Serilog (`Serilog.AspNetCore`, `Serilog.Sinks.File`, `Serilog.Formatting.Compact`).
   - Files: `<DataDir>\logs\server-YYYYMMDD.clef` — compact JSON (CLEF), one event per line; daily rolling; 14 files retained.
   - Console sink kept for `dotnet run`.
-  - `<DataDir>` = `%ProgramData%\AiChromeProxy`; overridable by env var `AICP_DATA_DIR` (used by tests).
+  - `<DataDir>` = `%ProgramData%\AiChromeProxy`; overridable by env var `AICP_DATA_DIR` (tests and local runs only; ignored by the elevated install, a relative value is made absolute).
 - **Persistent config:** `<DataDir>\appsettings.json`, added as an optional JSON source **only when the process runs as a Windows Service** (`WindowsServiceHelpers.IsWindowsService()`) **or when `AICP_DATA_DIR` is set**. Never loaded otherwise, so a developer's machine config cannot override test settings (the failure mode seen with `appsettings.Local.json` in the skeleton). Environment variables keep priority over this file.
 - **Follow-ups from the skeleton review (architecture spec, "Required follow-ups"):**
   - `AllowedHosts` derived from `Server:PublicHost` (e.g. `code.example.com`) plus `127.0.0.1` and `localhost`. Empty `PublicHost` outside Development → refuse to start (fail closed), same as the Access check. Existing Production-mode integration tests set `Server:PublicHost` explicitly; `docs/setup/cloudflare.md` adds `Server__PublicHost` to the configuration step.
@@ -44,7 +44,7 @@ Edits `<DataDir>\appsettings.json`: `CloudflareAccess:TeamDomain`, `CloudflareAc
   3. Create service `AiChromeProxy` ("AI Chrome Proxy"), binary `<install dir>\current\server\AiChromeProxy.Server.exe`, start type Automatic, running as that account.
   4. Failure actions: restart after 10 s (three times), reset after 1 day.
   5. Service DACL grants the installing user `SERVICE_START | SERVICE_STOP | SERVICE_QUERY_STATUS | SERVICE_QUERY_CONFIG`, so Start/Stop/Restart from the tray need no UAC afterwards.
-  6. Create `<DataDir>` and `<DataDir>\logs` with full control for that account.
+  6. Create `<DataDir>` and `<DataDir>\logs`, each with a protected DACL written through a held handle (no ACEs inherited from `%ProgramData%`): SYSTEM and Administrators Full Control, the account Modify, all `(OI)(CI)`; nothing for Users, Authenticated Users or Everyone. Written only when the stored DACL differs; existing children are not rewritten. Refused when either folder is a link, or it or any entry directly inside it is owned by anyone but SYSTEM, Administrators, TrustedInstaller or the account. The elevated install ignores `AICP_DATA_DIR`.
 - Uninstall: stop (wait up to 30 s), delete the service. `<DataDir>` (config + logs) is kept.
 
 ### Dependencies
@@ -57,7 +57,7 @@ Tray → Domain, Infrastructure. Never Server or Application. Enforced by new ar
 
 - **Velopack** package (`Velopack` NuGet in the tray; `vpk` CLI in CI). Main executable: the tray. The Server is published **self-contained win-x64** into `server\` inside the package — no .NET install needed on the home server. Tray also self-contained.
 - Velopack installs per user (`%LocalAppData%\AiChromeProxy`); the service binary path points at the stable `current\server\` folder.
-- **Updates:** the tray checks GitHub Releases (`GithubSource`) at start and every 24 h. "Update to vX" → download → stop service → apply update and restart the tray → Velopack after-update hook starts the service again. A failed download or apply leaves the current version running and shows the error.
+- **Updates:** the tray checks GitHub Releases (`GithubSource`) at start and every 24 h. "Update to vX" → download → stop service → apply update and restart the tray → Velopack after-update hook starts the service again only when the pending-update marker says the update stopped it. A failed download, stop or apply leaves the current version running (service started again) and shows that error. Pre-release tags (`-suffix`) are published as GitHub pre-releases and never offered.
 - **Uninstall:** Velopack before-uninstall hook stops and deletes the service (elevated `--admin uninstall`).
 - **Release workflow** `.github/workflows/release.yml`, trigger: push of tag `v*`, `windows-latest`:
   1. setup-dotnet (global.json), restore, build, run the xunit gate;

@@ -45,6 +45,8 @@ Three values:
 
 Environment variables override the settings file. Outside `Development` the Server refuses to start if any of the three values is missing or a host name is not bare.
 
+> **Moving from source to the Windows service:** remove these User-scope variables (and `ASPNETCORE_ENVIRONMENT` / `DOTNET_ENVIRONMENT` if you set them), for example `[Environment]::SetEnvironmentVariable("Server__PublicHost", $null, "User")`. They may reach the service too and would silently win over the values saved in **Settings…**; that window shows a warning while it sees any of them.
+
 ## 5. Run and verify
 
 ```powershell
