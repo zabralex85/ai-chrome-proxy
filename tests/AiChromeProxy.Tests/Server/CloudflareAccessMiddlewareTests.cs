@@ -124,9 +124,62 @@ public sealed class CloudflareAccessMiddlewareTests
 		Assert.False(await validator.ValidateAsync(stranger.Token(), ct));
 		Assert.Equal(1, jwks.Requests);
 
-		time.Now += TimeSpan.FromMinutes(2);
+		time.Advance(TimeSpan.FromMinutes(2));
 		Assert.False(await validator.ValidateAsync(stranger.Token(), ct));
 		Assert.Equal(2, jwks.Requests);
+	}
+
+	[Fact]
+	public async Task KnownKid_KeysOlderThanSixHours_Refetched_RetiredKeyRejected()
+	{
+		var time = new FixedTimeProvider(DateTimeOffset.UtcNow);
+		var jwks = new StubHandler(HttpStatusCode.OK, _issuer.Jwks());
+		var (validator, _) = Build(jwks, time, enabled: true);
+		var ct = TestContext.Current.CancellationToken;
+
+		Assert.True(await validator.ValidateAsync(Token(time), ct));
+		jwks.Body = new TestAccessIssuer("kid-1").Jwks();
+
+		time.Advance(TimeSpan.FromHours(6) - TimeSpan.FromSeconds(1));
+		Assert.True(await validator.ValidateAsync(Token(time), ct));
+		Assert.Equal(1, jwks.Requests);
+
+		time.Advance(TimeSpan.FromSeconds(1));
+		Assert.False(await validator.ValidateAsync(Token(time), ct));
+		Assert.Equal(2, jwks.Requests);
+	}
+
+	[Fact]
+	public async Task WallClockJumpsBack_ThrottleUsesMonotonicTime_RefetchStillHappens()
+	{
+		var stranger = new TestAccessIssuer("kid-unknown");
+		var time = new FixedTimeProvider(DateTimeOffset.UtcNow);
+		var jwks = _issuer.Handler();
+		var (validator, _) = Build(jwks, time, enabled: true);
+		var ct = TestContext.Current.CancellationToken;
+
+		Assert.False(await validator.ValidateAsync(stranger.Token(), ct));
+		time.Now -= TimeSpan.FromDays(1);
+		time.Elapsed += TimeSpan.FromMinutes(2);
+		Assert.False(await validator.ValidateAsync(stranger.Token(expires: time.Now.UtcDateTime.AddMinutes(10)), ct));
+
+		Assert.Equal(2, jwks.Requests);
+	}
+
+	[Fact]
+	public async Task WallClockJumpsForward_DoesNotBypassThrottle()
+	{
+		var stranger = new TestAccessIssuer("kid-unknown");
+		var time = new FixedTimeProvider(DateTimeOffset.UtcNow);
+		var jwks = _issuer.Handler();
+		var (validator, _) = Build(jwks, time, enabled: true);
+		var ct = TestContext.Current.CancellationToken;
+
+		Assert.False(await validator.ValidateAsync(stranger.Token(), ct));
+		time.Now += TimeSpan.FromMinutes(5);
+		Assert.False(await validator.ValidateAsync(stranger.Token(expires: time.Now.UtcDateTime.AddMinutes(10)), ct));
+
+		Assert.Equal(1, jwks.Requests);
 	}
 
 	[Fact]
@@ -141,7 +194,7 @@ public sealed class CloudflareAccessMiddlewareTests
 		Assert.False(await validator.ValidateAsync(_issuer.Token(), ct));
 		Assert.Equal(1, stub.Requests);
 
-		time.Now += TimeSpan.FromMinutes(2);
+		time.Advance(TimeSpan.FromMinutes(2));
 		await Assert.ThrowsAnyAsync<HttpRequestException>(() => validator.ValidateAsync(_issuer.Token(), ct));
 		Assert.Equal(2, stub.Requests);
 	}
@@ -217,6 +270,9 @@ public sealed class CloudflareAccessMiddlewareTests
 		return Task.CompletedTask;
 	}
 
+	/// <summary>Token valid at the fake clock's current time.</summary>
+	private string Token(FixedTimeProvider time) => _issuer.Token(expires: time.Now.UtcDateTime.AddMinutes(10));
+
 	private async Task<int> RunAsync(Action<HttpContext> arrange)
 	{
 		var (validator, options) = Build(_issuer.Handler(), TimeProvider.System, enabled: true);
@@ -246,10 +302,12 @@ public sealed class CloudflareAccessMiddlewareTests
 	{
 		public int Requests { get; private set; }
 
+		public string Body { get; set; } = body;
+
 		protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
 		{
 			Requests++;
-			return Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(body) });
+			return Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(Body) });
 		}
 	}
 }
