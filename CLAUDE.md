@@ -15,7 +15,8 @@ Open source (Apache-2.0). Everything in the repo is in English. No personal path
   - `src/AiChromeProxy.Infrastructure` → Application, Domain — Cloudflare Access options and token validator; `AddInfrastructure(IConfiguration)`.
   - `src/AiChromeProxy.Server` — ASP.NET Core host and composition root (hosts Client, one SignalR hub routing `Envelope` by `Type`, Access middleware).
   - `src/AiChromeProxy.Client` — Blazor WebAssembly → Domain only.
-- Tests: `tests/AiChromeProxy.Tests` (xunit v3, CI), `tests/AiChromeProxy.E2E` (Reqnroll + Playwright), `tests/load` (k6), `benchmarks/AiChromeProxy.Benchmarks` (BenchmarkDotNet) — see [docs/testing.md](docs/testing.md).
+  - `src/AiChromeProxy.Tray` — Windows tray app (Avalonia, `net10.0-windows`, CommunityToolkit.Mvvm, Velopack) → Domain, Infrastructure only: service status/control (`IServiceControl`), elevated `--admin install|uninstall`, settings, logs, updates. See [docs/windows-host.md](docs/windows-host.md).
+- Tests: `tests/AiChromeProxy.Tests` (xunit v3, CI; `net10.0-windows` because it covers the tray), `tests/AiChromeProxy.E2E` (Reqnroll + Playwright), `tests/load` (k6), `benchmarks/AiChromeProxy.Benchmarks` (BenchmarkDotNet) — see [docs/testing.md](docs/testing.md).
 - JS only where C# can't: `fsaccess.js` (File System Access API), Monaco, mermaid.
 
 ## Process (SDD)
@@ -32,9 +33,10 @@ Sub-projects in order: skeleton+transport → Windows host → sync → Claude c
 - Search with ripgrep (`rg`), not `find` / `git grep` / `Select-String` — the primary dev environment is Windows.
 - Style — `.editorconfig` + `StyleCop.ruleset` + `stylecop.json` (tabs, CRLF, no `this.` prefix, private fields `_camelCase`). StyleCop is applied to all projects via `Directory.Build.props`; rules with `Action="Error"` fail the build.
 - Interfaces prefixed with `I`; async methods suffixed `Async`, returning `Task`/`Task<T>`.
-- Logging — `ILogger<T>` via DI.
+- Logging — `ILogger<T>` via DI; the Server writes through Serilog (console + CLEF files in `<DataDir>\logs` when a data directory is in use).
+- Windows interop that needs elevation or changes the machine (SCM, LSA, registry, Velopack) sits behind a seam (`IServiceControl`, `IAutoStart`, `IUpdateSource`) or in a thin `[ExcludeFromCodeCoverage]` class; the decisions it applies stay in tested code (`ServiceSetup`). Tests never install services, grant rights or write the registry.
 - Pure logic (SyncEngine, manifest diff, hash-guard, path normalization, stream-json parser) has no browser/IO dependencies and is covered by xUnit.
-- Never commit secrets: `appsettings.json` holds non-secret defaults only; per-machine values and secrets come from environment variables.
+- Never commit secrets: `appsettings.json` holds non-secret defaults only; per-machine values and secrets come from environment variables or `%ProgramData%\AiChromeProxy\appsettings.json` (written by the tray, outside the repo).
 
 ## Security
 
