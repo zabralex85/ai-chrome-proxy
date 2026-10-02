@@ -26,6 +26,7 @@ public sealed class TransportHubTests : IAsyncDisposable
 		{
 			b.UseEnvironment(Environments.Production);
 			b.UseStaticWebAssets();
+			b.UseSetting("Server:PublicHost", ServerHostingTests.PublicHost);
 			b.UseSetting("CloudflareAccess:TeamDomain", TestAccessIssuer.TeamDomain);
 			b.UseSetting("CloudflareAccess:Audience", TestAccessIssuer.Audience);
 			b.ConfigureServices(s => s.AddHttpClient(CloudflareAccessTokenValidator.JwksHttpClient)
@@ -100,6 +101,7 @@ public sealed class TransportHubTests : IAsyncDisposable
 		using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
 		{
 			b.UseEnvironment(Environments.Production);
+			b.UseSetting("Server:PublicHost", ServerHostingTests.PublicHost);
 			b.UseSetting("CloudflareAccess:TeamDomain", string.Empty);
 			b.UseSetting("CloudflareAccess:Audience", string.Empty);
 		});

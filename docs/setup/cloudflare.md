@@ -25,16 +25,25 @@ Open the application and copy its **Application Audience (AUD) tag**. Your team 
 
 ## 4. Configure the Server
 
-Set two persistent user environment variables (PowerShell):
+Three values:
+
+| Setting | Example | What it is |
+|---|---|---|
+| `CloudflareAccess:TeamDomain` | `<team>.cloudflareaccess.com` | Team domain from step 3 — bare host name, no `https://`, path, port or trailing slash. |
+| `CloudflareAccess:Audience` | `<AUD tag>` | Application Audience (AUD) tag from step 3. |
+| `Server:PublicHost` | `code.example.com` | Public hostname from step 2. The Server answers only to this `Host` header plus `127.0.0.1` / `localhost` (DNS-rebinding hardening); any other host gets `400`. |
+
+**Installed as a Windows service** (see [windows-host.md](../windows-host.md)): enter them in the tray's **Settings…** window; it writes them to `%ProgramData%\AiChromeProxy\appsettings.json`.
+
+**Running from source** (`dotnet run`): set persistent user environment variables (PowerShell), then open a new terminal so they are visible:
 
 ```powershell
 [Environment]::SetEnvironmentVariable("CloudflareAccess__TeamDomain", "<team>.cloudflareaccess.com", "User")
 [Environment]::SetEnvironmentVariable("CloudflareAccess__Audience", "<AUD tag>", "User")
+[Environment]::SetEnvironmentVariable("Server__PublicHost", "code.example.com", "User")
 ```
 
-Open a new terminal afterwards so the variables are visible. (The Windows host installer will manage this configuration later.)
-
-Outside `Development` the Server refuses to start if either value is missing.
+Environment variables override the settings file. Outside `Development` the Server refuses to start if any of the three values is missing or a host name is not bare.
 
 ## 5. Run and verify
 
