@@ -1,3 +1,4 @@
+using System.Net;
 using AiChromeProxy.Server.Security;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
@@ -14,7 +15,7 @@ public sealed class CloudflareAccessMiddlewareTests
 	{
 		var status = await RunAsync(ctx => ctx.Request.Headers[CloudflareAccessMiddleware.HeaderName] = _issuer.Token());
 
-		Assert.Equal(StatusCodes.Status200OK, status);
+		Assert.Equal(StatusCodes.Status204NoContent, status);
 	}
 
 	[Fact]
@@ -22,7 +23,7 @@ public sealed class CloudflareAccessMiddlewareTests
 	{
 		var status = await RunAsync(ctx => ctx.Request.Headers.Cookie = $"{CloudflareAccessMiddleware.CookieName}={_issuer.Token()}");
 
-		Assert.Equal(StatusCodes.Status200OK, status);
+		Assert.Equal(StatusCodes.Status204NoContent, status);
 	}
 
 	[Fact]
@@ -87,6 +88,36 @@ public sealed class CloudflareAccessMiddlewareTests
 	}
 
 	[Fact]
+	public async Task JwksEndpointFailing_FetchedAtMostOncePerMinute()
+	{
+		var time = new FixedTimeProvider(DateTimeOffset.UtcNow);
+		var stub = new StubHandler(HttpStatusCode.InternalServerError, "boom");
+		var (validator, _) = Build(stub, time, enabled: true);
+		var ct = TestContext.Current.CancellationToken;
+
+		await Assert.ThrowsAnyAsync<HttpRequestException>(() => validator.ValidateAsync(_issuer.Token(), ct));
+		Assert.False(await validator.ValidateAsync(_issuer.Token(), ct));
+		Assert.Equal(1, stub.Requests);
+
+		time.Now += TimeSpan.FromMinutes(2);
+		await Assert.ThrowsAnyAsync<HttpRequestException>(() => validator.ValidateAsync(_issuer.Token(), ct));
+		Assert.Equal(2, stub.Requests);
+	}
+
+	[Fact]
+	public async Task EmptyJwks_FetchedAtMostOncePerMinute()
+	{
+		var time = new FixedTimeProvider(DateTimeOffset.UtcNow);
+		var stub = new StubHandler(HttpStatusCode.OK, "{\"keys\":[]}");
+		var (validator, _) = Build(stub, time, enabled: true);
+		var ct = TestContext.Current.CancellationToken;
+
+		Assert.False(await validator.ValidateAsync(_issuer.Token(), ct));
+		Assert.False(await validator.ValidateAsync(_issuer.Token(), ct));
+		Assert.Equal(1, stub.Requests);
+	}
+
+	[Fact]
 	public async Task Disabled_PassesWithoutToken()
 	{
 		var (validator, options) = Build(_issuer.Handler(), TimeProvider.System, enabled: false);
@@ -95,7 +126,7 @@ public sealed class CloudflareAccessMiddlewareTests
 
 		await middleware.InvokeAsync(ctx);
 
-		Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+		Assert.Equal(StatusCodes.Status204NoContent, ctx.Response.StatusCode);
 	}
 
 	private static (CloudflareAccessTokenValidator Validator, IOptions<CloudflareAccessOptions> Options) Build(
@@ -115,7 +146,7 @@ public sealed class CloudflareAccessMiddlewareTests
 
 	private static Task Ok(HttpContext context)
 	{
-		context.Response.StatusCode = StatusCodes.Status200OK;
+		context.Response.StatusCode = StatusCodes.Status204NoContent;
 		return Task.CompletedTask;
 	}
 
@@ -129,5 +160,16 @@ public sealed class CloudflareAccessMiddlewareTests
 		await middleware.InvokeAsync(ctx);
 
 		return ctx.Response.StatusCode;
+	}
+
+	private sealed class StubHandler(HttpStatusCode status, string body) : HttpMessageHandler
+	{
+		public int Requests { get; private set; }
+
+		protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+		{
+			Requests++;
+			return Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(body) });
+		}
 	}
 }

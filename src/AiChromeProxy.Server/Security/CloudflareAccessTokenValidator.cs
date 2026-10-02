@@ -13,6 +13,7 @@ public sealed class CloudflareAccessTokenValidator(
 	public const string JwksHttpClient = "cf-access-jwks";
 
 	private static readonly TimeSpan MinRefreshInterval = TimeSpan.FromMinutes(1);
+	private static readonly TimeSpan JwksTimeout = TimeSpan.FromSeconds(10);
 
 	private readonly JsonWebTokenHandler _handler = new();
 	private readonly SemaphoreSlim _refreshLock = new(1, 1);
@@ -23,11 +24,11 @@ public sealed class CloudflareAccessTokenValidator(
 	{
 		if (_keys.Count == 0)
 		{
-			await RefreshKeysAsync(force: true, ct);
+			await RefreshKeysAsync(ct);
 		}
 
 		var result = await _handler.ValidateTokenAsync(token, Parameters());
-		if (!result.IsValid && result.Exception is SecurityTokenSignatureKeyNotFoundException && await RefreshKeysAsync(force: false, ct))
+		if (!result.IsValid && result.Exception is SecurityTokenSignatureKeyNotFoundException && await RefreshKeysAsync(ct))
 		{
 			result = await _handler.ValidateTokenAsync(token, Parameters());
 		}
@@ -43,6 +44,7 @@ public sealed class CloudflareAccessTokenValidator(
 			ValidIssuer = $"https://{o.TeamDomain}",
 			ValidAudience = o.Audience,
 			IssuerSigningKeys = _keys,
+			ValidAlgorithms = [SecurityAlgorithms.RsaSha256],
 			ClockSkew = TimeSpan.FromMinutes(1),
 			LifetimeValidator = (notBefore, expires, _, p) =>
 			{
@@ -54,21 +56,23 @@ public sealed class CloudflareAccessTokenValidator(
 	}
 
 	/// <returns>True when keys were (re)loaded.</returns>
-	private async Task<bool> RefreshKeysAsync(bool force, CancellationToken ct)
+	private async Task<bool> RefreshKeysAsync(CancellationToken ct)
 	{
 		await _refreshLock.WaitAsync(ct);
 		try
 		{
 			var now = time.GetUtcNow();
-			if (!force && now - _lastRefresh < MinRefreshInterval)
+			if (now - _lastRefresh < MinRefreshInterval)
 			{
 				return false;
 			}
 
-			var url = $"https://{options.Value.TeamDomain}/cdn-cgi/access/certs";
-			var json = await httpFactory.CreateClient(JwksHttpClient).GetStringAsync(url, ct);
-			_keys = new JsonWebKeySet(json).GetSigningKeys();
 			_lastRefresh = now;
+			var url = $"https://{options.Value.TeamDomain}/cdn-cgi/access/certs";
+			var client = httpFactory.CreateClient(JwksHttpClient);
+			client.Timeout = JwksTimeout;
+			var json = await client.GetStringAsync(url, ct);
+			_keys = new JsonWebKeySet(json).GetSigningKeys();
 			return true;
 		}
 		finally
