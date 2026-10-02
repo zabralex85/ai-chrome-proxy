@@ -7,6 +7,9 @@ namespace AiChromeProxy.Tray.Services;
 /// <summary>The decisions behind service installation, kept out of the P/Invoke code so they are unit-tested.</summary>
 public static class ServiceSetup
 {
+	/// <summary>Inheritance of the rule on the data root.</summary>
+	public const InheritanceFlags Inherit = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+
 	public const string DisplayName = "AI Chrome Proxy";
 
 	/// <summary>SERVICE_QUERY_CONFIG | SERVICE_QUERY_STATUS | SERVICE_START | SERVICE_STOP: tray Start/Stop/Restart without UAC.</summary>
@@ -57,31 +60,33 @@ public static class ServiceSetup
 		return bytes;
 	}
 
-	/// <summary>Creates <c>&lt;DataDir&gt;</c> and <c>logs</c> with inheritable full control for the service account.</summary>
+	/// <summary>Creates <c>&lt;DataDir&gt;</c> and <c>logs</c>; the root grants the service account inheritable Modify (written without touching existing children).</summary>
 	public static void PrepareDataDirectory(DataDirectory dataDir, SecurityIdentifier account) => PrepareDataDirectory(dataDir, account, account);
 
 	/// <summary>As above, refusing a root or <c>logs</c> that is a link or was created by an untrusted user (<c>%ProgramData%</c> lets standard users pre-create folders).</summary>
 	public static void PrepareDataDirectory(DataDirectory dataDir, SecurityIdentifier account, SecurityIdentifier controlUser)
 	{
-		// Root first: nothing is created inside it before it was checked. Handles stay open until the ACL is written.
+		// Root first: nothing is created inside it before it was checked. The handle stays open until the ACL is written.
 		using var rootGuard = DataDirectoryGuard.Acquire(dataDir.Root);
 		EnsureDirectorySafe(dataDir.Root, account, controlUser);
+		var security = rootGuard.GetSecurity();
+		if (!HasModifyGrant(security, account))
+		{
+			security.AddAccessRule(new FileSystemAccessRule(account, FileSystemRights.Modify, Inherit, PropagationFlags.None, AccessControlType.Allow));
+			rootGuard.SetDacl(security);
+		}
+
+		// Created after the DACL is set, so it inherits the rule and no ACL is written on it (or on any pre-existing child).
 		using var logsGuard = DataDirectoryGuard.Acquire(dataDir.Logs);
 		EnsureDirectorySafe(dataDir.Logs, account, controlUser);
-		var root = new DirectoryInfo(dataDir.Root);
-		var security = root.GetAccessControl();
-		security.AddAccessRule(new FileSystemAccessRule(
-			account,
-			FileSystemRights.FullControl,
-			InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
-			PropagationFlags.None,
-			AccessControlType.Allow));
-		root.SetAccessControl(security);
 
-		// The held handles share WRITE, so logs could in theory be turned into a junction in place meanwhile: re-check it.
-		if (new DirectoryInfo(dataDir.Logs).Attributes.HasFlag(FileAttributes.ReparsePoint))
+		// The held handles share WRITE, so either could in theory be turned into a junction in place meanwhile: re-check.
+		foreach (var path in new[] { dataDir.Root, dataDir.Logs })
 		{
-			throw new InvalidOperationException($"{dataDir.Logs} is a link; delete it and retry.");
+			if (new DirectoryInfo(path).Attributes.HasFlag(FileAttributes.ReparsePoint))
+			{
+				throw new InvalidOperationException($"{path} is a link; delete it and retry.");
+			}
 		}
 	}
 
@@ -143,4 +148,11 @@ public static class ServiceSetup
 			throw new InvalidOperationException($"{path} was created by another user; delete it and retry.");
 		}
 	}
+
+	private static bool HasModifyGrant(DirectorySecurity security, SecurityIdentifier account) =>
+		security.GetAccessRules(true, false, typeof(SecurityIdentifier)).Cast<FileSystemAccessRule>().Any(r =>
+			r.IdentityReference == account
+			&& r.AccessControlType == AccessControlType.Allow
+			&& (r.FileSystemRights & FileSystemRights.Modify) == FileSystemRights.Modify
+			&& r.InheritanceFlags == Inherit);
 }

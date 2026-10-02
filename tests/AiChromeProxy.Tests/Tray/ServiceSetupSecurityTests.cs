@@ -99,6 +99,51 @@ public sealed class ServiceSetupSecurityTests : IDisposable
 	}
 
 	[Fact]
+	public void PrepareDataDirectory_ExistingChildren_KeepTheirExactDacl()
+	{
+		var dataDir = new DataDirectory(Path.Combine(_temp, "children"));
+		Directory.CreateDirectory(dataDir.Logs);
+		var file = Path.Combine(dataDir.Root, "user.txt");
+		File.WriteAllText(file, "x");
+		var oldLog = Path.Combine(dataDir.Logs, "old.log");
+		File.WriteAllText(oldLog, "x");
+		string[] paths = [file, dataDir.Logs, oldLog];
+		var before = paths.Select(RawDacl.Sddl).ToArray();
+
+		ServiceSetup.PrepareDataDirectory(dataDir, Current, Current);
+
+		Assert.Equal(before, paths.Select(RawDacl.Sddl).ToArray());
+	}
+
+	[Fact]
+	public void PrepareDataDirectory_Twice_RootDaclUnchanged()
+	{
+		var dataDir = new DataDirectory(Path.Combine(_temp, "twice"));
+		ServiceSetup.PrepareDataDirectory(dataDir, Current, Current);
+		var first = RawDacl.Sddl(dataDir.Root);
+
+		ServiceSetup.PrepareDataDirectory(dataDir, Current, Current);
+
+		Assert.Equal(first, RawDacl.Sddl(dataDir.Root));
+	}
+
+	[Fact]
+	public void PrepareDataDirectory_RootRuleIsModifyContainerAndObjectInherit_LogsInheritsIt()
+	{
+		var dataDir = new DataDirectory(Path.Combine(_temp, "rule"));
+		Directory.CreateDirectory(dataDir.Root);
+		var account = new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null);
+
+		ServiceSetup.PrepareDataDirectory(dataDir, account, Current);
+
+		var rule = Rules(dataDir.Root, inherited: false).Single(r => r.IdentityReference == account);
+		Assert.Equal(FileSystemRights.Modify | FileSystemRights.Synchronize, rule.FileSystemRights);
+		Assert.Equal(InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, rule.InheritanceFlags);
+		Assert.Equal(PropagationFlags.None, rule.PropagationFlags);
+		Assert.Contains(Rules(dataDir.Logs, inherited: true), r => r.IdentityReference == account && r.IsInherited && r.FileSystemRights.HasFlag(FileSystemRights.Modify));
+	}
+
+	[Fact]
 	public void EnsureServiceAccountIsControlUser_Different_Refused_Same_Allowed()
 	{
 		ServiceSetup.EnsureServiceAccountIsControlUser(Current, Current);
@@ -211,4 +256,7 @@ public sealed class ServiceSetupSecurityTests : IDisposable
 		process.WaitForExit();
 		Assert.Equal(0, process.ExitCode);
 	}
+
+	private static IEnumerable<FileSystemAccessRule> Rules(string path, bool inherited) =>
+		new DirectoryInfo(path).GetAccessControl().GetAccessRules(true, inherited, typeof(SecurityIdentifier)).Cast<FileSystemAccessRule>();
 }

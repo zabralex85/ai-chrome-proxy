@@ -72,7 +72,7 @@ public sealed class ServiceSetupTests
 	}
 
 	[Fact]
-	public void PrepareDataDirectory_CreatesLogs_InheritableFullControlForAccount()
+	public void PrepareDataDirectory_CreatesLogs_InheritableModifyForAccount()
 	{
 		var dataDir = new DataDirectory(Path.Combine(Path.GetTempPath(), "aicp-tests", Guid.NewGuid().ToString("N")));
 		var account = WindowsIdentity.GetCurrent().User!;
@@ -84,7 +84,7 @@ public sealed class ServiceSetupTests
 			var rules = new DirectoryInfo(dataDir.Root).GetAccessControl().GetAccessRules(true, false, typeof(SecurityIdentifier)).Cast<FileSystemAccessRule>();
 			Assert.Contains(rules, r => r.IdentityReference == account
 				&& r.AccessControlType == AccessControlType.Allow
-				&& r.FileSystemRights.HasFlag(FileSystemRights.FullControl)
+				&& r.FileSystemRights.HasFlag(FileSystemRights.Modify) && !r.FileSystemRights.HasFlag(FileSystemRights.FullControl)
 				&& r.InheritanceFlags == (InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit));
 		}
 		finally

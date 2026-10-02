@@ -9,9 +9,9 @@
         WindowStartupLocation="CenterScreen">
   <StackPanel Margin="16" Spacing="8">
     <TextBlock TextWrapping="Wrap"
-               Text="The service starts with Windows, before anyone logs in, and runs as this account so Claude Code sees its profile. Windows needs the account's password for that; it is stored only by the Service Control Manager." />
+               Text="The service starts with Windows, before anyone logs in, and runs as your account (it must be the account you are signed in with) so Claude Code sees its profile. Windows needs the account's password for that; it is stored only by the Service Control Manager." />
     <TextBlock Text="Account" />
-    <TextBox Text="{Binding Account}" />
+    <TextBox Text="{Binding Account}" IsReadOnly="True" />
     <TextBlock Text="Windows password (not the PIN)" />
     <TextBox Text="{Binding Password}" PasswordChar="●" />
     <TextBlock Text="{Binding Error}" Foreground="#C42B1C" TextWrapping="Wrap"
