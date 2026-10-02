@@ -94,6 +94,26 @@ Manual acceptance checklist (`docs/windows-host.md`), run on a real Windows mach
 
 Not automated: tray UI rendering and real service installation in CI.
 
+## Changes adopted from the prototype
+
+Verified on a prototype before planning; these override the sections above where they differ.
+
+1. Install order: grant `SeServiceLogonRight` first, then verify the password with `LogonUser(LOGON32_LOGON_SERVICE)` (Windows returns 1385 until the right exists). Error 1326 → "Wrong password — a PIN does not work for services".
+2. Uninstall marks the service for deletion first, then waits up to 30 s for it to stop, so a killed Velopack hook still ends with the service gone.
+3. The tray polls service status every 2 s for its whole lifetime (cheap SCM query; tray-menu open events are not reliable on Win32).
+4. "Open UI" opens `https://<PublicHost>/` when set (loopback answers 401 without an Access token); loopback only without a public host.
+5. File logs and the persistent settings file are used only when a data directory is in use (service or `AICP_DATA_DIR`); `dotnet run`, xunit and E2E never write to `%ProgramData%`.
+6. CLEF is written rendered (`@m`, `RenderedCompactJsonFormatter`), so the tray needs no template renderer.
+7. "Install service…" is always enabled; on an existing service it reconfigures account, password and path (needed after a Windows password change).
+8. `--admin install|uninstall` passes the tray's user (`DOMAIN\user`) so over-the-shoulder UAC (a different admin) still configures the right account.
+9. Additions: single-instance tray (mutex); a pending-update marker so the next tray start restarts a service an interrupted update left stopped; Velopack auto-apply-on-startup disabled (it would swap files under a running service); the before-uninstall hook also removes the autostart entry; Avalonia headless smoke test of the three windows.
+10. Shared types live in Infrastructure (`ServerOptions`, `HostName`, `DataDirectory`) because the tray must not reference Server.
+11. Tray port validation 1–65535 (the Server also accepts 0, used by E2E for a random port).
+12. The update repository URL is injected at release build time (`-p:UpdateRepository=…`); local builds have none and skip update checks — no hard-coded owner in the repo.
+13. Development without `PublicHost`: AllowedHosts = `127.0.0.1;localhost` (never `*`).
+14. The tests project targets `net10.0-windows` (it references the tray); Avalonia 12.1.3 (stable).
+15. Never name a source folder `Logs`, `Log`, `Release`, `Debug`, `bin` or `obj` — the Visual Studio `.gitignore` silently drops them.
+
 ## Done when
 
 - Tag `v0.1.0` produces a GitHub Release with `Setup.exe`.
