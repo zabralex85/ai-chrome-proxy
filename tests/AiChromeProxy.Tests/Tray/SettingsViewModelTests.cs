@@ -33,10 +33,12 @@ public sealed class SettingsViewModelTests : IDisposable
 			["DOTNET_ENVIRONMENT"] = "Development",
 			["ASPNETCORE_URLS"] = "http://+:80",
 			["ServerName"] = "x",
+			["Serilog__MinimumLevel"] = "Debug",
+			["AICP_DATA_DIR"] = @"D:icp",
 		};
 
 		Assert.Equal(
-			["ASPNETCORE_ENVIRONMENT", "cloudflareaccess__Audience", "DOTNET_ENVIRONMENT", "Server__PublicHost"],
+			["AICP_DATA_DIR", "ASPNETCORE_ENVIRONMENT", "cloudflareaccess__Audience", "DOTNET_ENVIRONMENT", "Serilog__MinimumLevel", "Server__PublicHost"],
 			SettingsViewModel.OverridingVariables(environment));
 		Assert.Empty(SettingsViewModel.OverridingVariables(new Dictionary<string, string> { ["PATH"] = "x" }));
 	}

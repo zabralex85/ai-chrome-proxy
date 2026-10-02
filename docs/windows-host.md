@@ -15,7 +15,7 @@ Before exposing the Server, set up the tunnel and Access: [setup/cloudflare.md](
 
 `AICP_DATA_DIR` overrides `%ProgramData%\AiChromeProxy` for tests and local runs only (a relative value is made absolute); **Install service…** ignores it and always uses `%ProgramData%\AiChromeProxy`. The settings file is read only by the service or when `AICP_DATA_DIR` is set; environment variables still override it.
 
-> **Remove leftover environment variables before relying on the tray's Settings.** If you ran the Server from source, User-scope `CloudflareAccess__*`, `Server__*`, `ASPNETCORE_ENVIRONMENT` or `DOTNET_ENVIRONMENT` variables may also reach the service and silently win over `appsettings.json`. The **Settings…** window shows a warning line naming any of them it sees; delete them (System Properties → Environment Variables, or `[Environment]::SetEnvironmentVariable("<name>", $null, "User")`) and restart the service.
+> **Remove leftover environment variables before relying on the tray's Settings.** If you ran the Server from source, User-scope `CloudflareAccess__*`, `Server__*`, `Serilog__*`, `ASPNETCORE_ENVIRONMENT` or `DOTNET_ENVIRONMENT` variables may also reach the service and silently win over `appsettings.json`; a leftover `AICP_DATA_DIR` moves the service to an unprotected data folder. The **Settings…** window shows a warning line naming any of them it sees; delete them (System Properties → Environment Variables, or `[Environment]::SetEnvironmentVariable("<name>", $null, "User")`) and restart the service.
 
 ## Install
 

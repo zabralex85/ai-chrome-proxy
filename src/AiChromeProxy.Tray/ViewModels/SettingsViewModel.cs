@@ -87,6 +87,8 @@ public sealed partial class SettingsViewModel : ObservableObject
 		environment.Keys.Cast<string>()
 			.Where(name => name.StartsWith("CloudflareAccess__", StringComparison.OrdinalIgnoreCase)
 				|| name.StartsWith("Server__", StringComparison.OrdinalIgnoreCase)
+				|| name.StartsWith("Serilog__", StringComparison.OrdinalIgnoreCase)
+				|| name.Equals("AICP_DATA_DIR", StringComparison.OrdinalIgnoreCase)
 				|| name.Equals("ASPNETCORE_ENVIRONMENT", StringComparison.OrdinalIgnoreCase)
 				|| name.Equals("DOTNET_ENVIRONMENT", StringComparison.OrdinalIgnoreCase))
 			.Order(StringComparer.OrdinalIgnoreCase)

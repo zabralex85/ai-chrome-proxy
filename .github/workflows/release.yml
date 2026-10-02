@@ -26,7 +26,7 @@ jobs:
       - name: Version from tag (v1.2.3 -> 1.2.3)
         shell: pwsh
         run: |
-          if ($env:TAG -cnotmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$') { throw "Tag '$env:TAG' is not vMAJOR.MINOR.PATCH[-suffix]." }
+          if ($env:TAG -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?\z') { throw "Tag '$env:TAG' is not vMAJOR.MINOR.PATCH[-suffix]." }
           "VERSION=$($env:TAG.Substring(1))" >> $env:GITHUB_ENV
 
       - name: Restore
