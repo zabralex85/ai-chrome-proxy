@@ -4,7 +4,7 @@ using System.Text.Json;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 
-namespace AiChromeProxy.Tests.Security;
+namespace AiChromeProxy.Tests.Infrastructure;
 
 /// <summary>Plays the Cloudflare Access side in tests: RSA key, JWKS document, signed tokens.</summary>
 public sealed class TestAccessIssuer

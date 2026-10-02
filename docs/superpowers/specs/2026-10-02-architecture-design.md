@@ -74,10 +74,12 @@ flowchart LR
 
 | Project | Type | Responsibility |
 |---|---|---|
-| `Shared` | classlib | Protocol DTOs (manifest, chunks, edits, chat events). No dependencies. |
+| `Domain` | classlib | Wire contract (`Envelope`) and core entities (manifest, chunks, edits, chat events). No dependencies. |
+| `Application` | classlib | Envelope router and handlers (sync, chat), use cases; ports for mirror, file watching and the `claude` runner. Depends on Domain only. |
+| `Infrastructure` | classlib | Cloudflare Access validator; mirror (`Mirror:Root`, default `data/`, gitignored), FileWatcher and ClaudeRunner behind Application ports. Depends on Application/Domain. |
 | `Client` | Blazor WASM | SyncEngine (pure C#), UI, JS interop: `fsaccess.js`, Monaco (`BlazorMonaco`), mermaid. |
-| `Server` | ASP.NET Core | Hosts Client. TransportHub + envelope handlers (sync, chat), mirror (`Mirror:Root`, default `data/`, gitignored), FileWatcher, ClaudeRunner. |
-| `Tests` | xUnit | SyncEngine logic, protocol, ClaudeRunner stream-json parser, server hubs (`WebApplicationFactory`). |
+| `Server` | ASP.NET Core | Composition root; hosts Client; TransportHub, Cloudflare Access middleware, Windows Service hosting. |
+| `Tests` | xUnit (+ `E2E` Reqnroll/Playwright, k6 `tests/load`, `Benchmarks` BenchmarkDotNet) | SyncEngine logic, protocol, ClaudeRunner stream-json parser, server hubs (`WebApplicationFactory`). |
 
 ### Sync flow
 
@@ -119,6 +121,7 @@ flowchart LR
 Each sub-project: its own spec → plan → SDD.
 
 1. **Skeleton + transport** ([spec](2026-10-02-skeleton-transport-design.md)) — 4-project solution (StyleCop via `Directory.Build.props`), Server hosts Client, single SignalR hub with envelope routing + client `ITransport`, Cloudflare Access JWT check, CI (build → test → coverage ≥ 85% via coverlet.MTP threshold), cloudflared + Access setup guide.
+1.5. **Clean architecture + test layers** ([spec](2026-10-02-clean-arch-and-test-layers-design.md)) — Domain/Application/Infrastructure/Server split with architecture tests; E2E BDD (Reqnroll + Playwright), k6 load, BenchmarkDotNet; only xunit runs in CI.
 2. **Windows host** — Server as a Windows Service under the user's account (auto-start, no login needed), file logging, persistent config in `%ProgramData%`, Avalonia tray: first-run wizard, install/uninstall/start/stop, status, log viewer (current + historical), open UI; Velopack `Setup.exe` built by a tag-triggered release workflow.
 3. **Sync** — fsaccess.js, SyncEngine, sync handlers, mirror, FileWatcher, hash-guard, conflict UI.
 4. **Claude chat** — ClaudeRunner (configurable `Agent:*`, local-model ready), chat handlers, streaming, markdown + mermaid.

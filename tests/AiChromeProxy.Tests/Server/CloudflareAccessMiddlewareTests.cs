@@ -1,10 +1,12 @@
 using System.Net;
+using AiChromeProxy.Infrastructure.Security;
 using AiChromeProxy.Server.Security;
+using AiChromeProxy.Tests.Infrastructure;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
-namespace AiChromeProxy.Tests.Security;
+namespace AiChromeProxy.Tests.Server;
 
 public sealed class CloudflareAccessMiddlewareTests
 {

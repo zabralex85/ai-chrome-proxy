@@ -1,4 +1,4 @@
-namespace AiChromeProxy.Shared;
+namespace AiChromeProxy.Domain;
 
 public static class MessageTypes
 {

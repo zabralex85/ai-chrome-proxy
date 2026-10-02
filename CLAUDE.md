@@ -9,7 +9,13 @@ Open source (Apache-2.0). Everything in the repo is in English. No personal path
 ## Stack
 
 - .NET 10 (LTS, latest stable) and latest stable packages, C#, `<Nullable>enable</Nullable>`, `<ImplicitUsings>enable</ImplicitUsings>`.
-- `Client` — Blazor WebAssembly, `Server` — ASP.NET Core (hosts Client, one SignalR hub routing `Envelope` by `Type`), `Shared` — protocol DTOs, `Tests` — xUnit.
+- Minimal clean architecture (dependencies point inward; enforced by `tests/AiChromeProxy.Tests/Architecture`):
+  - `src/AiChromeProxy.Domain` — wire contract (`Envelope`, `MessageTypes`), BCL only.
+  - `src/AiChromeProxy.Application` → Domain — envelope routing and handlers; `AddApplication()`.
+  - `src/AiChromeProxy.Infrastructure` → Application, Domain — Cloudflare Access options and token validator; `AddInfrastructure(IConfiguration)`.
+  - `src/AiChromeProxy.Server` — ASP.NET Core host and composition root (hosts Client, one SignalR hub routing `Envelope` by `Type`, Access middleware).
+  - `src/AiChromeProxy.Client` — Blazor WebAssembly → Domain only.
+- Tests: `tests/AiChromeProxy.Tests` (xunit v3, CI), `tests/AiChromeProxy.E2E` (Reqnroll + Playwright), `tests/load` (k6), `benchmarks/AiChromeProxy.Benchmarks` (BenchmarkDotNet) — see [docs/testing.md](docs/testing.md).
 - JS only where C# can't: `fsaccess.js` (File System Access API), Monaco, mermaid.
 
 ## Process (SDD)
@@ -47,6 +53,8 @@ dotnet test --project tests/AiChromeProxy.Tests -c Release --no-build --coverlet
 ```
 
 Gate: `>= 85%` line coverage (coverlet exits non-zero below it). Gate failed — add tests, don't lower the threshold. Test failed — fix it, don't disable it.
+
+E2E, load and benchmarks run locally only — setup and commands in [docs/testing.md](docs/testing.md).
 
 ## PR workflow
 

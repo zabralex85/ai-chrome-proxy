@@ -1,8 +1,8 @@
-using AiChromeProxy.Server.Security;
+using AiChromeProxy.Infrastructure.Security;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 
-namespace AiChromeProxy.Tests.Security;
+namespace AiChromeProxy.Tests.Infrastructure;
 
 public sealed class CloudflareAccessOptionsTests
 {

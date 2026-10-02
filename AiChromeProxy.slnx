@@ -1,10 +1,16 @@
 <Solution>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/AiChromeProxy.Benchmarks/AiChromeProxy.Benchmarks.csproj" />
+  </Folder>
   <Folder Name="/src/">
+    <Project Path="src/AiChromeProxy.Application/AiChromeProxy.Application.csproj" />
     <Project Path="src/AiChromeProxy.Client/AiChromeProxy.Client.csproj" />
+    <Project Path="src/AiChromeProxy.Domain/AiChromeProxy.Domain.csproj" />
+    <Project Path="src/AiChromeProxy.Infrastructure/AiChromeProxy.Infrastructure.csproj" />
     <Project Path="src/AiChromeProxy.Server/AiChromeProxy.Server.csproj" />
-    <Project Path="src/AiChromeProxy.Shared/AiChromeProxy.Shared.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/AiChromeProxy.E2E/AiChromeProxy.E2E.csproj" />
     <Project Path="tests/AiChromeProxy.Tests/AiChromeProxy.Tests.csproj" />
   </Folder>
 </Solution>
