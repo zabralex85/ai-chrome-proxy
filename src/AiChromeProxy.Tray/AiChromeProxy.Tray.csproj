@@ -9,8 +9,6 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\tray.ico</ApplicationIcon>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
-    <!-- GitHub repository the tray updates from. The release workflow passes -p:UpdateRepository=https://github.com/<owner>/<repo>; empty = no update checks. -->
-    <UpdateRepository Condition="'$(UpdateRepository)' == ''"></UpdateRepository>
   </PropertyGroup>
 
   <ItemGroup>
@@ -22,6 +20,7 @@
     <PackageReference Include="Velopack" Version="1.2.161" />
   </ItemGroup>
 
+  <!-- GitHub repository the tray updates from. The release workflow passes -p:UpdateRepository=https://github.com/<owner>/<repo>; unset = no update checks. -->
   <ItemGroup>
     <AssemblyMetadata Include="UpdateRepository" Value="$(UpdateRepository)" />
   </ItemGroup>

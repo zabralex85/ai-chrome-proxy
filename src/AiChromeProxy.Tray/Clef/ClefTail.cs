@@ -10,7 +10,6 @@ public sealed class ClefTail(string path, long maxInitialBytes = ClefTail.Initia
 
 	private long _position;
 	private bool _started;
-	private bool _skipPartialLine;
 
 	public string Path { get; } = path;
 
@@ -22,7 +21,6 @@ public sealed class ClefTail(string path, long maxInitialBytes = ClefTail.Initia
 		{
 			_started = true;
 			_position = Math.Max(0, stream.Length - maxInitialBytes);
-			_skipPartialLine = _position > 0;
 		}
 		else if (stream.Length < _position)
 		{
