@@ -125,6 +125,21 @@ Each sub-project: its own spec → plan → SDD.
 5. **Code navigator** — tree, Monaco (read-only), highlighting via `path:line` / `path#Symbol`.
 6. **Mobile app** (`mobile/`, Flutter) — chat, progress, notifications over the same hub; Access service-token auth; push channel choice.
 
+## Required follow-ups from the skeleton review
+
+Found in the whole-branch review of sub-project 1; each must land in the sub-project named, no later.
+
+| Follow-up | Why | Lands in |
+|---|---|---|
+| Handler contract: `HandleAsync(Envelope, EnvelopeContext ctx, ct)` with connection id, Access identity (email from the JWT) and `ctx.SendAsync` for server-initiated messages; long-running work off the hub invocation (SignalR runs one invocation per client at a time by default). | Streaming agent events and pushing file changes need server→client sends; a long agent run must not block cancel/ping. | Sync (first spec after Windows host) |
+| Error contract: hub catches handler failures and replies `error {code, message?}` with the request's `correlationId` (`bad_request` for null/empty `Type`, `internal` for exceptions). Client `RequestAsync(envelope, timeout)` helper owns correlation. | Today a failing handler or a null `Type` leaves the caller waiting forever. | Sync |
+| Message size: keep SignalR's 32 KB `MaximumReceiveMessageSize`; chunk file content explicitly. | DoS-safe default; sync must not raise it blindly. | Sync |
+| Reconnect: the default retry policy gives up after ~42 s; sync needs indefinite reconnect + manifest re-exchange. | Long-lived sessions over a home connection. | Sync |
+| `Origin` allow-list on `/hub*` against the configured public hostname; docs: Access cookie HttpOnly + SameSite=Lax/Strict + binding cookie. | Auth rides on an ambient cookie; WebSockets aren't covered by CORS → cross-site WebSocket hijacking = RCE once the agent runs commands. | Before Claude chat |
+| Abort a connection when its Access token `exp` passes (store `exp` at upgrade time). | An open socket otherwise outlives the Access session/revocation. | Before Claude chat |
+| `AllowedHosts` restricted to the public host + `127.0.0.1`. | DNS-rebinding hardening on the home machine. | Windows host |
+| JWKS key TTL (coarse periodic refresh); monotonic clock for the throttle (`GetTimestamp`/`GetElapsedTime`); TeamDomain host-format check (wizard). | Retired keys stay trusted until restart; clock jumps stall refresh; misconfig only surfaces at first request. | Windows host |
+
 ## Out of scope (MVP)
 
 - WebRTC transport / end-to-end encryption for fully-local privacy mode (`ITransport` seam kept).
