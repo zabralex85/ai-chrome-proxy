@@ -1,0 +1,33 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:AiChromeProxy.Tray.ViewModels"
+        x:Class="AiChromeProxy.Tray.Views.SettingsWindow"
+        x:DataType="vm:SettingsViewModel"
+        Title="AI Chrome Proxy settings"
+        Icon="/Assets/tray.ico"
+        Width="520" SizeToContent="Height" CanResize="False"
+        WindowStartupLocation="CenterScreen">
+  <StackPanel Margin="16" Spacing="8">
+    <TextBlock Text="Cloudflare Access team domain" />
+    <TextBox Text="{Binding TeamDomain}" PlaceholderText="team.cloudflareaccess.com" />
+    <TextBlock Text="Cloudflare Access application audience (AUD tag)" />
+    <TextBox Text="{Binding Audience}" />
+    <TextBlock Text="Public host name (the tunnel's hostname)" />
+    <TextBox Text="{Binding PublicHost}" PlaceholderText="code.example.com" />
+    <TextBlock Text="Local port" />
+    <TextBox Text="{Binding Port}" Width="120" HorizontalAlignment="Left" />
+    <CheckBox Content="Start the tray with Windows" IsChecked="{Binding StartWithWindows}" />
+    <ItemsControl ItemsSource="{Binding Errors}">
+      <ItemsControl.ItemTemplate>
+        <DataTemplate x:DataType="x:String">
+          <TextBlock Text="{Binding}" Foreground="#C42B1C" TextWrapping="Wrap" />
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+    <TextBlock Text="{Binding Status}" TextWrapping="Wrap" />
+    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+      <Button Content="Restart service" Command="{Binding RestartServiceCommand}" IsVisible="{Binding IsRestartOffered}" />
+      <Button Content="Save" Command="{Binding SaveCommand}" IsDefault="True" />
+    </StackPanel>
+  </StackPanel>
+</Window>
