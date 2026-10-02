@@ -1,3 +1,4 @@
+using System.Net;
 using AiChromeProxy.Client.Transport;
 using AiChromeProxy.Server.Security;
 using AiChromeProxy.Server.Transport;
@@ -55,8 +56,25 @@ public sealed class TransportHubTests : IAsyncDisposable
 	{
 		await using var transport = new SignalRTransport(Connection(token: null));
 
-		await Assert.ThrowsAnyAsync<Exception>(() => transport.ConnectAsync(TestContext.Current.CancellationToken));
+		var ex = await Assert.ThrowsAnyAsync<Exception>(() => transport.ConnectAsync(TestContext.Current.CancellationToken));
+		Assert.Contains("401", ex.Message);
 		Assert.Equal(TransportState.Disconnected, transport.State);
+	}
+
+	[Theory]
+	[InlineData("GET", "/")]
+	[InlineData("GET", "/index.html")]
+	[InlineData("GET", "/_framework/blazor.webassembly.js")]
+	[InlineData("GET", "/some/client/route")]
+	[InlineData("POST", "/hub/negotiate?negotiateVersion=1")]
+	public async Task NoToken_EveryEntryPoint_401(string method, string path)
+	{
+		using var client = _factory.CreateClient();
+		using var request = new HttpRequestMessage(new HttpMethod(method), path);
+
+		using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+		Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
 	}
 
 	[Fact]

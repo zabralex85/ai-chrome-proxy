@@ -1,6 +1,7 @@
 using System.Net;
 using AiChromeProxy.Server.Security;
 using AiChromeProxy.Server.Transport;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -17,9 +18,7 @@ builder.Services.AddSignalR();
 
 var app = builder.Build();
 
-var access = new CloudflareAccessOptions();
-app.Configuration.GetSection(CloudflareAccessOptions.Section).Bind(access);
-access.Validate(app.Environment);
+app.Services.GetRequiredService<IOptions<CloudflareAccessOptions>>().Value.Validate(app.Environment);
 
 app.UseMiddleware<CloudflareAccessMiddleware>();
 app.UseBlazorFrameworkFiles();
