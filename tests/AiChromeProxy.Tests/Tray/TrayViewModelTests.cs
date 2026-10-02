@@ -13,7 +13,7 @@ public sealed class TrayViewModelTests
 	[InlineData(ServiceState.Running, "Service: running")]
 	public void Refresh_StatusLineFollowsService(ServiceState state, string text)
 	{
-		var vm = new TrayViewModel(new FakeServiceControl(state));
+		var vm = Create(new FakeServiceControl(state));
 
 		vm.Refresh();
 
@@ -21,27 +21,70 @@ public sealed class TrayViewModelTests
 	}
 
 	[Theory]
-	[InlineData(ServiceState.NotInstalled, false, false)]
-	[InlineData(ServiceState.Stopped, true, false)]
-	[InlineData(ServiceState.Starting, false, true)]
-	[InlineData(ServiceState.Stopping, false, false)]
-	[InlineData(ServiceState.Running, false, true)]
-	public void Commands_EnabledByState(ServiceState state, bool canStart, bool canStop)
+	[InlineData(ServiceState.NotInstalled, false, false, false)]
+	[InlineData(ServiceState.Stopped, true, false, true)]
+	[InlineData(ServiceState.Starting, false, true, true)]
+	[InlineData(ServiceState.Stopping, false, false, true)]
+	[InlineData(ServiceState.Running, false, true, true)]
+	public void Commands_EnabledByState(ServiceState state, bool canStart, bool canStop, bool canUninstall)
 	{
-		var vm = new TrayViewModel(new FakeServiceControl(state));
+		var vm = Create(new FakeServiceControl(state));
 
 		vm.Refresh();
 
 		Assert.Equal(canStart, vm.StartCommand.CanExecute(null));
 		Assert.Equal(canStop, vm.StopCommand.CanExecute(null));
 		Assert.Equal(canStop, vm.RestartCommand.CanExecute(null));
+		Assert.Equal(canUninstall, vm.UninstallCommand.CanExecute(null));
+		Assert.True(vm.InstallCommand.CanExecute(null));
+	}
+
+	[Fact]
+	public async Task Install_RunsElevatedAdminInstall_ThenRefreshes()
+	{
+		var service = new FakeServiceControl(ServiceState.NotInstalled);
+		var elevated = new List<string>();
+		var vm = new TrayViewModel(service, command =>
+		{
+			elevated.Add(command);
+			service.State = ServiceState.Running;
+			return Task.FromResult<int?>(0);
+		});
+		vm.Refresh();
+
+		await vm.InstallCommand.ExecuteAsync(null);
+
+		Assert.Equal(["install"], elevated);
+		Assert.Equal(ServiceState.Running, vm.State);
+		Assert.Null(vm.Error);
+	}
+
+	[Fact]
+	public async Task Uninstall_ElevatedInstanceFails_ErrorWithExitCode()
+	{
+		var vm = new TrayViewModel(new FakeServiceControl(ServiceState.Running), _ => Task.FromResult<int?>(1));
+		vm.Refresh();
+
+		await vm.UninstallCommand.ExecuteAsync(null);
+
+		Assert.Equal("Service uninstall did not complete (exit code 1).", vm.Error);
+	}
+
+	[Fact]
+	public async Task Install_UacDeclined_NoError()
+	{
+		var vm = new TrayViewModel(new FakeServiceControl(ServiceState.NotInstalled), _ => Task.FromResult<int?>(null));
+
+		await vm.InstallCommand.ExecuteAsync(null);
+
+		Assert.Null(vm.Error);
 	}
 
 	[Fact]
 	public async Task Restart_StopsThenStarts_AndRefreshes()
 	{
 		var service = new FakeServiceControl(ServiceState.Running);
-		var vm = new TrayViewModel(service);
+		var vm = Create(service);
 		vm.Refresh();
 
 		await vm.RestartCommand.ExecuteAsync(null);
@@ -55,7 +98,7 @@ public sealed class TrayViewModelTests
 	public async Task Stop_StopsService()
 	{
 		var service = new FakeServiceControl(ServiceState.Running);
-		var vm = new TrayViewModel(service);
+		var vm = Create(service);
 		vm.Refresh();
 
 		await vm.StopCommand.ExecuteAsync(null);
@@ -69,7 +112,7 @@ public sealed class TrayViewModelTests
 	public async Task Start_Fails_ErrorShown_NextActionClearsIt()
 	{
 		var service = new FakeServiceControl(ServiceState.Stopped) { FailStart = new InvalidOperationException("access denied") };
-		var vm = new TrayViewModel(service);
+		var vm = Create(service);
 		vm.Refresh();
 
 		await vm.StartCommand.ExecuteAsync(null);
@@ -84,10 +127,12 @@ public sealed class TrayViewModelTests
 	[Fact]
 	public void Refresh_StatusQueryFails_ErrorShown()
 	{
-		var vm = new TrayViewModel(new FakeServiceControl { FailGetState = new InvalidOperationException("scm down") });
+		var vm = Create(new FakeServiceControl { FailGetState = new InvalidOperationException("scm down") });
 
 		vm.Refresh();
 
 		Assert.Equal("scm down", vm.Error);
 	}
+
+	private static TrayViewModel Create(FakeServiceControl service) => new(service, _ => Task.FromResult<int?>(0));
 }

@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.ServiceProcess;
+using AiChromeProxy.Infrastructure.Hosting;
 
 namespace AiChromeProxy.Tray.Services;
 
@@ -60,4 +61,11 @@ public sealed class WindowsServiceControl(string serviceName = WindowsServiceCon
 			service.WaitForStatus(ServiceControllerStatus.Stopped, Timeout);
 		},
 		ct);
+
+	[ExcludeFromCodeCoverage]
+	public void Install(string account, string password, string controlUser) =>
+		ServiceInstaller.Install(serviceName, account, password, controlUser, DataDirectory.FromEnvironment());
+
+	[ExcludeFromCodeCoverage]
+	public void Uninstall() => ServiceInstaller.Uninstall(serviceName);
 }

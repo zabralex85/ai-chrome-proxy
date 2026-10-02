@@ -21,7 +21,14 @@ public partial class App : Avalonia.Application
 	{
 		if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
 		{
-			StartTray(desktop);
+			if (AdminCommand.Parse(desktop.Args) is { Command: AdminCommand.Install } admin)
+			{
+				ShowInstall(desktop, admin.User);
+			}
+			else
+			{
+				StartTray(desktop);
+			}
 		}
 
 		base.OnFrameworkInitializationCompleted();
@@ -43,13 +50,22 @@ public partial class App : Avalonia.Application
 		window.Activate();
 	}
 
+	/// <summary>The elevated <c>--admin install</c> instance: only the password dialog; exit code 0 once installed.</summary>
+	private static void ShowInstall(IClassicDesktopStyleApplicationLifetime desktop, string controlUser)
+	{
+		var vm = new InstallViewModel(new WindowsServiceControl(), controlUser);
+		var window = new InstallWindow(vm);
+		window.Closed += (_, _) => desktop.Shutdown(vm.Succeeded ? 0 : 1);
+		window.Show();
+	}
+
 	private static void Open(Uri address) => Process.Start(new ProcessStartInfo(address.AbsoluteUri) { UseShellExecute = true })?.Dispose();
 
 	private void StartTray(IClassicDesktopStyleApplicationLifetime desktop)
 	{
 		var dataDir = DataDirectory.FromEnvironment();
 		var service = new WindowsServiceControl();
-		var vm = new TrayViewModel(service);
+		var vm = new TrayViewModel(service, AdminCommand.RunElevatedAsync);
 		var status = new NativeMenuItem { IsEnabled = false };
 		var error = new NativeMenuItem { IsEnabled = false };
 		var menu = new NativeMenu
@@ -60,6 +76,9 @@ public partial class App : Avalonia.Application
 			new NativeMenuItem("Start") { Command = vm.StartCommand },
 			new NativeMenuItem("Stop") { Command = vm.StopCommand },
 			new NativeMenuItem("Restart") { Command = vm.RestartCommand },
+			new NativeMenuItemSeparator(),
+			new NativeMenuItem("Install service…") { Command = vm.InstallCommand },
+			new NativeMenuItem("Uninstall service") { Command = vm.UninstallCommand },
 			new NativeMenuItemSeparator(),
 			Item("Settings…", () => ShowSingle(desktop, () => new SettingsWindow { DataContext = new SettingsViewModel(dataDir, new RegistryAutoStart(), service) })),
 			Item("Logs…", () => ShowSingle(desktop, () => new LogsWindow { DataContext = new LogsViewModel(dataDir) })),

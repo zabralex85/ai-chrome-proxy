@@ -15,6 +15,10 @@ public sealed class FakeServiceControl(ServiceState state = ServiceState.Running
 
 	public Exception? FailGetState { get; set; }
 
+	public Exception? FailInstall { get; set; }
+
+	public Exception? FailUninstall { get; set; }
+
 	public ServiceState GetState() => FailGetState is null ? State : throw FailGetState;
 
 	public Task StartAsync(CancellationToken ct)
@@ -39,5 +43,27 @@ public sealed class FakeServiceControl(ServiceState state = ServiceState.Running
 
 		State = ServiceState.Stopped;
 		return Task.CompletedTask;
+	}
+
+	public void Install(string account, string password, string controlUser)
+	{
+		Calls.Add($"install {account} {password} {controlUser}");
+		if (FailInstall is not null)
+		{
+			throw FailInstall;
+		}
+
+		State = ServiceState.Running;
+	}
+
+	public void Uninstall()
+	{
+		Calls.Add("uninstall");
+		if (FailUninstall is not null)
+		{
+			throw FailUninstall;
+		}
+
+		State = ServiceState.NotInstalled;
 	}
 }
