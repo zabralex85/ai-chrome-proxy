@@ -1,0 +1,56 @@
+# ai-chrome-proxy
+
+Web app: Chrome on a locked-down machine syncs a repo folder to your home server, where Claude Code works on the mirror; the UI is a VS Code-like navigator + chat with mermaid diagrams.
+
+Architecture and decisions: [docs/superpowers/specs/2026-10-02-architecture-design.md](docs/superpowers/specs/2026-10-02-architecture-design.md).
+
+Open source (MIT). Everything in the repo is in English. No personal paths, domains or secrets in committed files — make it configurable.
+
+## Stack
+
+- .NET 10 (LTS), C#, `<Nullable>enable</Nullable>`, `<ImplicitUsings>enable</ImplicitUsings>`.
+- `Client` — Blazor WebAssembly, `Server` — ASP.NET Core (hosts Client, SignalR hubs), `Shared` — protocol DTOs, `Tests` — xUnit.
+- JS only where C# can't: `fsaccess.js` (File System Access API), Monaco, mermaid.
+
+## Process (SDD)
+
+1. Sub-project spec → `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`.
+2. Plan → `docs/superpowers/plans/YYYY-MM-DD-<topic>.md`.
+3. Implementation — subagent-driven development from the plan, final review.
+
+Sub-projects in order: skeleton+transport → sync → Claude chat → code navigator.
+
+## Code conventions
+
+- All files are UTF-8 without BOM (enforced via `.editorconfig`). In PowerShell 5.1 pass `-Encoding utf8` explicitly when writing files.
+- Search with ripgrep (`rg`), not `find` / `git grep` / `Select-String` — the primary dev environment is Windows.
+- Style — `.editorconfig` + `StyleCop.ruleset` + `stylecop.json` (tabs, CRLF). StyleCop is applied to all projects via `Directory.Build.props`; rules with `Action="Error"` fail the build.
+- Interfaces prefixed with `I`; async methods suffixed `Async`, returning `Task`/`Task<T>`.
+- Logging — `ILogger<T>` via DI.
+- Pure logic (SyncEngine, manifest diff, hash-guard, path normalization, stream-json parser) has no browser/IO dependencies and is covered by xUnit.
+- Never commit secrets: `appsettings.json` holds non-secret defaults only; secrets go to env or `appsettings.Local.json` / `appsettings.Development.json` (gitignored).
+
+## Security
+
+- Every path from the protocol is normalized and checked for escaping its root (mirror on the server, picked folder in the browser).
+- Cloudflare Access is mandatory before exposing Server publicly: it runs `claude` with permission to edit files and execute commands.
+
+## Tests and coverage
+
+```bash
+dotnet build -c Release
+dotnet test --collect:"XPlat Code Coverage" --settings coverlet.runsettings
+```
+
+Gate: `>= 85%` line coverage (`line-rate` in `coverage.cobertura.xml`). Gate failed — add tests, don't lower the threshold. Test failed — fix it, don't disable it.
+
+## PR workflow
+
+CI (`.github/workflows/ci.yml`, added in the skeleton sub-project): build (Release) → test with coverage → 85% gate. A PR isn't mergeable until CI is green. Before saying "done", check `gh pr checks <pr-number>`.
+
+## CodeGraph
+
+The repo is indexed by CodeGraph (`.codegraph/`). To find or understand code, use it FIRST, then grep/Read:
+
+- MCP `codegraph_explore` — symbol source + call paths in one call.
+- Shell: `codegraph explore "<symbol names or question>"`.
