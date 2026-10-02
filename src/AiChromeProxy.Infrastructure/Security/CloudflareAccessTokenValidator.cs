@@ -2,7 +2,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 
-namespace AiChromeProxy.Server.Security;
+namespace AiChromeProxy.Infrastructure.Security;
 
 /// <summary>Validates Cloudflare Access JWTs against the team JWKS.</summary>
 public sealed class CloudflareAccessTokenValidator(

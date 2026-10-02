@@ -1,6 +1,6 @@
-using AiChromeProxy.Shared;
+using AiChromeProxy.Domain;
 
-namespace AiChromeProxy.Server.Transport;
+namespace AiChromeProxy.Application.Transport;
 
 public sealed class EnvelopeRouter
 {

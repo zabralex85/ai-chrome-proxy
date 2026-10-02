@@ -1,3 +1,4 @@
+using AiChromeProxy.Infrastructure.Security;
 using Microsoft.Extensions.Options;
 
 namespace AiChromeProxy.Server.Security;

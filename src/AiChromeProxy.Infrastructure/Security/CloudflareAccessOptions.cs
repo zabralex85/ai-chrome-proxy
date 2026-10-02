@@ -1,4 +1,6 @@
-namespace AiChromeProxy.Server.Security;
+using Microsoft.Extensions.Hosting;
+
+namespace AiChromeProxy.Infrastructure.Security;
 
 public sealed class CloudflareAccessOptions
 {

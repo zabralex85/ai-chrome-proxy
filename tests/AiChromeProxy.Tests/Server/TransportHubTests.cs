@@ -1,9 +1,10 @@
 using System.Net;
 using AiChromeProxy.Client.Transport;
+using AiChromeProxy.Domain;
+using AiChromeProxy.Infrastructure.Security;
 using AiChromeProxy.Server.Security;
 using AiChromeProxy.Server.Transport;
-using AiChromeProxy.Shared;
-using AiChromeProxy.Tests.Security;
+using AiChromeProxy.Tests.Infrastructure;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -11,7 +12,7 @@ using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
-namespace AiChromeProxy.Tests.Transport;
+namespace AiChromeProxy.Tests.Server;
 
 /// <summary>End-to-end: real Server pipeline (Access check on) + real SignalRTransport over WebSocket.</summary>
 public sealed class TransportHubTests : IAsyncDisposable

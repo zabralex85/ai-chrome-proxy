@@ -1,6 +1,6 @@
-using AiChromeProxy.Shared;
+using AiChromeProxy.Domain;
 
-namespace AiChromeProxy.Tests;
+namespace AiChromeProxy.Tests.Domain;
 
 public sealed class EnvelopeTests
 {

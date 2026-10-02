@@ -1,13 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <ItemGroup>
-    <ProjectReference Include="..\AiChromeProxy.Shared\AiChromeProxy.Shared.csproj" />
+    <ProjectReference Include="..\AiChromeProxy.Application\AiChromeProxy.Application.csproj" />
     <ProjectReference Include="..\AiChromeProxy.Client\AiChromeProxy.Client.csproj" />
+    <ProjectReference Include="..\AiChromeProxy.Domain\AiChromeProxy.Domain.csproj" />
+    <ProjectReference Include="..\AiChromeProxy.Infrastructure\AiChromeProxy.Infrastructure.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="10.0.12" />
-    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.23.0" />
   </ItemGroup>
 
   <PropertyGroup>

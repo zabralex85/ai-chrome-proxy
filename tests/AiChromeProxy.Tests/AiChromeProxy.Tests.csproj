@@ -12,6 +12,7 @@
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.12" />
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.12" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
+    <PackageReference Include="NetArchTest.Rules" Version="1.3.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
@@ -28,9 +29,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\AiChromeProxy.Server\AiChromeProxy.Server.csproj" />
-    <ProjectReference Include="..\..\src\AiChromeProxy.Shared\AiChromeProxy.Shared.csproj" />
+    <ProjectReference Include="..\..\src\AiChromeProxy.Application\AiChromeProxy.Application.csproj" />
     <ProjectReference Include="..\..\src\AiChromeProxy.Client\AiChromeProxy.Client.csproj" />
+    <ProjectReference Include="..\..\src\AiChromeProxy.Domain\AiChromeProxy.Domain.csproj" />
+    <ProjectReference Include="..\..\src\AiChromeProxy.Infrastructure\AiChromeProxy.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\AiChromeProxy.Server\AiChromeProxy.Server.csproj" />
   </ItemGroup>
 
 </Project>

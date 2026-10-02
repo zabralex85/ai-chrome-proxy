@@ -1,7 +1,7 @@
-using AiChromeProxy.Server.Transport;
-using AiChromeProxy.Shared;
+using AiChromeProxy.Application.Transport;
+using AiChromeProxy.Domain;
 
-namespace AiChromeProxy.Tests.Transport;
+namespace AiChromeProxy.Tests.Application;
 
 public sealed class EnvelopeRouterTests
 {

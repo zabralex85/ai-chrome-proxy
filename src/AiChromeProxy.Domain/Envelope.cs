@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace AiChromeProxy.Shared;
+namespace AiChromeProxy.Domain;
 
 /// <summary>Single wire message for every feature; routed by <see cref="Type"/>.</summary>
 public sealed record Envelope(string Type, JsonElement Payload, string? CorrelationId = null)

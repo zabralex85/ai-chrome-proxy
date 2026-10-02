@@ -1,4 +1,5 @@
-using AiChromeProxy.Shared;
+using AiChromeProxy.Application.Transport;
+using AiChromeProxy.Domain;
 using Microsoft.AspNetCore.SignalR;
 
 namespace AiChromeProxy.Server.Transport;

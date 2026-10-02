@@ -1,4 +1,4 @@
-using AiChromeProxy.Shared;
+using AiChromeProxy.Domain;
 
 namespace AiChromeProxy.Client.Transport;
 
