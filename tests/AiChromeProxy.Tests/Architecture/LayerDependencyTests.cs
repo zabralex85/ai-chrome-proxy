@@ -33,6 +33,7 @@ public sealed class LayerDependencyTests
 			ApplicationAssembly,
 			"AiChromeProxy.Infrastructure",
 			"AiChromeProxy.Server",
+			"AiChromeProxy.Client",
 			"Microsoft.AspNetCore",
 			"Microsoft.IdentityModel");
 	}
@@ -40,13 +41,19 @@ public sealed class LayerDependencyTests
 	[Fact]
 	public void Infrastructure_DoesNotReachUp()
 	{
-		AssertNoDependency(InfrastructureAssembly, "AiChromeProxy.Server", "AiChromeProxy.Client");
+		AssertNoDependency(InfrastructureAssembly, "AiChromeProxy.Server", "AiChromeProxy.Client", "Microsoft.AspNetCore");
 	}
 
 	[Fact]
 	public void Client_TalksContractsOnly()
 	{
 		AssertNoDependency(ClientAssembly, "AiChromeProxy.Application", "AiChromeProxy.Infrastructure", "AiChromeProxy.Server");
+	}
+
+	[Fact]
+	public void Server_DoesNotUseClientTypes()
+	{
+		AssertNoDependency(ServerAssembly, "AiChromeProxy.Client");
 	}
 
 	/// <summary>Guards the rules above against passing vacuously (e.g. if the assembly reader stopped seeing references).</summary>
