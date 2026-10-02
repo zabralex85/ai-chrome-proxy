@@ -71,7 +71,8 @@ public sealed class CloudflareAccessTokenValidator(
 			var url = $"https://{options.Value.TeamDomain}/cdn-cgi/access/certs";
 			var client = httpFactory.CreateClient(JwksHttpClient);
 			client.Timeout = JwksTimeout;
-			var json = await client.GetStringAsync(url, ct);
+			// Not the caller's token: _lastRefresh is already set, so a cancelled fetch would leave keys empty for a minute.
+			var json = await client.GetStringAsync(url, CancellationToken.None);
 			_keys = new JsonWebKeySet(json).GetSigningKeys();
 			return true;
 		}

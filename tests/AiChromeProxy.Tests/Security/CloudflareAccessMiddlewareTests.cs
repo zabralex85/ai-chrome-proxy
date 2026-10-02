@@ -118,6 +118,31 @@ public sealed class CloudflareAccessMiddlewareTests
 	}
 
 	[Fact]
+	public async Task CallerCancelledDuringColdFetch_DoesNotPoisonKeyCache()
+	{
+		var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var handler = new GatedHandler(_issuer.Jwks(), gate.Task, entered);
+		var (validator, _) = Build(handler, TimeProvider.System, enabled: true);
+		using var cts = new CancellationTokenSource();
+
+		var first = validator.ValidateAsync(_issuer.Token(), cts.Token);
+		await entered.Task;
+		await cts.CancelAsync();
+		gate.SetResult();
+		try
+		{
+			await first;
+		}
+		catch (OperationCanceledException)
+		{
+		}
+
+		Assert.True(await validator.ValidateAsync(_issuer.Token(), TestContext.Current.CancellationToken));
+		Assert.Equal(1, handler.Requests);
+	}
+
+	[Fact]
 	public async Task Disabled_PassesWithoutToken()
 	{
 		var (validator, options) = Build(_issuer.Handler(), TimeProvider.System, enabled: false);
@@ -160,6 +185,19 @@ public sealed class CloudflareAccessMiddlewareTests
 		await middleware.InvokeAsync(ctx);
 
 		return ctx.Response.StatusCode;
+	}
+
+	private sealed class GatedHandler(string body, Task gate, TaskCompletionSource entered) : HttpMessageHandler
+	{
+		public int Requests { get; private set; }
+
+		protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+		{
+			Requests++;
+			entered.TrySetResult();
+			await gate.WaitAsync(cancellationToken);
+			return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) };
+		}
 	}
 
 	private sealed class StubHandler(HttpStatusCode status, string body) : HttpMessageHandler
