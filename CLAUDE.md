@@ -9,7 +9,7 @@ Open source (MIT). Everything in the repo is in English. No personal paths, doma
 ## Stack
 
 - .NET 10 (LTS), C#, `<Nullable>enable</Nullable>`, `<ImplicitUsings>enable</ImplicitUsings>`.
-- `Client` — Blazor WebAssembly, `Server` — ASP.NET Core (hosts Client, SignalR hubs), `Shared` — protocol DTOs, `Tests` — xUnit.
+- `Client` — Blazor WebAssembly, `Server` — ASP.NET Core (hosts Client, one SignalR hub routing `Envelope` by `Type`), `Shared` — protocol DTOs, `Tests` — xUnit.
 - JS only where C# can't: `fsaccess.js` (File System Access API), Monaco, mermaid.
 
 ## Process (SDD)
