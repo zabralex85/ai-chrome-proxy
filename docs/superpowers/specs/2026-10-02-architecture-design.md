@@ -75,10 +75,10 @@ flowchart LR
 | Project | Type | Responsibility |
 |---|---|---|
 | `Domain` | classlib | Wire contract (`Envelope`) and core entities (manifest, chunks, edits, chat events). No dependencies. |
-| `Application` | classlib | Envelope handlers, router, use cases; ports when needed. Depends on Domain only. |
-| `Infrastructure` | classlib | Cloudflare Access validator, file system, `claude` process, etc. Depends on Application/Domain. |
+| `Application` | classlib | Envelope router and handlers (sync, chat), use cases; ports for mirror, file watching and the `claude` runner. Depends on Domain only. |
+| `Infrastructure` | classlib | Cloudflare Access validator; mirror (`Mirror:Root`, default `data/`, gitignored), FileWatcher and ClaudeRunner behind Application ports. Depends on Application/Domain. |
 | `Client` | Blazor WASM | SyncEngine (pure C#), UI, JS interop: `fsaccess.js`, Monaco (`BlazorMonaco`), mermaid. |
-| `Server` | ASP.NET Core | Composition root; hosts Client. TransportHub + envelope handlers (sync, chat), mirror (`Mirror:Root`, default `data/`, gitignored), FileWatcher, ClaudeRunner. |
+| `Server` | ASP.NET Core | Composition root; hosts Client; TransportHub, Cloudflare Access middleware, Windows Service hosting. |
 | `Tests` | xUnit (+ `E2E` Reqnroll/Playwright, k6 `tests/load`, `Benchmarks` BenchmarkDotNet) | SyncEngine logic, protocol, ClaudeRunner stream-json parser, server hubs (`WebApplicationFactory`). |
 
 ### Sync flow
