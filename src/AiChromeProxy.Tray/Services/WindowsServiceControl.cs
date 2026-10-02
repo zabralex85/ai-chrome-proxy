@@ -62,9 +62,10 @@ public sealed class WindowsServiceControl(string serviceName = WindowsServiceCon
 		},
 		ct);
 
+	/// <summary>Always the default data directory: <c>AICP_DATA_DIR</c> can be set unelevated (HKCU), so the elevated code must not trust it.</summary>
 	[ExcludeFromCodeCoverage]
 	public void Install(string account, string password, string controlUser) =>
-		ServiceInstaller.Install(serviceName, account, password, controlUser, DataDirectory.FromEnvironment());
+		ServiceInstaller.Install(serviceName, account, password, controlUser, DataDirectory.Resolve(null));
 
 	[ExcludeFromCodeCoverage]
 	public void Uninstall() => ServiceInstaller.Uninstall(serviceName);

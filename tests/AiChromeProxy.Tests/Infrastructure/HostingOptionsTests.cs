@@ -96,4 +96,13 @@ public sealed class HostingOptionsTests
 		Assert.Equal(@"D:\data\appsettings.json", dir.SettingsFile);
 		Assert.Equal(@"D:\data\logs", dir.Logs);
 	}
+
+	[Fact]
+	public void DataDirectory_RelativeOverride_MadeAbsolute()
+	{
+		var dir = DataDirectory.Resolve("data");
+
+		Assert.True(Path.IsPathFullyQualified(dir.Root));
+		Assert.Equal(Path.GetFullPath("data"), dir.Root);
+	}
 }
