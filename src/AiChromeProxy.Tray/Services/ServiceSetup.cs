@@ -63,10 +63,11 @@ public static class ServiceSetup
 	/// <summary>As above, refusing a root or <c>logs</c> that is a link or was created by an untrusted user (<c>%ProgramData%</c> lets standard users pre-create folders).</summary>
 	public static void PrepareDataDirectory(DataDirectory dataDir, SecurityIdentifier account, SecurityIdentifier controlUser)
 	{
-		// Both handles stay open until the ACL is written, so neither folder can be swapped for a link after it was checked.
+		// Root first: nothing is created inside it before it was checked. Handles stay open until the ACL is written.
 		using var rootGuard = DataDirectoryGuard.Acquire(dataDir.Root);
+		EnsureDirectorySafe(dataDir.Root, account, controlUser);
 		using var logsGuard = DataDirectoryGuard.Acquire(dataDir.Logs);
-		EnsureDataDirectorySafe(dataDir, account, controlUser);
+		EnsureDirectorySafe(dataDir.Logs, account, controlUser);
 		var root = new DirectoryInfo(dataDir.Root);
 		var security = root.GetAccessControl();
 		security.AddAccessRule(new FileSystemAccessRule(
@@ -76,6 +77,12 @@ public static class ServiceSetup
 			PropagationFlags.None,
 			AccessControlType.Allow));
 		root.SetAccessControl(security);
+
+		// The held handles share WRITE, so logs could in theory be turned into a junction in place meanwhile: re-check it.
+		if (new DirectoryInfo(dataDir.Logs).Attributes.HasFlag(FileAttributes.ReparsePoint))
+		{
+			throw new InvalidOperationException($"{dataDir.Logs} is a link; delete it and retry.");
+		}
 	}
 
 	/// <summary>Throws when <c>&lt;DataDir&gt;</c> or its <c>logs</c> already exists as a link or with an owner other than Administrators, SYSTEM, the service account or the control user.</summary>
@@ -83,22 +90,7 @@ public static class ServiceSetup
 	{
 		foreach (var path in new[] { dataDir.Root, dataDir.Logs })
 		{
-			var info = new DirectoryInfo(path);
-			if (!info.Exists)
-			{
-				continue;
-			}
-
-			if (info.Attributes.HasFlag(FileAttributes.ReparsePoint) || info.LinkTarget is not null)
-			{
-				throw new InvalidOperationException($"{path} is a link; delete it and retry.");
-			}
-
-			var owner = info.GetAccessControl().GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
-			if (!IsTrustedOwner(owner, account, controlUser))
-			{
-				throw new InvalidOperationException($"{path} was created by another user; delete it and retry.");
-			}
+			EnsureDirectorySafe(path, account, controlUser);
 		}
 	}
 
@@ -130,5 +122,25 @@ public static class ServiceSetup
 		}
 
 		waitStopped();
+	}
+
+	private static void EnsureDirectorySafe(string path, SecurityIdentifier account, SecurityIdentifier controlUser)
+	{
+		var info = new DirectoryInfo(path);
+		if (!info.Exists)
+		{
+			return;
+		}
+
+		if (info.Attributes.HasFlag(FileAttributes.ReparsePoint) || info.LinkTarget is not null)
+		{
+			throw new InvalidOperationException($"{path} is a link; delete it and retry.");
+		}
+
+		var owner = info.GetAccessControl().GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
+		if (!IsTrustedOwner(owner, account, controlUser))
+		{
+			throw new InvalidOperationException($"{path} was created by another user; delete it and retry.");
+		}
 	}
 }

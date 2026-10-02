@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
@@ -31,7 +32,7 @@ public sealed partial class DataDirectoryGuard : IDisposable
 		{
 			var error = Marshal.GetLastPInvokeError();
 			handle.Dispose();
-			throw new IOException($"Cannot open {path} (error {error}).", error);
+			throw new IOException($"Cannot open {path} (error {error}).", new Win32Exception(error));
 		}
 
 		// Checked while the handle is held, so the path cannot change between this check and the caller's later use.

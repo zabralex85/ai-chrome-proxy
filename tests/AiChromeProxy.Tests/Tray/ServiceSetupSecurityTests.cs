@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Security.AccessControl;
 using System.Security.Principal;
@@ -151,70 +152,6 @@ public sealed class ServiceSetupSecurityTests : IDisposable
 	}
 
 	[Fact]
-	public void RunUninstall_Failure_RootOwnedByStandardUser_WritesNothing()
-	{
-		var dataDir = new DataDirectory(Path.Combine(_temp, "err"));
-		Directory.CreateDirectory(dataDir.Root);
-		Assert.SkipWhen(ServiceSetup.IsTrustedOwner(OwnerOf(dataDir.Root)), "The temp folder owner is trusted (running elevated).");
-
-		var code = AdminCommand.RunUninstall(new FakeServiceControl { FailUninstall = new InvalidOperationException("access denied") }, dataDir);
-
-		Assert.Equal(1, code);
-		Assert.False(File.Exists(Path.Combine(dataDir.Root, AdminCommand.LastErrorFile)));
-	}
-
-	[Fact]
-	public void RunUninstall_Failure_RootOwnedByAdministrators_WritesReason()
-	{
-		var dataDir = new DataDirectory(Path.Combine(_temp, "err2"));
-		Directory.CreateDirectory(dataDir.Root);
-		Assert.SkipUnless(ServiceSetup.IsTrustedOwner(OwnerOf(dataDir.Root)), "Needs an Administrators-owned folder (run elevated).");
-
-		AdminCommand.RunUninstall(new FakeServiceControl { FailUninstall = new InvalidOperationException("access denied") }, dataDir);
-
-		Assert.Equal("access denied", File.ReadAllText(Path.Combine(dataDir.Root, AdminCommand.LastErrorFile)));
-	}
-
-	[Fact]
-	public void RunUninstall_Failure_RootIsJunction_TargetUntouched()
-	{
-		var target = Directory.CreateDirectory(Path.Combine(_temp, "jt")).FullName;
-		var root = Path.Combine(_temp, "jroot");
-		Junction(root, target);
-		try
-		{
-			AdminCommand.RunUninstall(new FakeServiceControl { FailUninstall = new InvalidOperationException("x") }, new DataDirectory(root));
-
-			Assert.Empty(Directory.GetFileSystemEntries(target));
-		}
-		finally
-		{
-			Directory.Delete(root);
-		}
-	}
-
-	[Fact]
-	public void RunUninstall_Failure_ErrorFileIsSymlink_TargetUntouched()
-	{
-		var dataDir = new DataDirectory(Path.Combine(_temp, "err3"));
-		Directory.CreateDirectory(dataDir.Root);
-		var victim = Path.Combine(_temp, "victim.txt");
-		File.WriteAllText(victim, "keep");
-		try
-		{
-			File.CreateSymbolicLink(Path.Combine(dataDir.Root, AdminCommand.LastErrorFile), victim);
-		}
-		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-		{
-			Assert.Skip($"Cannot create a file symlink without Developer Mode/admin: {ex.Message}");
-		}
-
-		AdminCommand.RunUninstall(new FakeServiceControl { FailUninstall = new InvalidOperationException("x") }, dataDir);
-
-		Assert.Equal("keep", File.ReadAllText(victim));
-	}
-
-	[Fact]
 	public void DataDirectoryGuard_HeldHandle_BlocksRenameAndDelete()
 	{
 		var root = Path.Combine(_temp, "held");
@@ -245,23 +182,24 @@ public sealed class ServiceSetupSecurityTests : IDisposable
 	}
 
 	[Fact]
-	public void RunUninstall_Failure_UnwritableDataDir_StillReturnsOne()
+	public void RunUninstall_Success_Zero()
 	{
-		var blocker = Path.Combine(_temp, "file");
-		File.WriteAllText(blocker, "x");
-
-		var code = AdminCommand.RunUninstall(new FakeServiceControl { FailUninstall = new InvalidOperationException("x") }, new DataDirectory(blocker));
-
-		Assert.Equal(1, code);
+		Assert.Equal(0, AdminCommand.RunUninstall(new FakeServiceControl()));
 	}
 
 	[Fact]
-	public void RunUninstall_Success_WritesNothing()
+	public void RunUninstall_Failure_ExitsWithWin32Code()
 	{
-		var dataDir = new DataDirectory(Path.Combine(_temp, "okdir"));
+		Assert.Equal(5, AdminCommand.RunUninstall(new FakeServiceControl { FailUninstall = new Win32Exception(5) }));
+		Assert.Equal(1060, AdminCommand.RunUninstall(new FakeServiceControl { FailUninstall = new InvalidOperationException("x", new Win32Exception(1060)) }));
+	}
 
-		Assert.Equal(0, AdminCommand.RunUninstall(new FakeServiceControl(), dataDir));
-		Assert.False(Directory.Exists(dataDir.Root));
+	[Fact]
+	public void ExitCodeFor_NoWin32Code_One()
+	{
+		Assert.Equal(1, AdminCommand.ExitCodeFor(new InvalidOperationException("x")));
+		Assert.Equal(1, AdminCommand.ExitCodeFor(new InvalidOperationException("x", new IOException("y"))));
+		Assert.Equal(1, AdminCommand.ExitCodeFor(new Win32Exception(0)));
 	}
 
 	private static SecurityIdentifier? OwnerOf(string path) =>

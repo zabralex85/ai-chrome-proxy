@@ -2,7 +2,6 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Security.Principal;
-using AiChromeProxy.Infrastructure.Hosting;
 
 namespace AiChromeProxy.Tray.Services;
 
@@ -17,8 +16,6 @@ public static class AdminCommand
 	public const string Install = "install";
 	public const string Uninstall = "uninstall";
 
-	public const string LastErrorFile = "admin-last-error.txt";
-
 	private const int ErrorCancelled = 1223;
 
 	public static string CurrentUser => WindowsIdentity.GetCurrent().Name;
@@ -30,11 +27,8 @@ public static class AdminCommand
 	public static string Arguments(string command, string user) => $"{Flag} {command} \"{user}\"";
 
 	/// <summary>The headless <c>--admin uninstall</c> instance (Velopack's before-uninstall hook and the tray menu).</summary>
-	/// <returns>Process exit code: 0 on success.</returns>
-	public static int RunUninstall(IServiceControl service) => RunUninstall(service, DataDirectory.FromEnvironment());
-
-	/// <summary>As above; on failure the reason is also written to <c>&lt;DataDir&gt;\admin-last-error.txt</c> (the headless instance has no UI).</summary>
-	public static int RunUninstall(IServiceControl service, DataDirectory dataDir)
+	/// <returns>Process exit code: 0 on success, otherwise the Win32 error code of the failure (1 when there is none).</returns>
+	public static int RunUninstall(IServiceControl service)
 	{
 		try
 		{
@@ -43,10 +37,13 @@ public static class AdminCommand
 		}
 		catch (Exception ex)
 		{
-			WriteLastError(dataDir, ex);
-			return 1;
+			return ExitCodeFor(ex);
 		}
 	}
+
+	/// <summary>The Win32 error code of <paramref name="ex"/> (or of its inner exception), 1 when there is none.</summary>
+	public static int ExitCodeFor(Exception ex) =>
+		(ex as Win32Exception ?? ex.InnerException as Win32Exception) is { NativeErrorCode: not 0 } win32 ? win32.NativeErrorCode : 1;
 
 	/// <summary>Relaunches this exe elevated (UAC prompt) and waits for it.</summary>
 	/// <returns>Its exit code, or null when the user declined the UAC prompt.</returns>
@@ -66,32 +63,6 @@ public static class AdminCommand
 		catch (Win32Exception ex) when (ex.NativeErrorCode == ErrorCancelled)
 		{
 			return null;
-		}
-	}
-
-	private static void WriteLastError(DataDirectory dataDir, Exception ex)
-	{
-		try
-		{
-			// Elevated write: only into a root that is not a link and is owned by Administrators/SYSTEM, never through a planted link.
-			var root = new DirectoryInfo(dataDir.Root);
-			if (!root.Exists
-				|| root.Attributes.HasFlag(FileAttributes.ReparsePoint)
-				|| root.LinkTarget is not null
-				|| !ServiceSetup.IsTrustedOwner(root.GetAccessControl().GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier))
-			{
-				return;
-			}
-
-			var path = Path.Combine(dataDir.Root, LastErrorFile);
-			File.Delete(path); // removes a link at the file path itself, not its target
-			using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-			using var writer = new StreamWriter(stream);
-			writer.Write(ex.InnerException?.Message ?? ex.Message);
-		}
-		catch (Exception)
-		{
-			// Best effort only.
 		}
 	}
 }

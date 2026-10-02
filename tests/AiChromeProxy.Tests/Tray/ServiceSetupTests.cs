@@ -89,6 +89,7 @@ public sealed class ServiceSetupTests
 		}
 		finally
 		{
+			TryDelete(dataDir.Root);
 		}
 	}
 
@@ -123,11 +124,10 @@ public sealed class ServiceSetupTests
 	public void AdminCommand_RunUninstall_ExitCodes()
 	{
 		var service = new FakeServiceControl();
-		var dataDir = new DataDirectory(Path.Combine(Path.GetTempPath(), "aicp-tests", Guid.NewGuid().ToString("N")));
 
-		Assert.Equal(0, AdminCommand.RunUninstall(service, dataDir));
+		Assert.Equal(0, AdminCommand.RunUninstall(service));
 		Assert.Equal(["uninstall"], service.Calls);
-		Assert.Equal(1, AdminCommand.RunUninstall(new FakeServiceControl { FailUninstall = new InvalidOperationException("access denied") }, dataDir));
+		Assert.Equal(1, AdminCommand.RunUninstall(new FakeServiceControl { FailUninstall = new InvalidOperationException("access denied") }));
 	}
 
 	[Fact]
@@ -171,6 +171,18 @@ public sealed class ServiceSetupTests
 		Assert.False(vm.Succeeded);
 		Assert.Equal("typo", vm.Password);
 		Assert.True(vm.InstallCommand.CanExecute(null));
+	}
+
+	private static void TryDelete(string path)
+	{
+		try
+		{
+			Directory.Delete(path, recursive: true);
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			// Best effort.
+		}
 	}
 
 	/// <summary>Command line as '|'-separated arguments (attributes cannot hold string arrays as data).</summary>
