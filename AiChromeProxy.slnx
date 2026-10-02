@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/AiChromeProxy.Benchmarks/AiChromeProxy.Benchmarks.csproj" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/AiChromeProxy.Application/AiChromeProxy.Application.csproj" />
     <Project Path="src/AiChromeProxy.Client/AiChromeProxy.Client.csproj" />
