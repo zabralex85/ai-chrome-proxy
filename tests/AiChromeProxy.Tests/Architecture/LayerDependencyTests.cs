@@ -13,6 +13,7 @@ public sealed class LayerDependencyTests
 	private static readonly Assembly InfrastructureAssembly = typeof(AiChromeProxy.Infrastructure.DependencyInjection).Assembly;
 	private static readonly Assembly ServerAssembly = typeof(Program).Assembly;
 	private static readonly Assembly ClientAssembly = typeof(ITransport).Assembly;
+	private static readonly Assembly TrayAssembly = typeof(AiChromeProxy.Tray.App).Assembly;
 
 	[Fact]
 	public void Domain_IsPure()
@@ -56,12 +57,19 @@ public sealed class LayerDependencyTests
 		AssertNoDependency(ServerAssembly, "AiChromeProxy.Client");
 	}
 
+	[Fact]
+	public void Tray_UsesDomainAndInfrastructureOnly()
+	{
+		AssertNoDependency(TrayAssembly, "AiChromeProxy.Application", "AiChromeProxy.Server", "AiChromeProxy.Client", "Microsoft.AspNetCore");
+	}
+
 	/// <summary>Guards the rules above against passing vacuously (e.g. if the assembly reader stopped seeing references).</summary>
 	[Fact]
-	public void Server_DependsOnApplicationAndInfrastructure()
+	public void ReferencesAreVisible()
 	{
 		Assert.NotEmpty(Types.InAssembly(ServerAssembly).That().HaveDependencyOn("AiChromeProxy.Application").GetTypes());
 		Assert.NotEmpty(Types.InAssembly(ServerAssembly).That().HaveDependencyOn("AiChromeProxy.Infrastructure").GetTypes());
+		Assert.NotEmpty(Types.InAssembly(TrayAssembly).That().HaveDependencyOn("Avalonia").GetTypes());
 	}
 
 	private static void AssertNoDependency(Assembly assembly, params string[] forbidden)
