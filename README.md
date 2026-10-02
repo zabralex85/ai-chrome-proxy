@@ -9,7 +9,8 @@ Chrome opens a web app (served via Cloudflare Tunnel + Access) that syncs the re
 ## Run locally (no Cloudflare)
 
 ```powershell
-$env:ASPNETCORE_ENVIRONMENT = "Development"   # disables the Access check
+$env:ASPNETCORE_ENVIRONMENT = "Development"
+$env:CloudflareAccess__Enabled = "false"       # disables the Access check; honored only in Development
 dotnet run --project src/AiChromeProxy.Server --no-launch-profile
 # open http://127.0.0.1:5180/
 ```

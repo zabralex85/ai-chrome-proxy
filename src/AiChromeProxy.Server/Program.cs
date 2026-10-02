@@ -20,6 +20,11 @@ var app = builder.Build();
 
 app.Services.GetRequiredService<IOptions<CloudflareAccessOptions>>().Value.Validate(app.Environment);
 
+if (!app.Services.GetRequiredService<IOptions<CloudflareAccessOptions>>().Value.Enabled)
+{
+	app.Logger.LogWarning("Cloudflare Access check is DISABLED (Development only). Do not expose this server.");
+}
+
 app.UseMiddleware<CloudflareAccessMiddleware>();
 app.UseBlazorFrameworkFiles();
 app.UseStaticFiles();
