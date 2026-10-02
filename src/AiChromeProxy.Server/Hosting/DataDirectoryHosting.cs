@@ -29,14 +29,14 @@ public static class DataDirectoryHosting
 		config.Sources.Insert(envIndex < 0 ? config.Sources.Count : envIndex, source);
 	}
 
-	/// <summary>Serilog (levels from the <c>Serilog</c> section): console always; daily CLEF files in <c>&lt;DataDir&gt;\logs</c> when a data directory is in use.</summary>
+	/// <summary>Serilog (levels from the <c>Serilog</c> section): console always; daily CLEF files (rendered @m, so the tray needs no template renderer) in <c>&lt;DataDir&gt;\logs</c> when a data directory is in use.</summary>
 	public static IServiceCollection AddServerLogging(this IServiceCollection services, IConfiguration configuration, DataDirectory? dataDir)
 	{
 		var log = new LoggerConfiguration().ReadFrom.Configuration(configuration).Enrich.FromLogContext().WriteTo.Console();
 		if (dataDir is not null)
 		{
 			log.WriteTo.File(
-				new CompactJsonFormatter(),
+				new RenderedCompactJsonFormatter(),
 				Path.Combine(dataDir.Logs, LogFilePattern),
 				rollingInterval: RollingInterval.Day,
 				retainedFileCountLimit: RetainedLogFiles);

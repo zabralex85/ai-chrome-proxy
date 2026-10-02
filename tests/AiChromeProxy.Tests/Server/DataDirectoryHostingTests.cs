@@ -90,7 +90,7 @@ public sealed class DataDirectoryHostingTests : IDisposable
 		var file = Assert.Single(Directory.GetFiles(_dataDir.Logs));
 		Assert.Matches(@"server-\d{8}\.clef$", file);
 		using var json = JsonDocument.Parse(File.ReadAllLines(file).Single());
-		Assert.Equal("Hello {Name}", json.RootElement.GetProperty("@mt").GetString());
+		Assert.Equal("Hello \"clef\"", json.RootElement.GetProperty("@m").GetString());
 		Assert.Equal("Warning", json.RootElement.GetProperty("@l").GetString());
 		Assert.Equal("clef", json.RootElement.GetProperty("Name").GetString());
 	}

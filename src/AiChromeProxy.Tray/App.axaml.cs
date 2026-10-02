@@ -62,6 +62,7 @@ public partial class App : Avalonia.Application
 			new NativeMenuItem("Restart") { Command = vm.RestartCommand },
 			new NativeMenuItemSeparator(),
 			Item("Settings…", () => ShowSingle(desktop, () => new SettingsWindow { DataContext = new SettingsViewModel(dataDir, new RegistryAutoStart(), service) })),
+			Item("Logs…", () => ShowSingle(desktop, () => new LogsWindow { DataContext = new LogsViewModel(dataDir) })),
 			Item("Open UI", () => Open(SettingsViewModel.UiAddress(dataDir))),
 			new NativeMenuItemSeparator(),
 			Item("Exit", () => desktop.Shutdown()),
