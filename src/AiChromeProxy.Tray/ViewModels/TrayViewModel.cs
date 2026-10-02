@@ -6,7 +6,7 @@ using CommunityToolkit.Mvvm.Input;
 namespace AiChromeProxy.Tray.ViewModels;
 
 /// <summary>Tray menu state: service status line, Start / Stop / Restart, the elevated Install / Uninstall and "Update to vX".</summary>
-/// <param name="runElevated">Runs <c>--admin &lt;command&gt;</c> elevated; returns its exit code, or null when UAC was declined.</param>
+/// <param name="runElevated">Runs <c>--admin &lt;command&gt;</c> elevated; returns its exit code, or null when UAC was declined (<see cref="AdminCommand.Cancelled"/>, the dialog closed, is treated the same).</param>
 public sealed partial class TrayViewModel(IServiceControl service, Func<string, Task<int?>> runElevated, UpdateOrchestrator updates) : ObservableObject
 {
 	[ObservableProperty]
@@ -98,7 +98,7 @@ public sealed partial class TrayViewModel(IServiceControl service, Func<string, 
 	private async Task ElevateAsync(string command)
 	{
 		var exitCode = await runElevated(command);
-		if (exitCode is not (null or 0))
+		if (exitCode is not (null or 0 or AdminCommand.Cancelled))
 		{
 			throw new InvalidOperationException($"Service {command} did not complete (exit code {exitCode}).");
 		}

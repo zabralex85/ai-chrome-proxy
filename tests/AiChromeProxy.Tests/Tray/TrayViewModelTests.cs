@@ -74,10 +74,12 @@ public sealed class TrayViewModelTests
 		Assert.Equal("Service uninstall did not complete (exit code 1).", vm.Error);
 	}
 
-	[Fact]
-	public async Task Install_UacDeclined_NoError()
+	[Theory]
+	[InlineData(null)]
+	[InlineData(AdminCommand.Cancelled)]
+	public async Task Install_UacDeclinedOrDialogCancelled_NoError(int? exitCode)
 	{
-		var vm = new TrayViewModel(new FakeServiceControl(ServiceState.NotInstalled), _ => Task.FromResult<int?>(null), Updates(new FakeServiceControl()));
+		var vm = new TrayViewModel(new FakeServiceControl(ServiceState.NotInstalled), _ => Task.FromResult(exitCode), Updates(new FakeServiceControl()));
 
 		await vm.InstallCommand.ExecuteAsync(null);
 

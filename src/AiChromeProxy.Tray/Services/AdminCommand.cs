@@ -16,7 +16,8 @@ public static class AdminCommand
 	public const string Install = "install";
 	public const string Uninstall = "uninstall";
 
-	private const int ErrorCancelled = 1223;
+	/// <summary>ERROR_CANCELLED: the UAC prompt was declined, or the install dialog was closed without installing.</summary>
+	public const int Cancelled = 1223;
 
 	public static string CurrentUser => WindowsIdentity.GetCurrent().Name;
 
@@ -60,7 +61,7 @@ public static class AdminCommand
 			await process!.WaitForExitAsync();
 			return process.ExitCode;
 		}
-		catch (Win32Exception ex) when (ex.NativeErrorCode == ErrorCancelled)
+		catch (Win32Exception ex) when (ex.NativeErrorCode == Cancelled)
 		{
 			return null;
 		}

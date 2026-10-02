@@ -142,6 +142,7 @@ public sealed class ServiceSetupTests
 		Assert.Equal("Enter the account and its Windows password.", vm.Error);
 		Assert.Empty(service.Calls);
 		Assert.False(vm.Succeeded);
+		Assert.Equal(AdminCommand.Cancelled, vm.ExitCode);
 	}
 
 	[Fact]
@@ -154,6 +155,7 @@ public sealed class ServiceSetupTests
 
 		Assert.Equal([@"install HOME\svc p@ss word HOME\jane"], service.Calls);
 		Assert.True(vm.Succeeded);
+		Assert.Equal(0, vm.ExitCode);
 		Assert.Equal(string.Empty, vm.Password);
 		Assert.Null(vm.Error);
 		Assert.False(vm.IsBusy);

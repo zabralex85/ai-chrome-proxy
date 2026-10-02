@@ -57,7 +57,7 @@ public partial class App : Avalonia.Application
 	{
 		var vm = new InstallViewModel(new WindowsServiceControl(), controlUser);
 		var window = new InstallWindow(vm);
-		window.Closed += (_, _) => desktop.Shutdown(vm.Succeeded ? 0 : 1);
+		window.Closed += (_, _) => desktop.Shutdown(vm.ExitCode);
 		window.Show();
 	}
 

@@ -34,6 +34,9 @@ public sealed partial class InstallViewModel : ObservableObject
 	[ObservableProperty]
 	public partial bool Succeeded { get; private set; }
 
+	/// <summary>Exit code of the elevated instance: 0 once installed, otherwise "cancelled" (the dialog already showed any error).</summary>
+	public int ExitCode => Succeeded ? 0 : AdminCommand.Cancelled;
+
 	[RelayCommand(CanExecute = nameof(CanInstall))]
 	private async Task InstallAsync()
 	{
