@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AiChromeProxy.Client/AiChromeProxy.Client.csproj" />
+    <Project Path="src/AiChromeProxy.Server/AiChromeProxy.Server.csproj" />
+    <Project Path="src/AiChromeProxy.Shared/AiChromeProxy.Shared.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AiChromeProxy.Tests/AiChromeProxy.Tests.csproj" />
+  </Folder>
+</Solution>
