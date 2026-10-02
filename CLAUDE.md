@@ -18,7 +18,7 @@ Open source (MIT). Everything in the repo is in English. No personal paths, doma
 2. Plan → `docs/superpowers/plans/YYYY-MM-DD-<topic>.md`.
 3. Implementation — subagent-driven development from the plan, final review.
 
-Sub-projects in order: skeleton+transport → sync → Claude chat → code navigator.
+Sub-projects in order: skeleton+transport → Windows host → sync → Claude chat → code navigator → mobile app (`mobile/`, Flutter).
 
 ## Code conventions
 
@@ -31,6 +31,8 @@ Sub-projects in order: skeleton+transport → sync → Claude chat → code navi
 - Never commit secrets: `appsettings.json` holds non-secret defaults only; per-machine values and secrets come from environment variables.
 
 ## Security
+
+- The `Envelope` JSON shape (camelCase) is a public contract shared with the Flutter app — change it compatibly.
 
 - Every path from the protocol is normalized and checked for escaping its root (mirror on the server, picked folder in the browser).
 - Cloudflare Access is mandatory before exposing Server publicly: it runs `claude` with permission to edit files and execute commands.
