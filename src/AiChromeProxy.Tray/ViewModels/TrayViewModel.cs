@@ -1,12 +1,13 @@
 using AiChromeProxy.Tray.Services;
+using AiChromeProxy.Tray.Updates;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
 namespace AiChromeProxy.Tray.ViewModels;
 
-/// <summary>Tray menu state: service status line, Start / Stop / Restart and the elevated Install / Uninstall.</summary>
+/// <summary>Tray menu state: service status line, Start / Stop / Restart, the elevated Install / Uninstall and "Update to vX".</summary>
 /// <param name="runElevated">Runs <c>--admin &lt;command&gt;</c> elevated; returns its exit code, or null when UAC was declined.</param>
-public sealed partial class TrayViewModel(IServiceControl service, Func<string, Task<int?>> runElevated) : ObservableObject
+public sealed partial class TrayViewModel(IServiceControl service, Func<string, Task<int?>> runElevated, UpdateOrchestrator updates) : ObservableObject
 {
 	[ObservableProperty]
 	[NotifyPropertyChangedFor(nameof(StatusText))]
@@ -16,6 +17,15 @@ public sealed partial class TrayViewModel(IServiceControl service, Func<string, 
 	/// <summary>Last failure of a menu action or status query; cleared when the next action starts.</summary>
 	[ObservableProperty]
 	public partial string? Error { get; private set; }
+
+	/// <summary>Newer release found by the last check; null hides the menu item.</summary>
+	[ObservableProperty]
+	[NotifyPropertyChangedFor(nameof(UpdateText), nameof(IsUpdateAvailable))]
+	public partial string? UpdateVersion { get; private set; }
+
+	public string UpdateText => $"Update to v{UpdateVersion}";
+
+	public bool IsUpdateAvailable => UpdateVersion is not null;
 
 	public string StatusText => State switch
 	{
@@ -38,6 +48,23 @@ public sealed partial class TrayViewModel(IServiceControl service, Func<string, 
 		}
 	}
 
+	/// <summary>Tray start-up: resume a service an interrupted update left stopped, then check for updates now and every 24 h.</summary>
+	public async Task RunUpdateChecksAsync(TimeProvider time, CancellationToken ct)
+	{
+		await RunAsync(updates.ResumeServiceAfterUpdateAsync);
+		await updates.RunChecksAsync(
+			time,
+			(version, error) =>
+			{
+				UpdateVersion = version;
+				if (error is not null)
+				{
+					Error = $"Update check failed: {error.Message}";
+				}
+			},
+			ct);
+	}
+
 	[RelayCommand(CanExecute = nameof(CanStart))]
 	private Task StartAsync() => RunAsync(service.StartAsync);
 
@@ -57,6 +84,10 @@ public sealed partial class TrayViewModel(IServiceControl service, Func<string, 
 
 	[RelayCommand(CanExecute = nameof(CanUninstall))]
 	private Task UninstallAsync() => RunAsync(_ => ElevateAsync(AdminCommand.Uninstall));
+
+	/// <summary>Download, stop the service, apply and restart the tray; on failure the current version keeps running and the error is shown.</summary>
+	[RelayCommand]
+	private Task UpdateAsync() => RunAsync(updates.UpdateAsync);
 
 	private bool CanStart() => State == ServiceState.Stopped;
 

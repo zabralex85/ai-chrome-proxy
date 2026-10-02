@@ -1,6 +1,8 @@
 using AiChromeProxy.Tray.Services;
+using AiChromeProxy.Tray.Updates;
 using Avalonia;
 using Avalonia.Controls;
+using Velopack;
 
 namespace AiChromeProxy.Tray;
 
@@ -9,6 +11,13 @@ internal static class Program
 	[STAThread]
 	public static int Main(string[] args)
 	{
+		// Must run first: handles Velopack's --veloapp-* hook invocations and exits.
+		VelopackApp.Build()
+			.SetAutoApplyOnStartup(false) // updates are applied only by UpdateOrchestrator, after it stopped the service
+			.OnAfterUpdateFastCallback(_ => VelopackHooks.AfterUpdate(new WindowsServiceControl()))
+			.OnBeforeUninstallFastCallback(_ => VelopackHooks.BeforeUninstall(new WindowsServiceControl(), AdminCommand.RunElevatedAsync, new RegistryAutoStart()))
+			.Run();
+
 		switch (AdminCommand.Parse(args)?.Command)
 		{
 			case AdminCommand.Uninstall:

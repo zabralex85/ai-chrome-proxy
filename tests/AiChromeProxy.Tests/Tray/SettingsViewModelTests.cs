@@ -194,9 +194,4 @@ public sealed class SettingsViewModelTests : IDisposable
 	}
 
 	private JsonNode ReadFile() => JsonNode.Parse(File.ReadAllText(_dataDir.SettingsFile))!;
-
-	private sealed class FakeAutoStart : IAutoStart
-	{
-		public bool IsEnabled { get; set; }
-	}
 }

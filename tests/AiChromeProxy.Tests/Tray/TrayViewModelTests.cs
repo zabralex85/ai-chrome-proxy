@@ -1,4 +1,5 @@
 using AiChromeProxy.Tray.Services;
+using AiChromeProxy.Tray.Updates;
 using AiChromeProxy.Tray.ViewModels;
 
 namespace AiChromeProxy.Tests.Tray;
@@ -44,12 +45,15 @@ public sealed class TrayViewModelTests
 	{
 		var service = new FakeServiceControl(ServiceState.NotInstalled);
 		var elevated = new List<string>();
-		var vm = new TrayViewModel(service, command =>
-		{
-			elevated.Add(command);
-			service.State = ServiceState.Running;
-			return Task.FromResult<int?>(0);
-		});
+		var vm = new TrayViewModel(
+			service,
+			command =>
+			{
+				elevated.Add(command);
+				service.State = ServiceState.Running;
+				return Task.FromResult<int?>(0);
+			},
+			Updates(service));
 		vm.Refresh();
 
 		await vm.InstallCommand.ExecuteAsync(null);
@@ -62,7 +66,7 @@ public sealed class TrayViewModelTests
 	[Fact]
 	public async Task Uninstall_ElevatedInstanceFails_ErrorWithExitCode()
 	{
-		var vm = new TrayViewModel(new FakeServiceControl(ServiceState.Running), _ => Task.FromResult<int?>(1));
+		var vm = new TrayViewModel(new FakeServiceControl(ServiceState.Running), _ => Task.FromResult<int?>(1), Updates(new FakeServiceControl()));
 		vm.Refresh();
 
 		await vm.UninstallCommand.ExecuteAsync(null);
@@ -73,7 +77,7 @@ public sealed class TrayViewModelTests
 	[Fact]
 	public async Task Install_UacDeclined_NoError()
 	{
-		var vm = new TrayViewModel(new FakeServiceControl(ServiceState.NotInstalled), _ => Task.FromResult<int?>(null));
+		var vm = new TrayViewModel(new FakeServiceControl(ServiceState.NotInstalled), _ => Task.FromResult<int?>(null), Updates(new FakeServiceControl()));
 
 		await vm.InstallCommand.ExecuteAsync(null);
 
@@ -134,5 +138,8 @@ public sealed class TrayViewModelTests
 		Assert.Equal("scm down", vm.Error);
 	}
 
-	private static TrayViewModel Create(FakeServiceControl service) => new(service, _ => Task.FromResult<int?>(0));
+	private static TrayViewModel Create(FakeServiceControl service) => new(service, _ => Task.FromResult<int?>(0), Updates(service));
+
+	private static UpdateOrchestrator Updates(FakeServiceControl service) =>
+		new(new FakeUpdateSource(service.Calls), service, Path.Combine(Path.GetTempPath(), "aicp-tests-" + Guid.NewGuid().ToString("N")));
 }

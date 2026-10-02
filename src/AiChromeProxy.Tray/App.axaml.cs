@@ -1,6 +1,8 @@
 using System.Diagnostics;
+using System.Reflection;
 using AiChromeProxy.Infrastructure.Hosting;
 using AiChromeProxy.Tray.Services;
+using AiChromeProxy.Tray.Updates;
 using AiChromeProxy.Tray.ViewModels;
 using AiChromeProxy.Tray.Views;
 using Avalonia.Controls;
@@ -65,7 +67,10 @@ public partial class App : Avalonia.Application
 	{
 		var dataDir = DataDirectory.FromEnvironment();
 		var service = new WindowsServiceControl();
-		var vm = new TrayViewModel(service, AdminCommand.RunElevatedAsync);
+		var repository = typeof(App).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == "UpdateRepository")?.Value;
+		var updates = new UpdateOrchestrator(new VelopackUpdateSource(repository), service, Path.Combine(Path.GetTempPath(), "AiChromeProxy.update-pending"));
+		var vm = new TrayViewModel(service, AdminCommand.RunElevatedAsync, updates);
+		var update = new NativeMenuItem { Command = vm.UpdateCommand };
 		var status = new NativeMenuItem { IsEnabled = false };
 		var error = new NativeMenuItem { IsEnabled = false };
 		var menu = new NativeMenu
@@ -83,6 +88,7 @@ public partial class App : Avalonia.Application
 			Item("Settings…", () => ShowSingle(desktop, () => new SettingsWindow { DataContext = new SettingsViewModel(dataDir, new RegistryAutoStart(), service) })),
 			Item("Logs…", () => ShowSingle(desktop, () => new LogsWindow { DataContext = new LogsViewModel(dataDir) })),
 			Item("Open UI", () => Open(SettingsViewModel.UiAddress(dataDir))),
+			update,
 			new NativeMenuItemSeparator(),
 			Item("Exit", () => desktop.Shutdown()),
 		};
@@ -99,12 +105,15 @@ public partial class App : Avalonia.Application
 			icon.ToolTipText = "AI Chrome Proxy: " + vm.StatusText;
 			error.Header = vm.Error;
 			error.IsVisible = vm.Error is not null;
+			update.Header = vm.UpdateText;
+			update.IsVisible = vm.IsUpdateAvailable;
 		}
 
 		vm.PropertyChanged += (_, _) => Render();
 		vm.Refresh();
 		Render();
 		TrayIcon.SetIcons(this, [icon]);
+		_ = vm.RunUpdateChecksAsync(TimeProvider.System, CancellationToken.None);
 
 		// ponytail: polls the SCM every 2 s for the tray's lifetime (one cheap query); restrict to "menu open" via NativeMenu.Opening/Closed if it ever matters.
 		DispatcherTimer.Run(
