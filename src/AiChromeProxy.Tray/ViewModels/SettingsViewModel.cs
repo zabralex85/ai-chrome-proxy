@@ -148,7 +148,31 @@ public sealed partial class SettingsViewModel : ObservableObject
 			server[nameof(ServerOptions.PublicHost)] = PublicHost.Trim();
 
 			Directory.CreateDirectory(_dataDir.Root);
-			File.WriteAllText(_dataDir.SettingsFile, settings.ToJsonString(Indented));
+			var tmpPath = _dataDir.SettingsFile + ".tmp";
+			try
+			{
+				File.WriteAllText(tmpPath, settings.ToJsonString(Indented));
+				File.Move(tmpPath, _dataDir.SettingsFile, overwrite: true);
+			}
+			catch (Exception ex)
+			{
+				try
+				{
+					File.Delete(tmpPath);
+				}
+				catch
+				{
+					// Best effort cleanup; let the original exception be thrown
+				}
+
+				if (ex is IOException or UnauthorizedAccessException)
+				{
+					throw new IOException($"Could not write {_dataDir.SettingsFile}: {ex.Message}", ex);
+				}
+
+				throw;
+			}
+
 			_autoStart.IsEnabled = StartWithWindows;
 		}
 		catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
