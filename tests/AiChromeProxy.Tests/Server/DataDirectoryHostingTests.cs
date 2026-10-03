@@ -93,6 +93,9 @@ public sealed class DataDirectoryHostingTests : IDisposable
 		Assert.Equal("Hello \"clef\"", json.RootElement.GetProperty("@m").GetString());
 		Assert.Equal("Warning", json.RootElement.GetProperty("@l").GetString());
 		Assert.Equal("clef", json.RootElement.GetProperty("Name").GetString());
+
+		// Disposing the container closed the file: nothing holds it open, so the folder can be deleted.
+		File.Open(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None).Dispose();
 	}
 
 	[Fact]

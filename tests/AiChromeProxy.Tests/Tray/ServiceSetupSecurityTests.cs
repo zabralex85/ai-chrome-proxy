@@ -134,6 +134,34 @@ public sealed class ServiceSetupSecurityTests : IDisposable
 	}
 
 	[Fact]
+	public void PrepareDataDirectory_ForeignOwnedEntry_Refused_LogsNotCreated()
+	{
+		var dataDir = new DataDirectory(Path.Combine(_temp, "foreign-entry"));
+		Directory.CreateDirectory(dataDir.Root);
+		File.WriteAllText(dataDir.SettingsFile, "{}");
+
+		var ex = Assert.Throws<InvalidOperationException>(
+			() => ServiceSetup.PrepareDataDirectory(dataDir, Current, Current, path => path == dataDir.SettingsFile ? Other : Current));
+
+		Assert.Equal($"{dataDir.SettingsFile} was created by another user; delete it and retry.", ex.Message);
+		Assert.False(Directory.Exists(dataDir.Logs));
+	}
+
+	[Fact]
+	public void PrepareDataDirectory_ForeignOwnedRoot_Refused_DaclUntouched()
+	{
+		var dataDir = new DataDirectory(Path.Combine(_temp, "foreign-root"));
+		Directory.CreateDirectory(dataDir.Root);
+		var before = RawDacl.Sddl(dataDir.Root);
+
+		var ex = Assert.Throws<InvalidOperationException>(() => ServiceSetup.PrepareDataDirectory(dataDir, Current, Current, _ => Other));
+
+		Assert.Equal($"{dataDir.Root} was created by another user; delete it and retry.", ex.Message);
+		Assert.Equal(before, RawDacl.Sddl(dataDir.Root));
+		Assert.False(Directory.Exists(dataDir.Logs));
+	}
+
+	[Fact]
 	public void PrepareDataDirectory_ControlUserOwnedFolder_Allowed()
 	{
 		var dataDir = new DataDirectory(Path.Combine(_temp, "mine"));
