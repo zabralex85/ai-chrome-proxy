@@ -9,7 +9,7 @@ public static class SyncLimits
 	/// <summary>More files to sync than this (after excludes) is refused.</summary>
 	public const int MaxFiles = 20_000;
 
-	/// <summary>Raw bytes per <c>sync.chunk</c> (about 21.4 KB as base64).</summary>
+	/// <summary>Raw bytes per <c>sync.chunk</c> (21 846 characters as base64url).</summary>
 	public const int ChunkSize = 16 * 1024;
 
 	/// <summary>Entries per <c>sync.manifest</c> / <c>sync.delta</c> page.</summary>

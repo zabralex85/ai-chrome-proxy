@@ -8,7 +8,7 @@ namespace AiChromeProxy.Tests.Client;
 public sealed class ManifestPlannerTests
 {
 	/// <summary>SignalR's default <c>MaximumReceiveMessageSize</c>.</summary>
-	private const int SignalRLimit = 32 * 1024;
+	internal const int SignalRLimit = 32 * 1024;
 
 	private static readonly string Hash = new('a', 64);
 
@@ -90,6 +90,21 @@ public sealed class ManifestPlannerTests
 	}
 
 	[Fact]
+	public void DeltaPages_WorstCasePaths_EveryEnvelopeUnderSignalRLimit()
+	{
+		static string WorstPath(string prefix, int i) => $"{prefix}{i:D3}/" + new string('ж', 255);
+
+		var known = Enumerable.Range(0, 300).Select(i => new ManifestEntry(WorstPath("o", i), long.MaxValue, Hash)).ToDictionary(e => e.Path);
+		var current = Enumerable.Range(0, 300).Select(i => new ManifestEntry(WorstPath("n", i), long.MaxValue, Hash)).ToList();
+
+		var pages = ManifestPlanner.DeltaPages(new string('r', RepoName.MaxLength), known, current);
+
+		Assert.All(pages, p => Assert.True(WireSize(Envelope.Create(MessageTypes.SyncDelta, p, Guid.NewGuid().ToString("N"))) < SignalRLimit - 4096));
+		Assert.Equal(300, pages.Sum(p => p.Upserts.Count));
+		Assert.Equal(300, pages.Sum(p => p.Deletes.Count));
+	}
+
+	[Fact]
 	public void DeltaPages_NothingChanged_Empty()
 	{
 		var known = new Dictionary<string, ManifestEntry> { ["a"] = new("a", 1, Hash) };
@@ -108,6 +123,6 @@ public sealed class ManifestPlannerTests
 		Assert.Empty(page.Deletes);
 	}
 
-	private static int WireSize(Envelope envelope) =>
+	internal static int WireSize(Envelope envelope) =>
 		JsonSerializer.SerializeToUtf8Bytes(new { type = 1, target = "Send", arguments = new[] { envelope } }, JsonSerializerOptions.Web).Length;
 }
