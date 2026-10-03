@@ -1,3 +1,4 @@
+using AiChromeProxy.Application.Projects;
 using AiChromeProxy.Application.Sync;
 using AiChromeProxy.Application.Transport;
 using AiChromeProxy.Client.Transport;
@@ -23,7 +24,7 @@ public sealed class LoopbackServer : IDisposable
 	{
 		var store = new FileSystemMirrorStore(Options.Create(new MirrorOptions { Root = MirrorRoot }));
 		_sessions = new SyncSessions(store, Projects, new ListLogger<SyncSession>(), TimeProvider.System, new FakeMirrorWatcher());
-		_router = new EnvelopeRouter([.. SyncHandler.Types.Select(t => new SyncHandler(t, _sessions))]);
+		_router = new EnvelopeRouter([.. SyncHandler.Types.Select(t => (IEnvelopeHandler)new SyncHandler(t, _sessions)), .. ProjectSettingsHandler.Types.Select(t => new ProjectSettingsHandler(t, Projects, _sessions))]);
 		Transport.Reply = ReplyAsync;
 		Transport.SetState(TransportState.Connected);
 	}

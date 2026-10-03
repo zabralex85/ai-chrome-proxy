@@ -182,7 +182,7 @@ public sealed partial class SyncSession(
 		_repo = repo;
 		NotifyRepo(repo);
 		ResetStats();
-		return Reply(MessageTypes.SyncOpened, new SyncOpenPayload(repo), request);
+		return Reply(MessageTypes.SyncOpened, new SyncOpenPayload(repo, projects.GetSettings(repo)), request);
 	}
 
 	private async Task<Envelope> ManifestAsync(SyncManifestPayload payload, Envelope request, CancellationToken ct)

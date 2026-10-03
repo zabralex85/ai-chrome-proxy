@@ -51,6 +51,17 @@ public sealed class SyncSessionTests : IDisposable
 		Assert.Equal("My_Repo", Read<SyncOpenPayload>(reply).Repo);
 	}
 
+	[Fact]
+	public async Task Open_RepliesSettings()
+	{
+		var settings = new ProjectSettings { Excludes = "tmp/", ApplyServerChanges = false };
+		_projects.SaveSettings(Repo, settings);
+
+		var reply = await _session.HandleAsync(Envelope.Create(MessageTypes.SyncOpen, new SyncOpenPayload(Repo)), Context, Ct);
+
+		Assert.Equal(settings, Read<SyncOpenPayload>(reply!).Settings);
+	}
+
 	[Theory]
 	[InlineData(null)]
 	[InlineData("  ")]

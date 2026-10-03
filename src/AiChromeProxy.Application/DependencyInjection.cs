@@ -1,3 +1,4 @@
+using AiChromeProxy.Application.Projects;
 using AiChromeProxy.Application.Sync;
 using AiChromeProxy.Application.Transport;
 using Microsoft.Extensions.DependencyInjection;
@@ -16,6 +17,11 @@ public static class DependencyInjection
 		foreach (var type in SyncHandler.Types)
 		{
 			services.AddSingleton<IEnvelopeHandler>(sp => new SyncHandler(type, sp.GetRequiredService<SyncSessions>()));
+		}
+
+		foreach (var type in ProjectSettingsHandler.Types)
+		{
+			services.AddSingleton<IEnvelopeHandler>(sp => new ProjectSettingsHandler(type, sp.GetRequiredService<IProjectStore>(), sp.GetRequiredService<SyncSessions>()));
 		}
 
 		services.AddSingleton<EnvelopeRouter>();
