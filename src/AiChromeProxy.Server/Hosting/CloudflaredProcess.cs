@@ -26,9 +26,11 @@ public sealed class CloudflaredProcess : ICloudflaredProcess
 	private CloudflaredProcess(Process process) => _process = process;
 
 	/// <summary>Starts <paramref name="info"/> with redirected output (each line to <paramref name="output"/>) and no window.</summary>
-	/// <exception cref="Win32Exception">The executable was not found or could not be started.</exception>
+	/// <exception cref="Win32Exception">The executable was not found or could not be started, or the job object failed (then nothing is started).</exception>
 	public static ICloudflaredProcess Start(ProcessStartInfo info, Action<string> output)
 	{
+		// The job first: if it cannot be created, no process holding TUNNEL_TOKEN is started (and leaked) on every retry.
+		var job = OperatingSystem.IsWindows() ? Job.Value : null;
 		info.UseShellExecute = false;
 		info.CreateNoWindow = true;
 		info.RedirectStandardOutput = true;
@@ -38,11 +40,15 @@ public sealed class CloudflaredProcess : ICloudflaredProcess
 		process.ErrorDataReceived += (_, e) => Forward(e.Data, output);
 		process.Start();
 
-		if (OperatingSystem.IsWindows() && Job.Value is { } job && !AssignProcessToJobObject(job, process.SafeHandle))
+		// cloudflared spawns no children, so the window between Start and the assignment below is theoretical; Kill(entireProcessTree) covers shutdown.
+		if (job is not null && !AssignProcessToJobObject(job, process.SafeHandle))
 		{
 			var error = Marshal.GetLastPInvokeError();
-			process.Kill(entireProcessTree: true);
-			process.Dispose();
+			using (var started = new CloudflaredProcess(process))
+			{
+				started.Kill();
+			}
+
 			throw new Win32Exception(error, "Could not put cloudflared in the Server's job object.");
 		}
 
@@ -66,6 +72,10 @@ public sealed class CloudflaredProcess : ICloudflaredProcess
 		catch (InvalidOperationException)
 		{
 			// Already exited.
+		}
+		catch (Win32Exception)
+		{
+			// Access denied or already terminating: the kill-on-close job still ends it with the Server.
 		}
 	}
 

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
 using AiChromeProxy.Infrastructure.Hosting;
+using AiChromeProxy.Infrastructure.Security;
 using AiChromeProxy.Server.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
@@ -65,7 +66,10 @@ public sealed class CloudflaredSupervisorTests
 		}
 
 		Assert.Contains(_logger.Entries, e => e is (LogLevel.Warning, "cloudflared exited with code 1."));
-		Assert.Contains("Restarting cloudflared in 00:01:00.", _logger.Messages);
+		Assert.Equal(
+			["00:00:01", "00:00:02", "00:00:04", "00:00:08", "00:00:16", "00:00:32", "00:01:00", "00:01:00"],
+			_logger.Messages.Where(m => m.StartsWith("Restarting cloudflared in ", StringComparison.Ordinal)).Select(m => m["Restarting cloudflared in ".Length..^1]));
+		Assert.All(_processes.SkipLast(1), p => Assert.True(p.Disposed));
 		await cts.CancelAsync();
 		await run;
 	}
@@ -134,6 +138,35 @@ public sealed class CloudflaredSupervisorTests
 
 		Assert.Single(_starts);
 		Assert.False(_processes.Last().Killed);
+		Assert.True(_processes.Last().Disposed);
+	}
+
+	[Fact]
+	public async Task AccessCheckDisabled_NeverStarts_LogsOnce()
+	{
+		await Create(accessEnabled: false).RunAsync(TestContext.Current.CancellationToken);
+
+		Assert.Empty(_starts);
+		Assert.Equal(["Cloudflare Access check is disabled; cloudflared is not started (never expose a Server without it)."], _logger.Messages);
+	}
+
+	[Fact]
+	public async Task WaitFailure_LoggedAsError_ProcessKilledAndDisposed_RestartedWithBackoff()
+	{
+		using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+		var run = Create().RunAsync(cts.Token);
+		var failed = _processes.Last();
+
+		failed.Fail(new InvalidOperationException("No process is associated with this object."));
+		await WaitUntilAsync(() => _time.Timers == 1);
+		_time.Advance(TimeSpan.FromSeconds(1));
+		await WaitUntilAsync(() => _processes.Count == 2);
+
+		Assert.True(failed.Killed);
+		Assert.True(failed.Disposed);
+		Assert.Contains(_logger.Entries, e => e is (LogLevel.Error, "Waiting for cloudflared failed; it is stopped and restarted."));
+		await cts.CancelAsync();
+		await run;
 	}
 
 	[Fact]
@@ -179,8 +212,8 @@ public sealed class CloudflaredSupervisorTests
 		}
 	}
 
-	private CloudflaredSupervisor Create(string token = Token) =>
-		new(new TunnelOptions { Token = token, CloudflaredPath = ConfiguredPath }, _logger, _time, Start);
+	private CloudflaredSupervisor Create(string token = Token, bool accessEnabled = true) =>
+		new(new TunnelOptions { Token = token, CloudflaredPath = ConfiguredPath }, new CloudflareAccessOptions { Enabled = accessEnabled }, _logger, _time, Start);
 
 	private ICloudflaredProcess Start(ProcessStartInfo info, Action<string> output)
 	{
@@ -234,6 +267,8 @@ public sealed class CloudflaredSupervisorTests
 		public bool Disposed { get; private set; }
 
 		public void Exit(int exitCode) => _exit.SetResult(exitCode);
+
+		public void Fail(Exception error) => _exit.SetException(error);
 
 		public Task<int> WaitForExitAsync(CancellationToken ct) => _exit.Task.WaitAsync(ct);
 

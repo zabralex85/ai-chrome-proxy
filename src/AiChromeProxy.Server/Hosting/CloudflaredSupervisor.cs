@@ -1,15 +1,18 @@
 using System.Diagnostics;
 using AiChromeProxy.Infrastructure.Hosting;
+using AiChromeProxy.Infrastructure.Security;
 
 namespace AiChromeProxy.Server.Hosting;
 
 /// <summary>
 /// Runs <c>cloudflared tunnel --no-autoupdate run</c> as a child of the Server while <c>Tunnel:Token</c> is set, restarting it with
 /// exponential backoff. The token reaches the child only through its <c>TUNNEL_TOKEN</c> environment variable: never a command line or a log.
+/// Never while the Cloudflare Access check is off (Development): a Server without it must not be reachable from the internet.
 /// </summary>
 /// <param name="start">Starts the process and sends each stdout/stderr line to the callback (<see cref="CloudflaredProcess.Start"/>; a fake in tests).</param>
 public sealed class CloudflaredSupervisor(
 	TunnelOptions options,
+	CloudflareAccessOptions access,
 	ILogger<CloudflaredSupervisor> logger,
 	TimeProvider time,
 	Func<ProcessStartInfo, Action<string>, ICloudflaredProcess> start) : BackgroundService
@@ -35,12 +38,18 @@ public sealed class CloudflaredSupervisor(
 		return File.Exists(bundled) ? bundled : "cloudflared";
 	}
 
-	/// <summary>The supervision loop; returns when <paramref name="ct"/> is cancelled (the running process is killed) or no token is configured.</summary>
+	/// <summary>The supervision loop; returns when <paramref name="ct"/> is cancelled (the running process is killed), no token is configured or Access is off.</summary>
 	public async Task RunAsync(CancellationToken ct)
 	{
 		if (string.IsNullOrWhiteSpace(options.Token))
 		{
 			logger.LogInformation("Cloudflare Tunnel not configured (Tunnel:Token is empty); cloudflared is not started.");
+			return;
+		}
+
+		if (!access.Enabled)
+		{
+			logger.LogWarning("Cloudflare Access check is disabled; cloudflared is not started (never expose a Server without it).");
 			return;
 		}
 
@@ -73,6 +82,12 @@ public sealed class CloudflaredSupervisor(
 					{
 						process.Kill();
 						return;
+					}
+					catch (Exception ex)
+					{
+						// Lost track of the child: stop it so the restart cannot run a second tunnel next to it.
+						logger.LogError(ex, "Waiting for cloudflared failed; it is stopped and restarted.");
+						process.Kill();
 					}
 				}
 			}
