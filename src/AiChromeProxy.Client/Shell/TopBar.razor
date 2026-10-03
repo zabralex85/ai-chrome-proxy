@@ -1,4 +1,5 @@
 @using AiChromeProxy.Client.Transport
+@inject NavigationManager Navigation
 
 <header class="topbar" data-testid="top-bar">
     <span class="brand" data-testid="app-name"><Icon Name="logo" Class="brand-mark" />ai-chrome-proxy</span>
@@ -11,6 +12,13 @@
     <button type="button" class="icon-button" data-testid="theme-toggle" data-theme-choice="@(Theme ?? "system")" title="@ThemeTitle" aria-label="@ThemeTitle" @onclick="OnToggleTheme">
         <Icon Name="@(Theme switch { "light" => "sun", "dark" => "moon", _ => "monitor" })" />
     </button>
+    @if (UpdateInstalled)
+    {
+        <span class="update-banner" data-testid="update-banner" role="status">
+            A new version is installed —
+            <button type="button" class="button link" @onclick="() => Navigation.Refresh(forceReload: true)">Reload</button>
+        </span>
+    }
     <span class="spacer"></span>
     <button type="button" class="icon-button @(FilesAttention is null ? null : "has-attention")" data-testid="toggle-files" title="@FilesTitle" aria-label="@FilesTitle"
             aria-pressed="@(FilesOpen ? "true" : "false")" @onclick="OnToggleFiles">
@@ -41,6 +49,10 @@
     /// <summary>Round trip of the last ping; null before the first one or after a failed one.</summary>
     [Parameter]
     public long? PingMs { get; set; }
+
+    /// <summary>The Server runs another version than this client (an update was installed while the page was open).</summary>
+    [Parameter]
+    public bool UpdateInstalled { get; set; }
 
     /// <summary>"light", "dark" or null (follow the system).</summary>
     [Parameter]

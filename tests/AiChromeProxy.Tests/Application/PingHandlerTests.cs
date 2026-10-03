@@ -19,5 +19,6 @@ public sealed class PingHandlerTests
 		var serverTime = DateTimeOffset.Parse(reply.Payload.GetProperty("serverTime").GetString()!);
 		Assert.Equal(now, serverTime);
 		Assert.Equal(TimeSpan.Zero, serverTime.Offset);
+		Assert.Equal("1.0.0", reply.Payload.GetProperty(ProductVersion.PongField).GetString());
 	}
 }
