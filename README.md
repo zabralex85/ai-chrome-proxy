@@ -19,6 +19,10 @@ dotnet run --project src/AiChromeProxy.Server --no-launch-profile
 # open http://127.0.0.1:5180/ - a folder you open there is mirrored to src/AiChromeProxy.Server/data/mirror (see docs/sync.md)
 ```
 
+## Long paths on Windows
+
+The mirror can hold paths longer than 260 characters. The Server handles them, but git and builds run in the mirror need long paths enabled: set *Enable Win32 long paths* (`HKLM\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled = 1`) and restart the service, run `git config --system core.longpaths true`, and consider a short `Mirror:Root` such as `C:\m` (create and restrict it yourself; not a `subst` or network drive). Details: [docs/sync.md](docs/sync.md#long-paths-on-windows).
+
 > You are responsible for complying with your organization's policies on moving code off a machine.
 
 ## License

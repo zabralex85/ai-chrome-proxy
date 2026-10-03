@@ -84,6 +84,25 @@ A file on the mirror is deleted only when a scan positively saw it absent. A fil
 
 Set `Mirror:Root` (or the environment variable `Mirror__Root`) to put it elsewhere. Only the default location inside the data directory gets the data directory's protected DACL (see [Windows host](windows-host.md)); a custom `Mirror:Root` outside it keeps whatever permissions its folder has, so restrict it yourself (other local users could otherwise read the synced code, or plant files Claude will act on). Every protocol path is validated (relative, `/`-separated, normalized, checked by the rules above) and must resolve inside `<root>\<repo>` exactly as written (a path that Windows would rewrite, for example an 8.3 expansion, is refused); the server never follows a link or junction inside the mirror.
 
+### Long paths on Windows
+
+A synced path may be up to 260 characters (relative to the folder), so on the mirror `<root>\<repo>\<path>` can pass the classic 260-character `MAX_PATH` limit (the default root alone, `C:\ProgramData\AiChromeProxy\mirror\`, takes 36). The Server itself handles long paths; the tools that run in the mirror (git, builds, later Claude) may not:
+
+- **Enable Win32 long paths** (as administrator): Group Policy *Computer Configuration → Administrative Templates → System → Filesystem → Enable Win32 long paths*, or `HKLM\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled = 1` (DWORD):
+  ```powershell
+  New-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem -Name LongPathsEnabled -Value 1 -PropertyType DWord -Force
+  ```
+  A process reads it when it starts: restart the service (or reboot) so the tools it starts see it. Programs without the long-path opt-in in their manifest still stop at 260.
+- **git:** `git config --system core.longpaths true` (as administrator).
+- **A short `Mirror:Root`** such as `C:\m` shortens every path. Set it in `%ProgramData%\AiChromeProxy\appsettings.json` (`"Mirror": { "Root": "C:\\m" }`) or as the machine environment variable `Mirror__Root`, then restart the service. Outside the data directory the mirror gets **no** protected DACL, and standard users may create folders in `C:\`: create the folder yourself first and restrict it, for example (as administrator):
+  ```powershell
+  New-Item -ItemType Directory C:\m
+  icacls C:\m /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "${env:USERDOMAIN}\${env:USERNAME}:(OI)(CI)M"
+  ```
+  (`USERNAME` must be the account the service runs as.) Check `(Get-Acl C:\m).Owner` is you or Administrators.
+- **Not `subst` or mapped network drives:** they exist per logon session, and the service (which runs without anyone logged on) does not see them.
+- **Segment limit:** a single file or folder name stays limited to 237 characters (NTFS allows 255, minus the temp suffix `.<tag>.aicp-tmp`); no setting lifts it.
+
 ## Manual checklist (Chrome on the locked-down machine)
 
 The browser code (`fsaccess.ts`) has no automated tests; run this before a release that touches sync. Use a test repository, not production code, the first time.
