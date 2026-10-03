@@ -3,7 +3,14 @@
 //   FAKE_AGENT_DELAY_MS     pause before each line (default 0)
 //   FAKE_AGENT_STDIN_FILE   when set, the stdin text is written to this file
 //   FAKE_AGENT_STDERR       when set, this text is written to stderr first
+//   FAKE_AGENT_ARGS_FILE    when set, the received arguments are written to this file, one per line (UTF-8)
 //   FAKE_AGENT_EXIT_CODE    exit code (default 0)
+var argsFile = Environment.GetEnvironmentVariable("FAKE_AGENT_ARGS_FILE");
+if (!string.IsNullOrEmpty(argsFile))
+{
+	await File.WriteAllLinesAsync(argsFile, args);
+}
+
 string stdin;
 using (var reader = new StreamReader(Console.OpenStandardInput(), new System.Text.UTF8Encoding(false)))
 {

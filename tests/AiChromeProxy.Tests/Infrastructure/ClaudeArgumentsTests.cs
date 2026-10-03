@@ -60,6 +60,15 @@ public sealed class ClaudeArgumentsTests
 	}
 
 	[Fact]
+	public void AllowedTools_SkipsEmptyAndFlagLikeRules()
+	{
+		var args = ClaudeArguments.Build(Run("settings", tools: ["", " ", "--evil", "Read"]), new AgentOptions());
+
+		Assert.Equal([.. Base, "--permission-mode", "dontAsk", "--allowedTools", "Read", "--append-system-prompt", ClaudeArguments.Convention], args);
+		Assert.DoesNotContain("--allowedTools", ClaudeArguments.Build(Run("settings", tools: ["", "-x"]), new AgentOptions()));
+	}
+
+	[Fact]
 	public void ResolveCommand_PrefersExeInAnyDirOverCmd()
 	{
 		string[] dirs = [@"C:\a", "", @"C:\b"];
@@ -73,8 +82,11 @@ public sealed class ClaudeArgumentsTests
 	[Theory]
 	[InlineData(@"C:\tools\claude.exe")]
 	[InlineData(@"bin\claude")]
-	public void ResolveCommand_KeepsRootedOrQualified(string command)
-		=> Assert.Equal(command, ClaudeArguments.ResolveCommand(command, [], _ => false));
+	public void ResolveCommand_RootedOrQualified_KeptWhenItExists_NullOtherwise(string command)
+	{
+		Assert.Equal(command, ClaudeArguments.ResolveCommand(command, [], f => f == command));
+		Assert.Null(ClaudeArguments.ResolveCommand(command, [], _ => false));
+	}
 
 	[Fact]
 	public void UnsafeForCmd_FlagsMetacharactersOnly()

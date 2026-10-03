@@ -18,12 +18,14 @@ public sealed class AgentProcess : IAgentProcess
 	private const int StderrTailChars = 4000;
 
 	private readonly Process _process;
+	private readonly KillOnCloseJob _job;
 	private readonly StringBuilder _stderr = new();
 	private readonly Task _stderrDone;
 
-	private AgentProcess(Process process, Action<string> onStderr)
+	private AgentProcess(Process process, KillOnCloseJob job, Action<string> onStderr)
 	{
 		_process = process;
+		_job = job;
 		_stderrDone = Task.Run(() => PumpStderrAsync(onStderr));
 		Exited = WaitAsync();
 	}
@@ -77,12 +79,26 @@ public sealed class AgentProcess : IAgentProcess
 			info.Environment[key] = value;
 		}
 
+		// The run's own job (closed by Kill and Dispose) ends grandchildren too; the host job covers a crashed host.
+		var job = KillOnCloseJob.Create();
 		var process = new Process { StartInfo = info };
-		process.Start();
-		var started = new AgentProcess(process, onStderr);
+		try
+		{
+			process.Start();
+		}
+		catch
+		{
+			job.Dispose();
+			process.Dispose();
+			throw;
+		}
+
+		// Start and the assignments below are not atomic: a child spawned by the agent in that window escapes the jobs; Kill(entireProcessTree) still covers it.
+		var started = new AgentProcess(process, job, onStderr);
 		try
 		{
 			KillOnCloseJob.Assign(process);
+			job.Add(process);
 		}
 		catch (Win32Exception)
 		{
@@ -97,6 +113,7 @@ public sealed class AgentProcess : IAgentProcess
 
 	public void Kill()
 	{
+		_job.Dispose();
 		try
 		{
 			_process.Kill(entireProcessTree: true);
@@ -111,7 +128,11 @@ public sealed class AgentProcess : IAgentProcess
 		}
 	}
 
-	public void Dispose() => _process.Dispose();
+	public void Dispose()
+	{
+		Kill();
+		_process.Dispose();
+	}
 
 	private async IAsyncEnumerable<string> ReadLinesAsync([EnumeratorCancellation] CancellationToken ct = default)
 	{
@@ -128,9 +149,9 @@ public sealed class AgentProcess : IAgentProcess
 			await _process.StandardInput.WriteAsync(prompt);
 			_process.StandardInput.Close();
 		}
-		catch (IOException)
+		catch (Exception ex) when (ex is IOException or ObjectDisposedException)
 		{
-			// The process ended before reading its stdin; Exited and Stderr tell why.
+			// The process ended or was disposed before reading its stdin; Exited and Stderr tell why.
 		}
 	}
 

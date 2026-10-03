@@ -13,33 +13,32 @@ namespace AiChromeProxy.Infrastructure.Hosting;
 /// the host exits (even when crashed or killed), which kills every child put in it (<c>cloudflared</c>, the agent). No-op off Windows.
 /// </summary>
 [ExcludeFromCodeCoverage(Justification = "Win32 Job object glue.")]
-public static class KillOnCloseJob
+public sealed class KillOnCloseJob : IDisposable
 {
 	private const int JobObjectExtendedLimitInformationClass = 9;
 	private const uint JobObjectLimitKillOnJobClose = 0x2000;
 
-	private static readonly Lazy<SafeFileHandle?> Job = new(CreateKillOnCloseJob);
+	private static readonly Lazy<KillOnCloseJob> HostJob = new(Create);
 
-	/// <summary>Creates the job now (call before starting a process, so a failure leaks nothing).</summary>
+	private readonly SafeFileHandle? _handle;
+
+	private KillOnCloseJob(SafeFileHandle? handle) => _handle = handle;
+
+	/// <summary>Creates the host-wide job now (call before starting a process, so a failure leaks nothing).</summary>
 	/// <exception cref="Win32Exception">The job object could not be created or configured.</exception>
-	public static void Ensure() => _ = Job.Value;
+	public static void Ensure() => _ = HostJob.Value;
 
-	/// <summary>Puts <paramref name="process"/> in the job.</summary>
+	/// <summary>Puts <paramref name="process"/> in the host-wide job.</summary>
 	/// <exception cref="Win32Exception">The job object failed; the caller should kill the process.</exception>
-	public static void Assign(Process process)
-	{
-		var job = Job.Value;
-		if (job is not null && !AssignProcessToJobObject(job, process.SafeHandle))
-		{
-			throw new Win32Exception(Marshal.GetLastPInvokeError(), "Could not put the process in the host's job object.");
-		}
-	}
+	public static void Assign(Process process) => HostJob.Value.Add(process);
 
-	private static SafeFileHandle? CreateKillOnCloseJob()
+	/// <summary>A new job of its own: closing it (<see cref="Dispose"/>) kills every process in it, grandchildren included.</summary>
+	/// <exception cref="Win32Exception">The job object could not be created or configured.</exception>
+	public static KillOnCloseJob Create()
 	{
 		if (!OperatingSystem.IsWindows())
 		{
-			return null;
+			return new KillOnCloseJob(null);
 		}
 
 		var job = CreateJobObjectW(IntPtr.Zero, null);
@@ -56,8 +55,21 @@ public static class KillOnCloseJob
 			throw new Win32Exception(error, "Could not configure the job object.");
 		}
 
-		return job;
+		return new KillOnCloseJob(job);
 	}
+
+	/// <summary>Puts <paramref name="process"/> in this job (nested in the host job when it is already in one).</summary>
+	/// <exception cref="Win32Exception">The job object failed; the caller should kill the process.</exception>
+	public void Add(Process process)
+	{
+		if (_handle is not null && !AssignProcessToJobObject(_handle, process.SafeHandle))
+		{
+			throw new Win32Exception(Marshal.GetLastPInvokeError(), "Could not put the process in a job object.");
+		}
+	}
+
+	/// <summary>Closes the job, which kills its processes; safe to call more than once.</summary>
+	public void Dispose() => _handle?.Dispose();
 
 	[DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
 	private static extern SafeFileHandle CreateJobObjectW(IntPtr attributes, string? name);

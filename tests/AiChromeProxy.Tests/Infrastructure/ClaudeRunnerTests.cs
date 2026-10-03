@@ -78,34 +78,44 @@ public sealed class ClaudeRunnerTests : IDisposable
 	}
 
 	[Fact]
-	public async Task Start_CmdShim_RefusesArgumentsCmdWouldInterpret()
+	public async Task Start_RootedCommandThatDoesNotExist_ThrowsWithAdvice()
+	{
+		var runner = Runner(new AgentOptions { Command = Path.Combine(_folder, "missing", "claude.exe") });
+
+		var ex = await Assert.ThrowsAsync<FileNotFoundException>(() => runner.StartAsync(new AgentRun(_folder, "hi"), TestContext.Current.CancellationToken));
+
+		Assert.Contains("Agent:Command", ex.Message);
+	}
+
+	[Fact]
+	public async Task Start_CmdShim_RefusesOtherArgumentsCmdWouldInterpret()
 	{
 		var shim = Path.Combine(_folder, "claude.cmd");
 		await File.WriteAllTextAsync(shim, "@exit /b 0", TestContext.Current.CancellationToken);
 		var runner = Runner(new AgentOptions { Command = shim });
 
-		await Assert.ThrowsAsync<InvalidOperationException>(() => runner.StartAsync(new AgentRun(_folder, "hi", AllowedTools: ["Bash(a && b)"]), TestContext.Current.CancellationToken));
+		await Assert.ThrowsAsync<InvalidOperationException>(() => runner.StartAsync(new AgentRun(_folder, "hi", Model: "a&b"), TestContext.Current.CancellationToken));
+		await Assert.ThrowsAsync<InvalidOperationException>(() => Runner(new AgentOptions { Command = shim, Args = ["x|y"] }).StartAsync(new AgentRun(_folder, "hi"), TestContext.Current.CancellationToken));
 	}
 
 	[Fact]
-	public async Task Start_CmdShim_RunsThroughCmd()
+	public async Task Start_CmdShim_DropsUnsafeAllowRules_PassesTheRestEndToEnd()
 	{
 		var shim = Path.Combine(_folder, "my shim", "claude.cmd");
 		Directory.CreateDirectory(Path.GetDirectoryName(shim)!);
-		await File.WriteAllTextAsync(shim, "@echo off\r\necho shim-ok\r\nmore >nul\r\n", TestContext.Current.CancellationToken);
-		var runner = Runner(new AgentOptions { Command = shim });
+		await File.WriteAllTextAsync(shim, "@echo off" + Environment.NewLine + "\"" + FakeAgent + "\" %*" + Environment.NewLine, TestContext.Current.CancellationToken);
+		var received = Path.Combine(_folder, "args.txt");
+		var options = new AgentOptions { Command = shim, Env = { ["FAKE_AGENT_ARGS_FILE"] = received } };
+		var run = new AgentRun(_folder, "hi", Permissions: "ask", ApprovalUrl: "http://127.0.0.1:1/mcp/approve", ApprovalToken: "t", AllowedTools: ["Bash(a && b)", "Read", "Bash(date +%Y)"]);
 
-		using (var process = await runner.StartAsync(new AgentRun(_folder, "hi", Permissions: "ask", ApprovalUrl: "http://127.0.0.1:1/mcp/approve", ApprovalToken: "t"), TestContext.Current.CancellationToken))
+		using (var process = await Runner(options).StartAsync(run, TestContext.Current.CancellationToken))
 		{
-			var lines = new List<string>();
-			await foreach (var line in process.Lines.WithCancellation(TestContext.Current.CancellationToken))
-			{
-				lines.Add(line);
-			}
-
-			Assert.Equal(["shim-ok"], lines);
 			Assert.Equal(0, await process.Exited);
 		}
+
+		var expected = ClaudeArguments.Build(run with { AllowedTools = ["Read"] }, options);
+		Assert.Equal(expected, await File.ReadAllLinesAsync(received, TestContext.Current.CancellationToken));
+		Assert.Equal("Read", expected[expected.ToList().IndexOf("--allowedTools") + 1]);
 	}
 
 	private static ClaudeRunner Runner(AgentOptions options)

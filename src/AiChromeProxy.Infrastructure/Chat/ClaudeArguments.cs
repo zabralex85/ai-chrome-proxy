@@ -47,10 +47,12 @@ public static class ClaudeArguments
 			args.AddRange(["--model", run.Model]);
 		}
 
-		if (run.AllowedTools is { Count: > 0 })
+		// Empty rules and rules that look like a flag would end the variadic list early or be read as an option.
+		var rules = (run.AllowedTools ?? []).Where(r => !string.IsNullOrWhiteSpace(r) && !r.StartsWith('-')).ToList();
+		if (rules.Count > 0)
 		{
 			args.Add("--allowedTools");
-			args.AddRange(run.AllowedTools);
+			args.AddRange(rules);
 		}
 
 		args.AddRange(["--append-system-prompt", Convention]);
@@ -59,14 +61,14 @@ public static class ClaudeArguments
 	}
 
 	/// <summary>
-	/// The file to start for <paramref name="command"/>: a rooted or directory-qualified command is kept as it is; a bare name is searched in
+	/// The file to start for <paramref name="command"/>: a rooted or directory-qualified command is kept as it is when it exists; a bare name is searched in
 	/// <paramref name="pathDirs"/> as <c>.exe</c> in every directory first, then as <c>.cmd</c> (the npm shim); null when nothing exists.
 	/// </summary>
 	public static string? ResolveCommand(string command, IEnumerable<string> pathDirs, Func<string, bool> fileExists)
 	{
 		if (Path.IsPathRooted(command) || command.Contains('\\') || command.Contains('/'))
 		{
-			return command;
+			return fileExists(command) ? command : null;
 		}
 
 		var dirs = pathDirs.Where(d => !string.IsNullOrWhiteSpace(d)).ToList();
