@@ -1,12 +1,15 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AiChromeProxy.Application.Chat;
 using AiChromeProxy.Client.Transport;
 using AiChromeProxy.Domain;
+using AiChromeProxy.Domain.Chat;
 using AiChromeProxy.Domain.Sync;
 using AiChromeProxy.Infrastructure.Security;
 using AiChromeProxy.Server.Security;
 using AiChromeProxy.Server.Transport;
+using AiChromeProxy.Tests.Application;
 using AiChromeProxy.Tests.Infrastructure;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.Connections;
@@ -20,12 +23,16 @@ using Microsoft.Net.Http.Headers;
 
 namespace AiChromeProxy.Tests.Server;
 
-/// <summary>The real Server over SignalR: one small repo goes open → manifest → need → chunks → stored, and lands in a temp mirror.</summary>
+/// <summary>
+/// The real Server over SignalR: one small repo goes open → manifest → need → chunks → stored, and lands in a temp mirror;
+/// a chat run (scripted agent) streams to the repo's subscribers.
+/// </summary>
 public sealed class SyncHubTests : IAsyncDisposable
 {
 	private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
 
 	private readonly TestAccessIssuer _issuer = new();
+	private readonly FakeAgentRunner _agent = new();
 	private readonly string _testRoot = Path.Combine(TempRootCleanup.Root, Guid.NewGuid().ToString("N"));
 	private readonly string _mirror;
 	private readonly string _database;
@@ -43,8 +50,11 @@ public sealed class SyncHubTests : IAsyncDisposable
 			b.UseSetting("CloudflareAccess:Audience", TestAccessIssuer.Audience);
 			b.UseSetting("Mirror:Root", _mirror);
 			b.UseSetting("Projects:Database", _database);
-			b.ConfigureServices(s => s.AddHttpClient(CloudflareAccessTokenValidator.JwksHttpClient)
-				.ConfigurePrimaryHttpMessageHandler(() => _issuer.Handler()));
+			b.ConfigureServices(s =>
+			{
+				s.AddHttpClient(CloudflareAccessTokenValidator.JwksHttpClient).ConfigurePrimaryHttpMessageHandler(() => _issuer.Handler());
+				s.AddSingleton<IAgentRunner>(_agent);
+			});
 		});
 	}
 
@@ -179,6 +189,43 @@ public sealed class SyncHubTests : IAsyncDisposable
 			var again = await transport.RequestAsync(Envelope.Create(MessageTypes.SyncManifest, new SyncManifestPayload(repo, [new("a.txt", edited.Length, Sha(edited))], Final: true)), Timeout, ct);
 			Assert.Empty(Read<SyncNeedPayload>(again).Paths);
 			Assert.Equal(1, Volatile.Read(ref pushes));
+		}
+	}
+
+	[Fact]
+	public async Task Chat_SendOverSignalR_EventsReachSubscribers_RunSurvivesTheSendersDisconnect()
+	{
+		var ct = TestContext.Current.CancellationToken;
+		Directory.CreateDirectory(Path.Combine(_mirror, "r"));
+		var result = new TaskCompletionSource<ChatEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
+		await using (var watcher = new SignalRTransport(Connection()))
+		{
+			watcher.Received += e =>
+			{
+				if (e.Type == MessageTypes.ChatEvent && Read<ChatEvent>(e) is { Kind: ChatEventKinds.Result } done)
+				{
+					result.TrySetResult(done);
+				}
+			};
+			await watcher.ConnectAsync(ct);
+			await watcher.RequestAsync(Envelope.Create(MessageTypes.ChatOpen, new ChatOpenPayload("r")), Timeout, ct);
+
+			ChatStartedPayload started;
+			FakeAgentProcess process;
+			await using (var sender = new SignalRTransport(Connection()))
+			{
+				await sender.ConnectAsync(ct);
+				started = Read<ChatStartedPayload>(await sender.RequestAsync(Envelope.Create(MessageTypes.ChatSend, new ChatSendPayload("r", null, "Hi")), Timeout, ct));
+				process = await _agent.NextAsync();
+			}
+
+			process.Write("""{"type":"result","subtype":"success","is_error":false,"result":"Hi."}""");
+			process.Exit();
+
+			var done = await result.Task.WaitAsync(Timeout, ct);
+			Assert.Equal((started.SessionId, started.RunId, true), (done.SessionId, done.RunId, done.Ok));
+			Assert.Equal(Path.Combine(_mirror, "r"), process.Run.RepoFolder);
+			Assert.False(process.Killed);
 		}
 	}
 

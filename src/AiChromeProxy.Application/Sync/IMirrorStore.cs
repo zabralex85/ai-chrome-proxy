@@ -23,6 +23,9 @@ public interface IMirrorStore
 	/// <summary>Length of the mirror file in bytes; 0 when there is no regular file.</summary>
 	long GetSize(string repo, string path);
 
+	/// <summary>The absolute repo folder (<c>&lt;root&gt;\&lt;repo&gt;</c>); null when it does not exist or is a link or junction.</summary>
+	string? RepoFolder(string repo);
+
 	/// <summary>Paths of the regular files in the repo folder; links and junctions (and what is behind them) are skipped.</summary>
 	IReadOnlyList<string> ListFiles(string repo);
 

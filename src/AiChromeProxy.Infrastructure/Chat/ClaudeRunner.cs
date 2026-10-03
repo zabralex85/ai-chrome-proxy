@@ -16,6 +16,8 @@ public sealed class ClaudeRunner : IAgentRunner
 		_logger = logger;
 	}
 
+	public TimeSpan IdleTimeout => _options.IdleTimeout;
+
 	public Task<IAgentProcess> StartAsync(AgentRun run, CancellationToken ct)
 	{
 		ct.ThrowIfCancellationRequested();

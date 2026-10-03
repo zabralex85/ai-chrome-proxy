@@ -118,6 +118,13 @@ public sealed class ClaudeRunnerTests : IDisposable
 		Assert.Equal("Read", expected[expected.ToList().IndexOf("--allowedTools") + 1]);
 	}
 
+	[Fact]
+	public void IdleTimeout_FromOptions()
+	{
+		Assert.Equal(TimeSpan.FromMinutes(10), Runner(new AgentOptions()).IdleTimeout);
+		Assert.Equal(TimeSpan.FromSeconds(5), Runner(new AgentOptions { IdleTimeout = TimeSpan.FromSeconds(5) }).IdleTimeout);
+	}
+
 	private static ClaudeRunner Runner(AgentOptions options)
 	{
 		if (options.Command == "claude")

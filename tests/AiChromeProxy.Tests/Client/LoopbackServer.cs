@@ -1,3 +1,4 @@
+using AiChromeProxy.Application.Chat;
 using AiChromeProxy.Application.Projects;
 using AiChromeProxy.Application.Sync;
 using AiChromeProxy.Application.Transport;
@@ -11,7 +12,7 @@ using Microsoft.Extensions.Options;
 namespace AiChromeProxy.Tests.Client;
 
 /// <summary>
-/// The real server-side sync (router, sessions, file-system mirror in a temp folder) behind a <see cref="FakeTransport"/>:
+/// The real server-side sync and chat (router, sessions, file-system mirror in a temp folder, chat service with a scripted agent) behind a <see cref="FakeTransport"/>:
 /// the client engine is tested end to end without SignalR or a browser.
 /// </summary>
 public sealed class LoopbackServer : IDisposable
@@ -24,7 +25,13 @@ public sealed class LoopbackServer : IDisposable
 	{
 		var store = new FileSystemMirrorStore(Options.Create(new MirrorOptions { Root = MirrorRoot }));
 		_sessions = new SyncSessions(store, Projects, new ListLogger<SyncSession>(), TimeProvider.System, Watcher);
-		_router = new EnvelopeRouter([.. SyncHandler.Types.Select(t => (IEnvelopeHandler)new SyncHandler(t, _sessions)), .. ProjectSettingsHandler.Types.Select(t => new ProjectSettingsHandler(t, Projects, _sessions))]);
+		Chat = new ChatService(Chats, store, Projects, Agent, TimeProvider.System, new ListLogger<ChatService>());
+		_router = new EnvelopeRouter(
+		[
+			.. SyncHandler.Types.Select(t => (IEnvelopeHandler)new SyncHandler(t, _sessions)),
+			.. ProjectSettingsHandler.Types.Select(t => new ProjectSettingsHandler(t, Projects, _sessions)),
+			.. ChatHandler.Types.Select(t => new ChatHandler(t, Chat)),
+		]);
 		Transport.Reply = ReplyAsync;
 		Transport.SetState(TransportState.Connected);
 	}
@@ -39,6 +46,14 @@ public sealed class LoopbackServer : IDisposable
 	/// <summary>The server's bases, baseline flags and project settings.</summary>
 	public MemoryProjectStore Projects { get; } = new();
 
+	/// <summary>The server's chat sessions and events.</summary>
+	public MemoryChatStore Chats { get; } = new();
+
+	/// <summary>The server's agent: read started runs from it and script their output.</summary>
+	public FakeAgentRunner Agent { get; } = new();
+
+	public ChatService Chat { get; }
+
 	public string ConnectionId => $"conn-{_connection}";
 
 	public string PathOf(string repo, string path) => Path.Combine(MirrorRoot, repo, path);
@@ -48,6 +63,7 @@ public sealed class LoopbackServer : IDisposable
 	{
 		Transport.SetState(TransportState.Reconnecting);
 		_sessions.Close(ConnectionId);
+		Chat.Unsubscribe(ConnectionId);
 		_connection++;
 		Transport.SetState(TransportState.Connected);
 	}
@@ -57,6 +73,7 @@ public sealed class LoopbackServer : IDisposable
 
 	public void Dispose()
 	{
+		Chat.Dispose();
 		_sessions.Close(ConnectionId);
 		if (Directory.Exists(MirrorRoot))
 		{
