@@ -139,7 +139,8 @@ export async function requestAccess(): Promise<boolean> {
 }
 
 /**
- * Walks the folder, not descending into the given directory names. Returns { files: [{ path, size, modified }], truncated, skipped }.
+ * Walks the folder, not descending into the given directories (IgnoreRules.SkipDirectories: a name is skipped at any depth,
+ * '/a/b' only at that path; case-insensitive). Returns { files: [{ path, size, modified }], truncated, skipped }.
  * Files and folders count toward maxEntries. skipped lists what the walk could not see, so C# never mistakes it for a deletion:
  * unreadable files by path, and folders that could not be listed (or are deeper than MAX_DEPTH) as a prefix ending in '/'.
  * Throws when the picked folder itself cannot be listed (lost access must never look like an empty folder).
@@ -161,7 +162,7 @@ export async function scan(skipDirectories: string[], maxEntries: number): Promi
                 }
                 const path = prefix + name;
                 if (handle.kind === 'directory') {
-                    if (skip.has(name.toLowerCase())) {
+                    if (skip.has(name.toLowerCase()) || skip.has('/' + path.toLowerCase())) {
                         continue;
                     }
                     if (depth >= MAX_DEPTH) {
@@ -237,10 +238,25 @@ export async function hash(paths: string[]): Promise<(string | null)[]> {
     return result;
 }
 
-/** Text of a file from the last scan (used for the root .gitignore), or null when it is not there. */
+/**
+ * Text of a file of the picked folder, read now (the root .gitignore is read before the walk), or null when it is not there.
+ * Throws when it is there but cannot be read, or when the folder itself cannot be accessed.
+ */
 export async function readText(path: string): Promise<string | null> {
-    const handle = files.get(path);
-    return handle ? await (await handle.getFile()).text() : null;
+    const names = path.split('/');
+    const fileName = names.pop() ?? '';
+    try {
+        let dir = pickedRoot();
+        for (const name of names) {
+            dir = await dir.getDirectoryHandle(name);
+        }
+        return await (await (await dir.getFileHandle(fileName)).getFile()).text();
+    } catch (e) {
+        if (e instanceof DOMException && (e.name === 'NotFoundError' || e.name === 'TypeMismatchError')) {
+            return null;
+        }
+        throw e;
+    }
 }
 
 /**

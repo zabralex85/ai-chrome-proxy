@@ -52,6 +52,7 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 	/// <summary>During uploads <see cref="Changed"/> fires at most this often (a 20k-file first sync must not re-render 20k times).</summary>
 	public static readonly TimeSpan ProgressInterval = TimeSpan.FromMilliseconds(200);
 
+	private const string AccessLost = "Access to the folder was lost; click Restore access.";
 	private const string GitIgnore = ".gitignore";
 	private const string GitIgnoreUnreadable = "The folder's .gitignore could not be read; nothing was synced, so that ignored files are not uploaded.";
 	private const string LooksEmpty = "The folder looks empty; nothing was deleted. Check access or pick the folder again.";
@@ -437,17 +438,32 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 	/// <returns>The entries to sync, or null when the folder cannot be synced (<see cref="Problem"/> says why).</returns>
 	private async Task<ScanResult?> ScanAsync(int generation)
 	{
+		// The root .gitignore first: the walk does not enter the folders it excludes. A failure here is reported after the walk,
+		// which tells a lost access (the walk throws) from an unreadable file.
+		string? gitignore = null;
+		var gitignoreUnreadable = false;
+		try
+		{
+			gitignore = await folder.ReadTextAsync(GitIgnore);
+		}
+		catch (JSException)
+		{
+			gitignoreUnreadable = true;
+		}
+
+		EnsureFolder(generation);
+		var rules = IgnoreRules.Create(gitignore);
 		FolderScan scan;
 		try
 		{
-			scan = await folder.ScanAsync(IgnoreRules.BuiltInDirectories, MaxScanEntries);
+			scan = await folder.ScanAsync(rules.SkipDirectories, MaxScanEntries);
 		}
 		catch (JSException)
 		{
 			if (await folder.RestoreAsync() is not { Granted: true })
 			{
 				Folder = FolderStatus.NeedsPermission;
-				Problem = "Access to the folder was lost; click Restore access.";
+				Problem = AccessLost;
 				return null;
 			}
 
@@ -455,33 +471,21 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 		}
 
 		EnsureFolder(generation);
+
+		// Without its .gitignore the folder's ignored files would be uploaded.
+		var skipped = scan.Skipped ?? [];
+		if (gitignoreUnreadable || skipped.Contains(GitIgnore))
+		{
+			Problem = GitIgnoreUnreadable;
+			return null;
+		}
+
 		if (scan.Truncated)
 		{
 			Problem = string.Create(CultureInfo.InvariantCulture, $"The folder has more than {MaxScanEntries:N0} files and folders; pick a smaller folder.");
 			return null;
 		}
 
-		// Without its .gitignore the folder's ignored files would be uploaded.
-		var skipped = scan.Skipped ?? [];
-		string? gitignore = null;
-		var gitignoreUnreadable = skipped.Contains(GitIgnore);
-		try
-		{
-			gitignore = gitignoreUnreadable ? null : await folder.ReadTextAsync(GitIgnore);
-		}
-		catch (JSException)
-		{
-			gitignoreUnreadable = true;
-		}
-
-		if (gitignoreUnreadable)
-		{
-			Problem = GitIgnoreUnreadable;
-			return null;
-		}
-
-		EnsureFolder(generation);
-		var rules = IgnoreRules.Create(gitignore);
 		var included = scan.Files.Where(f => !rules.IsIgnored(f.Path)).OrderBy(f => f.Path, StringComparer.Ordinal).ToList();
 
 		// Too large and invalid paths are decided first: they are never hashed, sent or retried (only listed with the reason).

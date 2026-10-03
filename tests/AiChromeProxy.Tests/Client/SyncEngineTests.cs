@@ -60,6 +60,24 @@ public sealed class SyncEngineTests : IDisposable
 	}
 
 	[Fact]
+	public async Task GitignoredFolders_NotWalked_FromTheFirstScan()
+	{
+		_folder.Write(".gitignore", "build/\n/dist\n*.log\n");
+		_folder.Write("a.txt", "a");
+		_folder.Write("build/out.js", "o");
+		_folder.Write("src/build/out.js", "o");
+		_folder.Write("dist/x.js", "x");
+		_folder.Write("src/dist/y.js", "y");
+		await OpenAsync();
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal([.. IgnoreRules.BuiltInDirectories, "build", "/dist"], _folder.SkippedDirectories);
+		Assert.Equal([".gitignore", "a.txt", "src/dist/y.js"], _engine.Files.Select(f => f.Path));
+		Assert.True(File.Exists(_server.PathOf(Repo, "src/dist/y.js")));
+	}
+
+	[Fact]
 	public async Task LargeFile_SentInChunks()
 	{
 		var content = Enumerable.Range(0, (SyncLimits.ChunkSize * 2) + 5).Select(i => (byte)i).ToArray();

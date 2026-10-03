@@ -24,7 +24,19 @@ public sealed class IgnoreRules
 	// Verdict per directory prefix: an excluded directory short-circuits its children. Not thread-safe (one scan, one thread).
 	private readonly Dictionary<string, bool> _directories = new(StringComparer.OrdinalIgnoreCase);
 
-	private IgnoreRules(IReadOnlyList<Rule> gitignore) => _gitignore = gitignore;
+	private IgnoreRules(IReadOnlyList<Rule> gitignore)
+	{
+		_gitignore = gitignore;
+		SkipDirectories = [.. BuiltInDirectories, .. SkippableDirectories(gitignore)];
+	}
+
+	/// <summary>
+	/// Directories the folder walk does not enter: a name skips that directory at any depth, <c>/a/b</c> only that path. The built-in ones,
+	/// plus the <c>.gitignore</c> rules without wildcards (<c>name</c>, <c>name/</c>, <c>/path/</c>, <c>**/name/</c>) that no later
+	/// <c>!</c> rule could re-include; nothing under an excluded directory can be re-included (git semantics), so skipping it changes nothing
+	/// but the walk's cost. Other rules (wildcards) are still applied to every file by <see cref="IsIgnored"/>.
+	/// </summary>
+	public IReadOnlyList<string> SkipDirectories { get; }
 
 	/// <param name="gitignore">Content of the root <c>.gitignore</c>, or null when there is none.</param>
 	public static IgnoreRules Create(string? gitignore) =>
@@ -79,6 +91,27 @@ public sealed class IgnoreRules
 		return ignored;
 	}
 
+	/// <summary>Literal exclude rules that no later negation could override for a directory (a literal rule only matches names equal to its last segment).</summary>
+	private static IEnumerable<string> SkippableDirectories(IReadOnlyList<Rule> rules)
+	{
+		static string LastSegment(string literal) => literal[(literal.LastIndexOf('/') + 1)..];
+
+		for (var i = 0; i < rules.Count; i++)
+		{
+			if (rules[i] is not { Negate: false, Pattern: null, Suffix: false, Literal: { } literal } rule)
+			{
+				continue;
+			}
+
+			var name = LastSegment(literal);
+			var overridden = rules.Skip(i + 1).Any(n => n.Negate && (n.Literal is null || n.Suffix || LastSegment(n.Literal).Equals(name, StringComparison.OrdinalIgnoreCase)));
+			if (!overridden)
+			{
+				yield return rule.Anchored ? "/" + literal : literal;
+			}
+		}
+	}
+
 	private static List<Rule> Parse(IEnumerable<string> lines)
 	{
 		var rules = new List<Rule>();
@@ -98,6 +131,12 @@ public sealed class IgnoreRules
 
 			var directoryOnly = line.EndsWith('/');
 			line = line.TrimEnd('/');
+
+			// "**/name" is "name" at any depth.
+			if (line.StartsWith("**/", StringComparison.Ordinal) && line.AsSpan(3).IndexOfAny('*', '?', '/') < 0)
+			{
+				line = line[3..];
+			}
 
 			// A slash at the start or in the middle anchors the pattern to the root; otherwise it matches at any depth.
 			var anchored = line.Contains('/');

@@ -114,6 +114,48 @@ public sealed class IgnoreRulesTests
 	}
 
 	[Fact]
+	public void SkipDirectories_NoGitignore_BuiltInOnly()
+	{
+		Assert.Equal(IgnoreRules.BuiltInDirectories, IgnoreRules.Create(null).SkipDirectories);
+	}
+
+	[Theory]
+	[InlineData("build/", "build")]
+	[InlineData("Build", "Build")]
+	[InlineData("/dist/", "/dist")]
+	[InlineData("/dist", "/dist")]
+	[InlineData("src/gen/", "/src/gen")]
+	[InlineData("**/cache/", "cache")]
+	[InlineData("**/cache", "cache")]
+	[InlineData("tmp/\n!tmp/keep.txt", "tmp")]
+	[InlineData("!out/\nout/", "out")]
+	public void SkipDirectories_LiteralExcludes(string gitignore, string expected)
+	{
+		var rules = IgnoreRules.Create(gitignore);
+
+		Assert.Equal([.. IgnoreRules.BuiltInDirectories, expected], rules.SkipDirectories);
+		var dir = expected.TrimStart('/');
+		Assert.True(rules.IsIgnored(dir + "/x/y.txt"));
+		Assert.Equal(!expected.StartsWith('/'), rules.IsIgnored("a/" + dir + "/y.txt"));
+	}
+
+	[Theory]
+	[InlineData("*.log")]
+	[InlineData("logs/**")]
+	[InlineData("build-*/")]
+	[InlineData("out?/")]
+	[InlineData("!keep/")]
+	[InlineData("build/\n!build/")]
+	[InlineData("build/\n!/build")]
+	[InlineData("build/\n!src/build")]
+	[InlineData("build/\n!*.txt")]
+	[InlineData("build/\n!b*")]
+	public void SkipDirectories_NothingThatCouldBeReincluded(string gitignore)
+	{
+		Assert.Equal(IgnoreRules.BuiltInDirectories, IgnoreRules.Create(gitignore).SkipDirectories);
+	}
+
+	[Fact]
 	public void Create_StripsBom()
 	{
 		Assert.True(IgnoreRules.Create((char)0xFEFF + "*.log").IsIgnored("a.log"));

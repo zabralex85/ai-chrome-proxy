@@ -53,6 +53,9 @@ public sealed class FakeFolder : IFolderAccess
 
 	public int Scans { get; private set; }
 
+	/// <summary>The directories the last <see cref="ScanAsync"/> was told to skip.</summary>
+	public IReadOnlyList<string> SkippedDirectories { get; private set; } = [];
+
 	public List<string> Hashed { get; } = [];
 
 	public Action<bool>? Visibility { get; private set; }
@@ -83,11 +86,19 @@ public sealed class FakeFolder : IFolderAccess
 			throw ScanFailure;
 		}
 
+		// Like fsaccess.ts: a name is skipped at any depth, "/a/b" only at that path.
+		SkippedDirectories = skipDirectories;
 		var skip = skipDirectories.ToHashSet(StringComparer.OrdinalIgnoreCase);
+		bool Skipped(string path)
+		{
+			var segments = path.Split('/')[..^1];
+			return segments.Where((name, i) => skip.Contains(name) || skip.Contains("/" + string.Join('/', segments[..(i + 1)]))).Any();
+		}
+
 		var unlisted = UnlistedDirectories.Select(d => d + "/").ToList();
 		var files = Files.Select(f => new FileMeta(f.Key, f.Value.Length, 0))
 			.Concat(SizeOnly.Select(f => new FileMeta(f.Key, f.Value, 0)))
-			.Where(f => !f.Path.Split('/')[..^1].Any(skip.Contains))
+			.Where(f => !Skipped(f.Path))
 			.Where(f => !Unreadable.Contains(f.Path) && !unlisted.Any(d => f.Path.StartsWith(d, StringComparison.Ordinal)))
 			.ToList();
 		return new FolderScan(files, Truncated, [.. Unreadable, .. unlisted, .. PartlyListedDirectories.Select(d => d + "/")]);
