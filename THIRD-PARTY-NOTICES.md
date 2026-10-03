@@ -13,7 +13,7 @@ The Server starts it as a child process to connect the Cloudflare Tunnel configu
 
 ## SQLite storage (Microsoft.Data.Sqlite)
 
-- Files: `Microsoft.Data.Sqlite.dll`, `Microsoft.Data.Sqlite.Core.dll`, `SQLitePCLRaw.*.dll` and the native `e_sqlite3.dll` (in the Server folder), unmodified.
+- Files: `Microsoft.Data.Sqlite.dll`, `Microsoft.Data.Sqlite.Core.dll`, `SQLitePCLRaw.*.dll` and the native `e_sqlite3.dll` (in the Server folder, and in the tray package, which carries them through the Infrastructure library it references), unmodified.
 - Microsoft.Data.Sqlite 10.0.12 — Copyright Microsoft Corporation; License: MIT (https://licenses.nuget.org/MIT)
 - SQLitePCLRaw 2.1.12 (`bundle_e_sqlite3`, `lib.e_sqlite3`, `provider.e_sqlite3`, `core`) — Copyright 2014-2024 SourceGear, LLC; License: Apache License 2.0 (https://licenses.nuget.org/Apache-2.0)
 - SQLite (native library inside `e_sqlite3.dll`) — public domain (https://www.sqlite.org/copyright.html)

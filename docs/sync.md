@@ -54,7 +54,7 @@ The server keeps, per file, a **base**: the last SHA-256 both sides agreed on, i
 1. A `FileSystemWatcher` on the mirror (500 ms quiet, at most 3 s) notices a server edit or delete and pushes `sync.remote`.
 2. The browser fetches the file (`sync.fetch`), checks the hash, re-hashes its own file after the fetch and writes only if the file is still the agreed version; then it sends `sync.ack`. If the file changed meanwhile, it is a **conflict**.
 3. A conflict opens in the **Conflict** tab (server text preview up to 256 KB): **Keep mine** uploads the browser's version, **Take server's** writes the server's.
-4. Writing needs the browser's write permission. Without it the Explorer shows "N server changes — Allow writing"; one click grants it. With **Apply server changes automatically** off it shows "N server changes waiting — **Apply all**" (or **Apply** per change).
+4. Writing needs the browser's write permission. Without it the Explorer shows "N server changes — Allow writing"; one click grants it. With **Apply server changes automatically** off it shows "N server changes waiting — **Apply all**". More than 20 deletions from the server that are also more than 10% of the synced files always wait for **Apply all** (edits and new files are still applied), so a mistake on the server never empties the folder unseen.
 5. Excluded files (built-ins, `.gitignore`, the project's extra excludes) are never deleted, pushed or written on either side: build output on the mirror (`bin/`, `obj/`) stays there.
 6. An upload whose mirror file changed meanwhile is not committed; the server pushes the new version instead.
 
@@ -88,6 +88,7 @@ A file on the mirror is deleted only when a scan positively saw it absent. A fil
 ## Known limitations
 
 - **Case-only rename:** renaming `readme.md` to `README.md` changes nothing on the mirror, which keeps the old casing (it is case-insensitive and already has the content).
+- **Server edit after a case-only rename:** it is acknowledged under the mirror's casing, and the mirror's copy can disappear until the next full manifest (at most 10 minutes) uploads it again; the browser's folder keeps the content.
 - **Same folder name:** two folders with the same name (after sanitizing) share one mirror folder, and each sync deletes the other's files. Open one at a time, or rename a folder.
 - **Check-then-write window:** the browser writes a pushed change if its file is still the agreed version; a save in the few milliseconds between that check and the write is lost.
 - **Upload commit window:** a mirror file changing in the milliseconds between the server's check and the commit of an upload is not detected (the next pass pushes it as a conflict candidate).
