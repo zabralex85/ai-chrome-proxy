@@ -10,6 +10,6 @@ builder.RootComponents.Add<HeadOutlet>("head::after");
 
 var hubUrl = new Uri(new Uri(builder.HostEnvironment.BaseAddress), "hub");
 builder.Services.AddSingleton<ITransport>(_ => new SignalRTransport(
-	new HubConnectionBuilder().WithUrl(hubUrl).WithAutomaticReconnect().Build()));
+	new HubConnectionBuilder().WithUrl(hubUrl).WithAutomaticReconnect(new ForeverRetryPolicy()).Build()));
 
 await builder.Build().RunAsync();
