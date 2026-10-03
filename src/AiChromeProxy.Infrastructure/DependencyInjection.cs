@@ -22,6 +22,7 @@ public static class DependencyInjection
 		services.AddSingleton<CloudflareAccessTokenValidator>();
 		services.Configure<MirrorOptions>(configuration.GetSection(MirrorOptions.Section));
 		services.AddSingleton<IMirrorStore, FileSystemMirrorStore>();
+		services.AddSingleton<IMirrorWatcher, MirrorWatcher>();
 		services.Configure<ProjectsOptions>(configuration.GetSection(ProjectsOptions.Section));
 		services.AddSingleton<IProjectStore, SqliteProjectStore>();
 		return services;

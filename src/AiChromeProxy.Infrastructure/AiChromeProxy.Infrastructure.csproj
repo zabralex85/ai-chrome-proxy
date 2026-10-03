@@ -15,6 +15,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="AiChromeProxy.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\AiChromeProxy.Application\AiChromeProxy.Application.csproj" />
     <ProjectReference Include="..\AiChromeProxy.Domain\AiChromeProxy.Domain.csproj" />
   </ItemGroup>

@@ -14,7 +14,12 @@ namespace AiChromeProxy.Application.Sync;
 /// Messages are handled one at a time; <see cref="Dispose"/> (the connection closed) may run while a message is still being handled, and the upload that message leaves is then discarded when it finishes. Uploads are
 /// sequential (ponytail: one upload at a time, parallelise if first syncs of large repos are too slow).
 /// </summary>
-public sealed partial class SyncSession(IMirrorStore store, IProjectStore projects, ILogger logger, TimeProvider time) : IDisposable
+public sealed partial class SyncSession(
+	IMirrorStore store,
+	IProjectStore projects,
+	ILogger logger,
+	TimeProvider time,
+	Action<SyncSession, string?, string?>? repoChanged = null) : IDisposable
 {
 	private const string EmptyMirrorRefusal = "An empty folder would delete the whole mirror; refusing.";
 
@@ -24,7 +29,9 @@ public sealed partial class SyncSession(IMirrorStore store, IProjectStore projec
 	private readonly Dictionary<string, (ManifestEntry Entry, string? Mirror)> _expected = new(StringComparer.OrdinalIgnoreCase);
 	private readonly SemaphoreSlim _gate = new(1, 1);
 	private readonly string _tag = Guid.NewGuid().ToString("N")[..SyncPath.TempTagLength];
+	private readonly object _notify = new();
 	private volatile bool _disposed;
+	private string? _watchedRepo;
 	private EnvelopeContext? _context;
 	private string? _repo;
 	private Upload? _upload;
@@ -62,6 +69,7 @@ public sealed partial class SyncSession(IMirrorStore store, IProjectStore projec
 	public void Dispose()
 	{
 		_disposed = true;
+		NotifyRepo(null);
 		DiscardIfDisposed();
 	}
 
@@ -148,6 +156,22 @@ public sealed partial class SyncSession(IMirrorStore store, IProjectStore projec
 		}
 	}
 
+	/// <summary>Tells the owner which repo this session watches now (null: none, disposed); ignored once disposed, so a close never leaks a watch.</summary>
+	private void NotifyRepo(string? repo)
+	{
+		lock (_notify)
+		{
+			if (_watchedRepo == repo || (_disposed && repo is not null))
+			{
+				return;
+			}
+
+			var from = _watchedRepo;
+			_watchedRepo = repo;
+			repoChanged?.Invoke(this, from, repo);
+		}
+	}
+
 	private Envelope Open(SyncOpenPayload payload, Envelope request)
 	{
 		var repo = RepoName.Sanitize(payload.Repo) ?? throw BadRequest("sync.open needs the folder name in 'repo'.");
@@ -156,6 +180,7 @@ public sealed partial class SyncSession(IMirrorStore store, IProjectStore projec
 		EndManifestPass();
 		_expected.Clear();
 		_repo = repo;
+		NotifyRepo(repo);
 		ResetStats();
 		return Reply(MessageTypes.SyncOpened, new SyncOpenPayload(repo), request);
 	}

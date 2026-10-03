@@ -296,6 +296,27 @@ public sealed class SyncSessionBackChannelTests : IDisposable
 	}
 
 	[Fact]
+	public async Task MirrorChanged_FolderRenamed_PushesOldFilesDeletedAndNewOnesCreated()
+	{
+		Write("d/a.txt", "a");
+		Write("d/sub/b.txt", "b");
+		Baseline(("d/a.txt", "a"), ("d/sub/b.txt", "b"));
+		await OpenAsync();
+		Directory.Move(PathOf("d"), PathOf("e"));
+
+		await _session.MirrorChangedAsync(["d", "e"], Ct);
+
+		Assert.Equal(
+			[
+				new RemoteChange("d/a.txt", null, 0, Sha("a")),
+				new RemoteChange("d/sub/b.txt", null, 0, Sha("b")),
+				new RemoteChange("e/a.txt", Sha("a"), 1, null),
+				new RemoteChange("e/sub/b.txt", Sha("b"), 1, null),
+			],
+			Pushes.OrderBy(c => c.Path, StringComparer.Ordinal));
+	}
+
+	[Fact]
 	public async Task MirrorChanged_BeforeOpenOrAfterDispose_NoOp()
 	{
 		Write("a.txt", "a");

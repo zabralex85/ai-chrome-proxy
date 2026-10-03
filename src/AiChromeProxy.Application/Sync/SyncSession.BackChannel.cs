@@ -29,29 +29,21 @@ public sealed partial class SyncSession
 			}
 
 			var batch = await BeginAsync(repo, ct);
-			foreach (var path in paths ?? store.ListFiles(repo).Union(batch.Bases.Keys, StringComparer.OrdinalIgnoreCase))
+			var done = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			IReadOnlyList<string>? everything = null;
+			IReadOnlyList<string> Everything() => everything ??= [.. store.ListFiles(repo).Union(batch.Bases.Keys, StringComparer.OrdinalIgnoreCase)];
+
+			foreach (var path in paths ?? Everything())
 			{
-				if (!SyncPath.IsValid(path) || batch.Rules.IsIgnored(path))
+				var isFolder = !await DecideMirrorPathAsync(batch, path, done, ct);
+				if (isFolder && paths is not null && !batch.Bases.ContainsKey(path))
 				{
-					continue;
-				}
-
-				if (await TryGetHashAsync(repo, path, ct) is not (true, var mirror))
-				{
-					continue;
-				}
-
-				var baseHash = batch.Bases.GetValueOrDefault(path);
-				if (SyncDecision.Decide(baseHash, mirror, baseHash, baselined: true) == SyncAction.Push)
-				{
-					// An upload of it requested earlier, or under way, must not overwrite the server's version.
-					_expected.Remove(path);
-					if (string.Equals(_upload?.Entry.Path, path, StringComparison.OrdinalIgnoreCase))
+					// Neither a file nor a known path: a folder renamed or deleted, whose files get no events of their own.
+					var prefix = path + "/";
+					foreach (var inside in Everything().Where(p => p.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
 					{
-						DiscardUpload();
+						await DecideMirrorPathAsync(batch, inside, done, ct);
 					}
-
-					AddPush(batch, path, mirror, baseHash);
 				}
 			}
 
@@ -62,6 +54,36 @@ public sealed partial class SyncSession
 			_gate.Release();
 			DiscardIfDisposed();
 		}
+	}
+
+	/// <summary>Pushes the path if the mirror moved away from its base.</summary>
+	/// <returns>False when the path is not a file in the mirror (a gone file or a folder); true otherwise, also when it was skipped.</returns>
+	private async Task<bool> DecideMirrorPathAsync(Batch batch, string path, HashSet<string> done, CancellationToken ct)
+	{
+		if (!SyncPath.IsValid(path) || batch.Rules.IsIgnored(path) || !done.Add(path))
+		{
+			return true;
+		}
+
+		if (await TryGetHashAsync(batch.Repo, path, ct) is not (true, var mirror))
+		{
+			return true;
+		}
+
+		var baseHash = batch.Bases.GetValueOrDefault(path);
+		if (SyncDecision.Decide(baseHash, mirror, baseHash, baselined: true) == SyncAction.Push)
+		{
+			// An upload of it requested earlier, or under way, must not overwrite the server's version.
+			_expected.Remove(path);
+			if (string.Equals(_upload?.Entry.Path, path, StringComparison.OrdinalIgnoreCase))
+			{
+				DiscardUpload();
+			}
+
+			AddPush(batch, path, mirror, baseHash);
+		}
+
+		return mirror is not null;
 	}
 
 	private async Task<Envelope> FetchAsync(SyncFetchPayload payload, Envelope request, CancellationToken ct)
