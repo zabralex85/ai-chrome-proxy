@@ -29,26 +29,28 @@ Requires **Chrome 123 or newer** (File System Access API; the theme uses CSS `li
 ## How it works
 
 1. **Open folder** calls `showDirectoryPicker({mode: "read"})` (`Scripts/fsaccess.ts`). The folder handle is kept in IndexedDB (best effort: without IndexedDB everything still works, only the hash cache and **Restore access** are lost). After a reload Chrome asks again with one click (**Restore access**).
-2. Every 10 s while the tab is visible, and at once when it gets focus, the browser walks the folder, drops excluded files, hashes new or changed files (SHA-256 via WebCrypto, cached by size and modification time) and tells the server what changed. Only one scan runs at a time.
-3. The server answers with the paths it is missing; the browser uploads them in 16 KB chunks, one file at a time. Each file is written to `<path>.aicp-tmp` and moved into place only after its SHA-256 matched.
+2. Every 10 s while the tab is visible, and at once when it gets focus, the browser reads the root `.gitignore`, walks the folder (without entering the built-in excluded folders and the folders the `.gitignore` excludes), drops excluded files, hashes new or changed files (SHA-256 via WebCrypto, cached by size and modification time) and tells the server what changed. Only one scan runs at a time.
+3. The server answers with the paths it is missing; the browser uploads them in 16 KB chunks, one file at a time. Each file is written to `<path>.<session>.aicp-tmp` (a temp name per connection, so a reconnect never collides with the old connection's unfinished upload) and moved into place only after its SHA-256 matched.
 
 | Message (`Envelope.type`) | Direction | Payload (camelCase) |
 |---|---|---|
 | `sync.open` → `sync.opened` | client → server → client | `{repo}` — the folder name; the reply carries the sanitized name |
-| `sync.manifest` → `sync.need` | client → server → client | `{repo, entries[{path, size, sha256}], final}` (pages of ≤ 500 entries and ≤ 24 000 bytes) → `{repo, paths[]}` |
+| `sync.manifest` → `sync.need` | client → server → client | `{repo, entries[{path, size, sha256}], final, keep?[]}` (pages of ≤ 500 entries and ≤ 24 000 bytes; `keep` pages follow the entry pages and count toward the same limits) → `{repo, paths[]}`. `keep` (optional) lists what the browser could not sync but the mirror must keep: file paths, and folder prefixes ending in `/`; nothing is uploaded for them |
 | `sync.delta` → `sync.need` | client → server → client | `{repo, upserts[{path, size, sha256}], deletes[]}` → `{repo, paths[]}` |
-| `sync.chunk` → `sync.stored` | client → server → client | `{repo, path, offset, data, last, sha256?}` → `{repo, path}` (only the last chunk is answered). `data` is **base64url without padding** (`-` and `_`, no `+`, `/` or `=`), at most 16 KB raw, so a chunk stays well under SignalR's message limit |
+| `sync.chunk` → `sync.stored` | client → server → client | `{repo, path, offset, data, last, sha256?}` → `{repo, path}` (only the last chunk is answered; when an earlier chunk of the upload failed, the rest is dropped and the last chunk gets that first error). `data` is **base64url without padding** (`-` and `_`, no `+`, `/` or `=`), at most 16 KB raw, so a chunk stays well under SignalR's message limit |
 | `error` | server → client | `{code, message?}` with the request's `correlationId`; `code` is `bad_request`, `not_found`, `too_large`, `unknown_type` or `internal` |
 
-After the last manifest page the server deletes mirror files that are not in the manifest. After a reconnect the browser opens a new session and sends the full manifest again. The server refuses (`bad_request`) an empty manifest, and a delta that would delete every file, while the mirror has files: an empty folder over a non-empty mirror is never applied (the explorer shows the message with **Change folder** and **Restore access**). More than 20 000 files waiting for upload is refused with `too_large`.
+After the last manifest page the server deletes mirror files that are neither in the manifest nor covered by `keep` (an exact path or a kept folder prefix, ignoring case; an invalid `keep` entry is refused with `bad_request`). The browser sends the full manifest on every new session (first sync, page reload, reconnect, folder change) and then every 10 minutes (cheap: the server caches hashes), deltas in between. The server refuses (`bad_request`) an empty manifest (no entries and no `keep`), and a delta that would delete every file, while the mirror has files: an empty folder over a non-empty mirror is never applied (the explorer shows the message with **Change folder** and **Restore access**). More than 20 000 files waiting for upload is refused with `too_large`.
 
 ## What is never sent
 
-- Built in (a `.gitignore` cannot re-include them): `.git/`, `node_modules/`, `bin/`, `obj/`, `.vs/`, `.idea/`, `.env`, `.env.*`, `*.pfx`, `*.key`, `*.pem`, `id_rsa*`.
+- Built in (a `.gitignore` cannot re-include them): `.git` (the folder, or a submodule's `.git` file), `node_modules/`, `bin/`, `obj/`, `.vs/`, `.idea/`, `.env`, `.env.*`, `*.pfx`, `*.key`, `*.pem`, `id_rsa*`.
 - Everything the root `.gitignore` excludes. Supported subset: `#` comments, blank lines, `*`, `**`, `?`, trailing `/`, leading `/`, `!`. **Not supported:** character classes `[...]` and backslash escapes. Matching ignores case. A `.gitignore` the browser cannot read stops the pass (nothing is sent), so ignored files are never uploaded by mistake.
+- The walk does not enter the folders the `.gitignore` excludes with a rule without wildcards (`name`, `name/`, `/path/`, `**/name/`) that no later `!` rule could re-include (git cannot re-include anything under an excluded folder anyway). Folders excluded only by a wildcard rule (`build-*/`, `*.tmp/`) are still walked, and their files dropped one by one.
 - Files larger than 20 MB (listed as "too large"). A folder with more than 20 000 files to sync is refused with a message.
 - Paths the server would refuse; they are shown as errors and never sent:
-  - a segment longer than 246 characters (so `<name>.aicp-tmp` fits in 255);
+  - a `.git` segment (any case): git metadata is never synced, and the server refuses it too;
+  - a segment longer than 237 characters (so `<name>.<8-character session tag>.aicp-tmp` fits in 255);
   - 8.3-style short names, i.e. a `~` followed by a digit (`GIT~1`, `PROGRA~1`), which Windows can expand to another folder;
   - Windows device names (`CON`, `NUL`, `COM0`–`COM9`, `COM¹`, `LPT0`…, `CONIN$`, …), a trailing dot or space, `:`, `\`, `..`;
   - Unicode format characters (such as U+202E, U+200B), unpaired surrogates, and lookalikes of `/`, `\`, `.` and `:` (such as U+FF0F, U+2215);
@@ -56,12 +58,14 @@ After the last manifest page the server deletes mirror files that are not in the
 
 ## Deletes on the mirror
 
-The browser deletes a file on the mirror only when a scan positively saw it disappear. A file it could not read, a folder it could not list, or a file that grew past 20 MB is **never deleted**: the mirror keeps its last synced version and the explorer shows an error. Consequences:
+A file on the mirror is deleted only when a scan positively saw it absent. A file the browser could not read, a folder it could not list, or a file larger than 20 MB is **never deleted**: the full manifest lists it in `keep` (a folder as a prefix ending in `/`), deltas leave it alone, the mirror keeps its last synced version and the explorer shows an error or the "too large" badge. Consequences:
 
 - If the folder looks empty (or access was lost) while files are known, the pass is refused and nothing is deleted.
-- After a **page reload** the browser does not know what was synced before, so while anything is unreadable the first pass sends only upserts (no deletes). Files deleted while the page was closed disappear from the mirror with the next full manifest (a reconnect or reload when everything is readable).
-- A file whose upload keeps failing is retried only after it changes, or after **5 minutes**; meanwhile it shows its error and is not re-sent every 10 s.
-- A reconnect in the middle of an upload ends the pass; the next scan starts over.
+- After a **page reload** the first pass sends the full manifest with its keep list, so files deleted while the page was closed disappear from the mirror at once, even while something else is unreadable.
+- A file whose upload failed and that is then deleted is deleted on the mirror too. A kept file (unreadable, too large) that is later deleted is deleted on the mirror with the next scan.
+- Every 10 minutes the full manifest is sent again, so nothing a delta could not see (for example a file added to the mirror on the server) stays there for long.
+- A file whose upload keeps failing is retried only after it changes, or after **5 minutes**; meanwhile it shows its error and is not re-sent every 10 s. A transient server error (`internal`) is retried on the next scan.
+- A reconnect in the middle of an upload ends the pass; the next scan starts over. Losing access to the folder in the middle of the uploads ends the pass too ("Access to the folder was lost; click Restore access."), without marking the remaining files as failed.
 
 ## Known limitations
 
@@ -78,7 +82,7 @@ The browser deletes a file on the mirror only when a scan positively saw it disa
 | Windows service (or with `AICP_DATA_DIR`) | `<DataDir>\mirror`, i.e. `%ProgramData%\AiChromeProxy\mirror` as a service |
 | `dotnet run` without a data directory | `src\AiChromeProxy.Server\data\mirror` (gitignored; `data/mirror` under the content root) |
 
-Set `Mirror:Root` (or the environment variable `Mirror__Root`) to put it elsewhere. Every protocol path is validated (relative, `/`-separated, normalized, checked by the rules above) and must resolve inside `<root>\<repo>` exactly as written (a path that Windows would rewrite, for example an 8.3 expansion, is refused); the server never follows a link or junction inside the mirror.
+Set `Mirror:Root` (or the environment variable `Mirror__Root`) to put it elsewhere. Only the default location inside the data directory gets the data directory's protected DACL (see [Windows host](windows-host.md)); a custom `Mirror:Root` outside it keeps whatever permissions its folder has, so restrict it yourself (other local users could otherwise read the synced code, or plant files Claude will act on). Every protocol path is validated (relative, `/`-separated, normalized, checked by the rules above) and must resolve inside `<root>\<repo>` exactly as written (a path that Windows would rewrite, for example an 8.3 expansion, is refused); the server never follows a link or junction inside the mirror.
 
 ## Manual checklist (Chrome on the locked-down machine)
 
@@ -105,7 +109,12 @@ The browser code (`fsaccess.ts`) has no automated tests; run this before a relea
 - [ ] Lock a synced file exclusively (e.g. `[IO.File]::Open(path,'Open','Read','None')` in PowerShell): it shows "Could not be read; the mirror keeps the last synced version." and stays on the mirror, also after a reconnect or reload.
 - [ ] Make the root `.gitignore` unreadable: the pass stops with "The folder's .gitignore could not be read…" and nothing is sent.
 - [ ] Nest folders more than 64 levels deep: the deepest folder is reported as not listed and nothing under it is deleted.
-- [ ] A file larger than 20 MB is listed with the "too large" badge and is not in the mirror; growing a synced file past 20 MB does not delete its mirror copy.
+- [ ] A file larger than 20 MB is listed with the "too large" badge and is not in the mirror; growing a synced file past 20 MB does not delete its mirror copy, also after a reload or reconnect.
+- [ ] Close the tab, delete a synced file, lock another one exclusively, reopen and **Restore access**: the deleted file disappears from the mirror within ~10 s, the locked one stays.
+- [ ] Add a large folder to the root `.gitignore` (e.g. `dist/` with thousands of files): the next scan is about as fast as before it existed, and nothing from it reaches the mirror.
+- [ ] A repository with a submodule: its `.git` file is neither listed as an error nor synced.
+- [ ] Leave the page open 10+ minutes, put an extra file into the mirror folder on the server: it is deleted within ~10 minutes (the periodic full manifest).
+- [ ] Revoke access (site settings → File System) while a first sync of many files uploads: the pass stops with "Access to the folder was lost; click Restore access."; after **Restore access** the remaining files upload at once (not after 5 minutes).
 - [ ] Change a file while it uploads (a large file, edit and save mid-upload): the upload fails once and the next scan uploads one consistent version.
 - [ ] Switch to another tab and back, and focus the window: one rescan per event, none while the tab is hidden, and none after the app is closed.
 - [ ] Delete the folder's contents (or move the folder away) while the page is open: the pass is refused ("The folder looks empty; nothing was deleted…") and the mirror keeps its files.
