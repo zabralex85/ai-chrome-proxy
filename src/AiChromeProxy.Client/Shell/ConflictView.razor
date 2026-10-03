@@ -1,0 +1,114 @@
+@using AiChromeProxy.Client.Sync
+
+<section class="file-details conflict" data-testid="conflict">
+    <div class="file-heading">
+        <Icon Name="conflict" Size="32" Class="kind-conflict" />
+        <div>
+            <h1>Conflict</h1>
+            <div class="mono muted" data-testid="conflict-path">@Path</div>
+        </div>
+    </div>
+    @if (Item is { } item)
+    {
+        var file = Engine.FileAt(Path);
+        <p>This file changed in this folder and on the server. Keep one version; the other is dropped.</p>
+        <div class="versions">
+            <section class="version" aria-labelledby="conflict-mine">
+                <h2 id="conflict-mine">This folder</h2>
+                @if (item.Local is null)
+                {
+                    <p data-testid="conflict-mine">Deleted</p>
+                }
+                else
+                {
+                    <dl data-testid="conflict-mine">
+                        <dt>Size</dt>
+                        <dd>@(file is null ? "—" : Format.Bytes(file.Size))</dd>
+                        <dt>SHA-256</dt>
+                        <dd class="mono">@item.Local</dd>
+                    </dl>
+                }
+            </section>
+            <section class="version" aria-labelledby="conflict-server">
+                <h2 id="conflict-server">Server</h2>
+                @if (item.Change.Sha256 is null)
+                {
+                    <p data-testid="conflict-server">Deleted</p>
+                }
+                else
+                {
+                    <dl data-testid="conflict-server">
+                        <dt>Size</dt>
+                        <dd>@Format.Bytes(item.Change.Size)</dd>
+                        <dt>SHA-256</dt>
+                        <dd class="mono">@item.Change.Sha256</dd>
+                    </dl>
+                }
+            </section>
+        </div>
+        <h2>Server version</h2>
+        @if (_loading)
+        {
+            <p class="muted">Loading…</p>
+        }
+        else
+        {
+            <pre class="preview" data-testid="conflict-preview" tabindex="0" aria-label="Server version of the file">@(_text ?? "Preview not available")</pre>
+        }
+        <div class="conflict-actions">
+            <button type="button" class="button primary" data-testid="keep-mine" @onclick="() => Engine.KeepMineAsync(Path)">Keep mine</button>
+            <button type="button" class="button secondary" data-testid="take-servers" @onclick="() => Engine.TakeServersAsync(Path)">Take server's</button>
+        </div>
+    }
+    else
+    {
+        <p class="muted">This conflict is resolved.</p>
+    }
+</section>
+
+@code {
+    private string? _loadedFor;
+    private string? _loadedSha;
+    private string? _text;
+    private bool _loading;
+
+    [Parameter, EditorRequired]
+    public SyncEngine Engine { get; set; } = null!;
+
+    [Parameter, EditorRequired]
+    public string Path { get; set; } = string.Empty;
+
+    private RemoteItem? Item => Engine.Remote.FirstOrDefault(r => r.Change.Path == Path && r.Status == RemoteStatus.Conflict);
+
+    /// <summary>Loads the server text when the tab opens and again when the server's version changes.</summary>
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Item is not { } item || (_loadedFor == Path && _loadedSha == item.Change.Sha256))
+        {
+            return;
+        }
+
+        _loadedFor = Path;
+        _loadedSha = item.Change.Sha256;
+        _text = null;
+        if (item.Change.Sha256 is null)
+        {
+            return;
+        }
+
+        _loading = true;
+        var path = Path;
+        try
+        {
+            var text = await Engine.ServerTextAsync(path);
+            if (path == Path)
+            {
+                _text = text;
+            }
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

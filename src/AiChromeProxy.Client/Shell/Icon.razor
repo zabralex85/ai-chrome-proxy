@@ -77,6 +77,13 @@
             <rect x="1.5" y="2.5" width="13" height="11" rx="1" />
             <path d="M10 2.5v11" />
             break;
+        case "gear":
+            <circle cx="8" cy="8" r="2" />
+            <path d="M6.8 1.5h2.4l.35 1.7 1.2.5 1.45-.95 1.7 1.7-.95 1.45.5 1.2 1.7.35v2.4l-1.7.35-.5 1.2.95 1.45-1.7 1.7-1.45-.95-1.2.5-.35 1.7H6.8l-.35-1.7-1.2-.5-1.45.95-1.7-1.7.95-1.45-.5-1.2-1.7-.35V6.8l1.7-.35.5-1.2-.95-1.45 1.7-1.7 1.45.95 1.2-.5z" />
+            break;
+        case "conflict":
+            <path d="M5 2.5v4.5a3 3 0 0 0 3 3h3M11 7.5l2 2.5-2 2.5M5 2.5L3 5M5 2.5L7 5" />
+            break;
         case "chat":
             <path d="M2.5 3h11v7.5h-6l-3 2.5v-2.5h-2z" />
             break;
@@ -113,7 +120,7 @@
 
     /// <summary>
     /// logo, folder, folder-open, chevron-right/down, sun, moon, monitor, warning, error, check, sync, lock, close, send, upload, trash,
-    /// plug, play, flag, history, panel-left/right, chat, file-code/web/data/doc/image; anything else draws a plain file.
+    /// plug, play, flag, history, panel-left/right, gear, conflict, chat, file-code/web/data/doc/image; anything else draws a plain file.
     /// </summary>
     [Parameter, EditorRequired]
     public string Name { get; set; } = string.Empty;

@@ -20,6 +20,9 @@
         </span>
     }
     <span class="spacer"></span>
+    <button type="button" class="icon-button" data-testid="open-settings" title="Project settings" aria-label="Project settings" disabled="@(!SettingsEnabled)" @onclick="OnOpenSettings">
+        <Icon Name="gear" />
+    </button>
     <button type="button" class="icon-button @(FilesAttention is null ? null : "has-attention")" data-testid="toggle-files" title="@FilesTitle" aria-label="@FilesTitle"
             aria-pressed="@(FilesOpen ? "true" : "false")" @onclick="OnToggleFiles">
         <Icon Name="panel-left" />
@@ -74,6 +77,13 @@
     /// <summary>What the collapsed file tree hides that needs the user (<see cref="Format.Attention"/>); null when nothing does or the tree is open.</summary>
     [Parameter]
     public string? FilesAttention { get; set; }
+
+    /// <summary>A folder is open, so there is a project to configure.</summary>
+    [Parameter]
+    public bool SettingsEnabled { get; set; }
+
+    [Parameter]
+    public EventCallback OnOpenSettings { get; set; }
 
     [Parameter]
     public bool HistoryOpen { get; set; }

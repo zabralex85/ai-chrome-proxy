@@ -15,12 +15,13 @@
 <div class="shell @(_dragging is null ? null : "resizing")" data-testid="shell" data-theme="@_theme"
      style="--left-width: @(_filesOpen ? _leftWidth : 0)px; --right-width: @(_historyOpen ? _rightWidth : 0)px">
     <TopBar FolderName="@Engine.FolderName" State="@Transport.State" PingMs="@_pingMs" UpdateInstalled="@_updateInstalled" Theme="@_theme" OnToggleTheme="ToggleThemeAsync" User="@_user"
+            SettingsEnabled="@(Engine.Folder == FolderStatus.Ready && Engine.FolderName is not null)" OnOpenSettings="() => _tabs.Show(TabSet.Settings)"
             FilesOpen="@_filesOpen" OnToggleFiles="() => _filesOpen = !_filesOpen"
             FilesAttention="@(_filesOpen ? null : Format.Attention(Engine.Folder, Engine.ErrorCount))"
             HistoryOpen="@_historyOpen" OnToggleHistory="() => _historyOpen = !_historyOpen" />
     @* Collapsed panels stay rendered (hidden by CSS) so the tree keeps its expanded folders and active row. *@
-    <Explorer Engine="Engine" Collapsed="@(!_filesOpen)" Selected="@TabSet.PathOf(_tabs.Active)" OnSelect="path => _tabs.Show(TabSet.FileTab(path))"
-              OnShowErrors="() => _tabs.Show(TabSet.Errors)" />
+    <Explorer Engine="Engine" Collapsed="@(!_filesOpen)" Selected="@TabSet.SelectedPath(_tabs.Active)" OnSelect="OpenFile"
+              OnShowErrors="() => _tabs.Show(TabSet.Errors)" OnShowConflict="ShowFirstConflict" />
     @if (_filesOpen)
     {
         <div class="resizer resizer-left" data-testid="sidebar-resizer" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize the file tree"
@@ -168,7 +169,24 @@
         }
     }
 
-    private void OnEngineChanged() => _render?.Request();
+    private void OnEngineChanged()
+    {
+        _tabs.CloseResolved(ConflictedPaths());
+        _render?.Request();
+    }
+
+    private string[] ConflictedPaths() => [.. Engine.Remote.Where(r => r.Status == RemoteStatus.Conflict).Select(r => r.Change.Path)];
+
+    /// <summary>A conflicted file opens its Conflict tab instead of the file tab.</summary>
+    private void OpenFile(string path) => _tabs.Show(ConflictedPaths().Contains(path) ? TabSet.ConflictTab(path) : TabSet.FileTab(path));
+
+    private void ShowFirstConflict()
+    {
+        if (ConflictedPaths().FirstOrDefault() is { } path)
+        {
+            _tabs.Show(TabSet.ConflictTab(path));
+        }
+    }
 
     private void OnStateChanged(TransportState state)
     {

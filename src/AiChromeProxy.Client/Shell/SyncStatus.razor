@@ -14,6 +14,13 @@
         <Icon Name="@IconName" Class="@(Engine.Phase is SyncPhase.Scanning or SyncPhase.Uploading ? "spin" : null)" />
         <span class="status-text"><span aria-live="off" aria-hidden="@(text == _announced ? "true" : null)" data-testid="status-sync">@text</span><span class="visually-hidden" role="status" data-testid="status-announced">@_announced</span><span data-testid="status-rescan">@Format.Rescan(Engine.Folder, Engine.Phase, Engine.NextScan - DateTimeOffset.UtcNow)</span></span>
     </span>
+    @if (Engine.ConflictCount > 0)
+    {
+        <button type="button" class="error-count has-conflicts" data-testid="status-conflicts"
+                title="Show the first conflict" aria-label="@($"{Engine.ConflictCount} conflicts, show the first")" @onclick="OnShowConflict">
+            <Icon Name="conflict" Size="14" />@Engine.ConflictCount
+        </button>
+    }
     <button type="button" class="error-count @(errors > 0 ? "has-errors" : null)" data-testid="status-errors"
             title="Show the errors" aria-label="@($"{errors} errors, show the list")" @onclick="OnShowErrors">
         <Icon Name="error" Size="14" />@errors
@@ -29,6 +36,9 @@
 
     [Parameter]
     public EventCallback OnShowErrors { get; set; }
+
+    [Parameter]
+    public EventCallback OnShowConflict { get; set; }
 
     private string SyncText => Format.SyncStatus(
         Engine.Folder,

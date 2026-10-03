@@ -20,6 +20,9 @@ public static class Format
 		_ => string.Create(CultureInfo.InvariantCulture, $"{bytes / (1024.0 * 1024 * 1024):0.#} GB"),
 	};
 
+	/// <summary>"1 server change", "2 server changes".</summary>
+	public static string ServerChanges(int count) => count == 1 ? "1 server change" : $"{Count(count)} server changes";
+
 	public static string Connection(TransportState state) => state switch
 	{
 		TransportState.Connected => "Connected",

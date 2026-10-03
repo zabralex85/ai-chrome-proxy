@@ -119,4 +119,42 @@ public sealed class ShellSteps(IPage page)
 	{
 		await Expect(page.GetByTestId("error-list")).ToContainTextAsync(text);
 	}
+
+	// The folder picker cannot be automated: the page's own origin-private file system stands in for the picked folder.
+	[Given("the app is connected with a folder open")]
+	public async Task GivenTheAppIsConnectedWithAFolderOpenAsync()
+	{
+		await page.AddInitScriptAsync("window.showDirectoryPicker = async () => (await navigator.storage.getDirectory()).getDirectoryHandle('e2e-repo', { create: true });");
+		await page.GotoAsync("/");
+		await Expect(page.GetByTestId("connection-state")).ToHaveTextAsync("Connected");
+		await page.GetByTestId("open-folder").ClickAsync();
+		await Expect(page.GetByTestId("folder-name")).ToHaveTextAsync("e2e-repo");
+	}
+
+	[Then("the project settings button is disabled")]
+	public async Task ThenTheProjectSettingsButtonIsDisabledAsync()
+	{
+		await Expect(page.GetByTestId("open-settings")).ToBeDisabledAsync();
+	}
+
+	[When("I click the project settings button")]
+	public async Task WhenIClickTheProjectSettingsButtonAsync()
+	{
+		await page.GetByRole(AriaRole.Button, new() { Name = "Project settings" }).ClickAsync();
+	}
+
+	[Then("the Project settings tab is active")]
+	public async Task ThenTheProjectSettingsTabIsActiveAsync()
+	{
+		await Expect(page.GetByTestId("tab-settings")).ToHaveAttributeAsync("aria-selected", "true");
+		await Expect(page.GetByTestId("settings")).ToBeVisibleAsync();
+	}
+
+	[Then("the settings tab shows the excludes, the automatic apply option and a disabled Save button")]
+	public async Task ThenTheSettingsTabShowsItsFieldsAsync()
+	{
+		await Expect(page.GetByLabel("Extra excludes (.gitignore syntax)")).ToBeVisibleAsync();
+		await Expect(page.GetByLabel("Apply server changes automatically")).ToBeCheckedAsync();
+		await Expect(page.GetByRole(AriaRole.Button, new() { Name = "Save" })).ToBeDisabledAsync();
+	}
 }

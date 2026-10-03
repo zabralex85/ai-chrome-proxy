@@ -28,7 +28,11 @@
                 <span class="chevron"></span>
                 <Icon Name="@("file-" + kind)" Class="@("kind-" + kind)" />
                 <span class="tree-name">@node.Name</span>
-                @if (Engine.FileAt(node.Path) is { } file)
+                @if (Conflicted(node.Path))
+                {
+                    <span class="badge badge-conflict" title="Conflict: changed here and on the server" aria-label="Conflict: changed here and on the server"><Icon Name="conflict" Size="12" /></span>
+                }
+                else if (Engine.FileAt(node.Path) is { } file)
                 {
                     <span class="badge badge-@file.State.ToString().ToLowerInvariant()" title="@BadgeTitle(file)" aria-label="@BadgeTitle(file)">@BadgeText(file.State)</span>
                 }
@@ -91,6 +95,8 @@
         FileSyncState.TooLarge => "Too large to sync (over 20 MB)",
         _ => $"Error: {file.Error}",
     };
+
+    private bool Conflicted(string path) => Engine.Remote.Any(r => r.Status == RemoteStatus.Conflict && r.Change.Path == path);
 
     private string? ExpandedAttribute(TreeNode node) => node.IsFolder ? (_expanded.Contains(node.Path) ? "true" : "false") : null;
 

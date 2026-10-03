@@ -1,0 +1,62 @@
+@using AiChromeProxy.Client.Sync
+@using AiChromeProxy.Domain.Sync
+
+<section class="file-details settings" data-testid="settings">
+    <div class="file-heading">
+        <Icon Name="gear" Size="32" Class="kind-file" />
+        <div>
+            <h1>Project settings</h1>
+            <div class="mono muted">@Engine.FolderName</div>
+        </div>
+    </div>
+    <form @onsubmit="SaveAsync">
+        <label class="field" for="settings-excludes">Extra excludes (.gitignore syntax)</label>
+        <textarea id="settings-excludes" class="mono" rows="8" spellcheck="false" data-testid="settings-excludes" @bind="_form.Excludes" @bind:event="oninput"></textarea>
+        <label class="check">
+            <input type="checkbox" data-testid="settings-apply" @bind="_form.Apply" />
+            Apply server changes automatically
+        </label>
+        <div class="settings-actions">
+            <button type="submit" class="button primary" data-testid="settings-save" disabled="@(!_form.IsDirty)">Save</button>
+            <span role="status" class="@(_failed ? "state-error" : "muted")" data-testid="settings-status">@_status</span>
+        </div>
+    </form>
+</section>
+
+@code {
+    private ProjectSettings _loaded = null!;
+    private ProjectSettingsForm _form = null!;
+    private string? _status;
+    private bool _failed;
+
+    [Parameter, EditorRequired]
+    public SyncEngine Engine { get; set; } = null!;
+
+    /// <summary>Takes over what the engine knows (the server's reply to a save, a new session) unless it is being edited.</summary>
+    protected override void OnParametersSet()
+    {
+        if (_form is null || (!_form.IsDirty && !ReferenceEquals(_loaded, Engine.Settings)))
+        {
+            _loaded = Engine.Settings;
+            _form = new ProjectSettingsForm(_loaded);
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        _status = null;
+        _failed = false;
+        try
+        {
+            await Engine.SaveSettingsAsync(_form.ToSettings());
+            _loaded = Engine.Settings;
+            _form = new ProjectSettingsForm(_loaded);
+            _status = "Saved.";
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _failed = true;
+            _status = $"Could not save: {ex.Message}";
+        }
+    }
+}
