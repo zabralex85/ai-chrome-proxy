@@ -4,7 +4,7 @@ using Microsoft.Extensions.Options;
 
 namespace AiChromeProxy.Server.Security;
 
-/// <summary>Refuses cross-site requests to the hub: a request that names an Origin is accepted only for the tunnel's own origin (plus loopback in Development) is accepted.</summary>
+/// <summary>Refuses cross-site requests to the hub: a request that names an Origin is accepted only for the tunnel's own origin (plus loopback in Development); one without an Origin (native clients, same-origin long polling) passes.</summary>
 public sealed class HubOriginFilter(RequestDelegate next, IOptions<ServerOptions> options, IHostEnvironment environment)
 {
 	public async Task InvokeAsync(HttpContext context)
