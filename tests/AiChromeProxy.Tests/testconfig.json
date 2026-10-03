@@ -4,7 +4,7 @@
       "include": "[AiChromeProxy.*]*",
       "exclude": "[AiChromeProxy.Tests]*",
       "excludeByAttribute": "GeneratedCode,GeneratedCodeAttribute,ExcludeFromCodeCoverage,ExcludeFromCodeCoverageAttribute,CompilerGeneratedAttribute",
-      "excludeByFile": "**/Program.cs,**/*.razor",
+      "excludeByFile": "**/Program.cs,**/*.razor,**/*.axaml.cs",
       "format": "cobertura",
       "excludeAssembliesWithoutSources": "MissingAll"
     }

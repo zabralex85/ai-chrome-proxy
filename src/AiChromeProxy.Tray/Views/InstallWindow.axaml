@@ -1,0 +1,24 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:AiChromeProxy.Tray.ViewModels"
+        x:Class="AiChromeProxy.Tray.Views.InstallWindow"
+        x:DataType="vm:InstallViewModel"
+        Title="Install AI Chrome Proxy service"
+        Icon="/Assets/tray.ico"
+        Width="480" SizeToContent="Height" CanResize="False"
+        WindowStartupLocation="CenterScreen">
+  <StackPanel Margin="16" Spacing="8">
+    <TextBlock TextWrapping="Wrap"
+               Text="The service starts with Windows, before anyone logs in, and runs as your account (it must be the account you are signed in with) so Claude Code sees its profile. Windows needs the account's password for that; it is stored only by the Service Control Manager." />
+    <TextBlock Text="Account" />
+    <TextBox Text="{Binding Account}" IsReadOnly="True" />
+    <TextBlock Text="Windows password (not the PIN)" />
+    <TextBox Text="{Binding Password}" PasswordChar="●" />
+    <TextBlock Text="{Binding Error}" Foreground="#C42B1C" TextWrapping="Wrap"
+               IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}" />
+    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+      <Button Content="Cancel" IsCancel="True" Click="OnCancel" />
+      <Button Content="Install" Command="{Binding InstallCommand}" IsDefault="True" />
+    </StackPanel>
+  </StackPanel>
+</Window>

@@ -1,5 +1,4 @@
 using AiChromeProxy.Infrastructure.Security;
-using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 
 namespace AiChromeProxy.Tests.Infrastructure;
@@ -14,7 +13,7 @@ public sealed class CloudflareAccessOptionsTests
 	{
 		var options = new CloudflareAccessOptions { TeamDomain = team, Audience = aud };
 
-		var ex = Assert.Throws<InvalidOperationException>(() => options.Validate(new Env(Environments.Production)));
+		var ex = Assert.Throws<InvalidOperationException>(() => options.Validate(new TestHostEnvironment(Environments.Production)));
 
 		Assert.Contains("TeamDomain", ex.Message);
 	}
@@ -24,31 +23,33 @@ public sealed class CloudflareAccessOptionsTests
 	{
 		var options = new CloudflareAccessOptions { Enabled = false };
 
-		var ex = Assert.Throws<InvalidOperationException>(() => options.Validate(new Env(Environments.Production)));
+		var ex = Assert.Throws<InvalidOperationException>(() => options.Validate(new TestHostEnvironment(Environments.Production)));
 
 		Assert.Contains("Development", ex.Message);
+	}
+
+	[Theory]
+	[InlineData("https://team.cloudflareaccess.com")]
+	[InlineData("team.cloudflareaccess.com/")]
+	[InlineData("team.cloudflareaccess.com:443")]
+	public void Enabled_TeamDomainNotBareHost_Throws(string team)
+	{
+		var options = new CloudflareAccessOptions { TeamDomain = team, Audience = "aud" };
+
+		var ex = Assert.Throws<InvalidOperationException>(() => options.Validate(new TestHostEnvironment(Environments.Development)));
+
+		Assert.Contains("bare host name", ex.Message);
 	}
 
 	[Fact]
 	public void Development_Disabled_Ok()
 	{
-		new CloudflareAccessOptions { Enabled = false }.Validate(new Env(Environments.Development));
+		new CloudflareAccessOptions { Enabled = false }.Validate(new TestHostEnvironment(Environments.Development));
 	}
 
 	[Fact]
 	public void Production_FullConfig_Ok()
 	{
-		new CloudflareAccessOptions { TeamDomain = "t.cloudflareaccess.com", Audience = "a" }.Validate(new Env(Environments.Production));
-	}
-
-	private sealed class Env(string name) : IHostEnvironment
-	{
-		public string EnvironmentName { get; set; } = name;
-
-		public string ApplicationName { get; set; } = "test";
-
-		public string ContentRootPath { get; set; } = AppContext.BaseDirectory;
-
-		public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
+		new CloudflareAccessOptions { TeamDomain = "t.cloudflareaccess.com", Audience = "a" }.Validate(new TestHostEnvironment(Environments.Production));
 	}
 }

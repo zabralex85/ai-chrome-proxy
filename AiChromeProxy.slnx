@@ -8,6 +8,7 @@
     <Project Path="src/AiChromeProxy.Domain/AiChromeProxy.Domain.csproj" />
     <Project Path="src/AiChromeProxy.Infrastructure/AiChromeProxy.Infrastructure.csproj" />
     <Project Path="src/AiChromeProxy.Server/AiChromeProxy.Server.csproj" />
+    <Project Path="src/AiChromeProxy.Tray/AiChromeProxy.Tray.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/AiChromeProxy.E2E/AiChromeProxy.E2E.csproj" />

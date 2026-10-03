@@ -4,7 +4,7 @@ Four layers. Only the first runs in CI; the others are local tools.
 
 | Layer | Location | What it covers | Runs |
 |---|---|---|---|
-| Unit + integration + architecture | `tests/AiChromeProxy.Tests` (`Domain/`, `Application/`, `Infrastructure/`, `Server/`, `Architecture/`) | Envelope contract, routing, handlers, Cloudflare Access validation and middleware, the real Server pipeline over SignalR (in-memory `TestServer`), layer dependency rules (NetArchTest) | CI + local, 85% line-coverage gate |
+| Unit + integration + architecture | `tests/AiChromeProxy.Tests` (`Domain/`, `Application/`, `Infrastructure/`, `Server/`, `Tray/`, `Architecture/`) | Envelope contract, routing, handlers, Cloudflare Access validation and middleware, the real Server pipeline over SignalR (in-memory `TestServer`), host filtering and startup validation, data directory config + CLEF logging, tray view models / CLEF parser / update orchestration / service setup (fakes for the SCM, registry and Velopack), the tray windows on Avalonia headless, layer dependency rules (NetArchTest) | CI + local, 85% line-coverage gate |
 | E2E BDD | `tests/AiChromeProxy.E2E` — Reqnroll + Playwright | The real app in a real browser: the status page connects, Ping round-trips | local |
 | Load | `tests/load` — k6 | Concurrent SignalR connections pinging the hub; ping→pong latency and error rate | local |
 | Micro-benchmarks | `benchmarks/AiChromeProxy.Benchmarks` — BenchmarkDotNet | Hot paths: `Envelope.Create`/serialization, `EnvelopeRouter.RouteAsync`, Access token validation | local |
@@ -13,7 +13,7 @@ Commands below run from the repo root. Shell snippets are Windows PowerShell 5.1
 
 ## Unit + integration + architecture (xunit v3)
 
-xunit v3 on Microsoft.Testing.Platform (opted in via `global.json`), coverage via `coverlet.MTP`.
+xunit v3 on Microsoft.Testing.Platform (opted in via `global.json`), coverage via `coverlet.MTP`. The project targets `net10.0-windows` (it references the tray), so it runs on Windows only.
 
 ```powershell
 dotnet build -c Release
@@ -28,6 +28,11 @@ Architecture rules (`Architecture/LayerDependencyTests.cs`):
 - Application does not depend on Infrastructure, Server, ASP.NET Core or `Microsoft.IdentityModel`.
 - Infrastructure does not depend on Server or Client.
 - Client depends on Domain only (not on Application, Infrastructure or Server).
+- Tray depends only on Domain and Infrastructure (not on Application, Server, Client or ASP.NET Core).
+
+Excluded from coverage (`testconfig.json` and `[ExcludeFromCodeCoverage]`): `Program.cs`, `*.razor`, view code-behind `*.axaml.cs` (UI glue; the windows are smoke-tested on Avalonia headless), and the members that change the machine or the network — `ServiceInstaller` (P/Invoke: SCM, LSA, LogonUser), `WindowsServiceControl` start/stop/install/uninstall, `RegistryAutoStart`, `VelopackUpdateSource`, `AdminCommand.RunElevatedAsync` (UAC). These are covered by the manual checklist in [windows-host.md](windows-host.md).
+
+Tray tests never install services, grant rights, write the registry, show a desktop window or trigger UAC; read-only SCM queries (`EventLog` status, an unknown service) are fine.
 
 Always pass `--project`: a bare `dotnet test` runs every test project in the solution, including E2E (which needs a browser).
 

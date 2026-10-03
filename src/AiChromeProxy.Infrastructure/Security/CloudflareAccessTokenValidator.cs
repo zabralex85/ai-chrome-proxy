@@ -13,16 +13,20 @@ public sealed class CloudflareAccessTokenValidator(
 	public const string JwksHttpClient = "cf-access-jwks";
 
 	private static readonly TimeSpan MinRefreshInterval = TimeSpan.FromMinutes(1);
+	private static readonly TimeSpan KeysTtl = TimeSpan.FromHours(6);
 	private static readonly TimeSpan JwksTimeout = TimeSpan.FromSeconds(10);
 
 	private readonly JsonWebTokenHandler _handler = new();
 	private readonly SemaphoreSlim _refreshLock = new(1, 1);
 	private IList<SecurityKey> _keys = [];
-	private DateTimeOffset _lastRefresh = DateTimeOffset.MinValue;
+
+	// Monotonic timestamps (TimeProvider.GetTimestamp): wall-clock jumps must not stall or skip a refresh.
+	private long? _lastFetch;
+	private long _keysLoaded;
 
 	public async Task<bool> ValidateAsync(string token, CancellationToken ct)
 	{
-		if (_keys.Count == 0)
+		if (_keys.Count == 0 || time.GetElapsedTime(_keysLoaded) >= KeysTtl)
 		{
 			await RefreshKeysAsync(ct);
 		}
@@ -61,19 +65,19 @@ public sealed class CloudflareAccessTokenValidator(
 		await _refreshLock.WaitAsync(ct);
 		try
 		{
-			var now = time.GetUtcNow();
-			if (now - _lastRefresh < MinRefreshInterval)
+			if (_lastFetch is { } last && time.GetElapsedTime(last) < MinRefreshInterval)
 			{
 				return false;
 			}
 
-			_lastRefresh = now;
+			_lastFetch = time.GetTimestamp();
 			var url = $"https://{options.Value.TeamDomain}/cdn-cgi/access/certs";
 			var client = httpFactory.CreateClient(JwksHttpClient);
 			client.Timeout = JwksTimeout;
-			// Not the caller's token: _lastRefresh is already set, so a cancelled fetch would leave keys empty for a minute.
+			// Not the caller's token: _lastFetch is already set, so a cancelled fetch would leave keys empty for a minute.
 			var json = await client.GetStringAsync(url, CancellationToken.None);
 			_keys = new JsonWebKeySet(json).GetSigningKeys();
+			_keysLoaded = time.GetTimestamp();
 			return true;
 		}
 		finally

@@ -383,3 +383,6 @@ FodyWeavers.xsd
 .cursor/mcp.json
 .cursorrules
 AGENTS.md
+
+# Local packaging tools (vpk)
+/.tools/

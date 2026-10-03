@@ -1,0 +1,34 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:AiChromeProxy.Tray.ViewModels"
+        xmlns:clef="using:AiChromeProxy.Tray.Clef"
+        x:Class="AiChromeProxy.Tray.Views.LogsWindow"
+        x:DataType="vm:LogsViewModel"
+        Title="AI Chrome Proxy logs"
+        Icon="/Assets/tray.ico"
+        Width="1100" Height="650"
+        WindowStartupLocation="CenterScreen">
+  <DockPanel Margin="8">
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+      <ComboBox ItemsSource="{Binding Files}" SelectedItem="{Binding SelectedFile}" Width="240" />
+      <ComboBox ItemsSource="{Binding Levels}" SelectedItem="{Binding MinimumLevel}" Width="140" />
+      <TextBox Text="{Binding FilterText}" PlaceholderText="Filter text" Width="320" />
+      <CheckBox Content="Follow" IsChecked="{Binding Follow}" />
+    </StackPanel>
+    <TextBlock DockPanel.Dock="Top" Text="{Binding Error}" Foreground="#C42B1C" TextWrapping="Wrap"
+               IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}" />
+    <ListBox x:Name="EntryList" ItemsSource="{Binding Entries}">
+      <ListBox.ItemTemplate>
+        <DataTemplate x:DataType="clef:LogEntry">
+          <Grid ColumnDefinitions="190,90,*" RowDefinitions="Auto,Auto">
+            <TextBlock Grid.Column="0" Text="{Binding Time}" FontFamily="Consolas" />
+            <TextBlock Grid.Column="1" Text="{Binding Level}" />
+            <TextBlock Grid.Column="2" Text="{Binding Message}" TextWrapping="Wrap" />
+            <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding Exception}" FontFamily="Consolas" Foreground="#C42B1C" TextWrapping="Wrap"
+                       IsVisible="{Binding Exception, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          </Grid>
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+    </ListBox>
+  </DockPanel>
+</Window>

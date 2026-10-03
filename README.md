@@ -4,7 +4,11 @@ Use Claude Code on your home server to work on a repo that lives on a locked-dow
 
 Chrome opens a web app (served via Cloudflare Tunnel + Access) that syncs the repo folder to the home server, gives you a VS Code-like navigator and a Claude chat with mermaid diagrams and code highlighting, and writes Claude's edits back.
 
-**Status:** skeleton — transport + Cloudflare Access. See [architecture](docs/superpowers/specs/2026-10-02-architecture-design.md) and [setup](docs/setup/cloudflare.md).
+**Status:** skeleton — transport + Cloudflare Access, Windows host (service, tray, installer). See [architecture](docs/superpowers/specs/2026-10-02-architecture-design.md) and [setup](docs/setup/cloudflare.md).
+
+## Install on a Windows home server
+
+Download `AiChromeProxy-win-Setup.exe` from Releases: it installs a tray app that sets up the Server as a Windows service, edits its settings, shows its logs and installs updates. See [docs/windows-host.md](docs/windows-host.md).
 
 ## Run locally (no Cloudflare)
 
