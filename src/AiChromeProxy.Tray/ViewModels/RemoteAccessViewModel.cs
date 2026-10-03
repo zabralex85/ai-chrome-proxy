@@ -24,6 +24,9 @@ public sealed partial class RemoteAccessViewModel(
 {
 	public const string CreateTokenUrl = "https://dash.cloudflare.com/profile/api-tokens";
 
+	/// <summary>Cancelled when the window closes: an abandoned setup stops and writes nothing.</summary>
+	private readonly CancellationTokenSource _closed = new();
+
 	private CloudflareApi? _api;
 
 	public enum WizardStage
@@ -98,11 +101,20 @@ public sealed partial class RemoteAccessViewModel(
 	/// <summary>Details → Token, or back to Details after a failed setup.</summary>
 	public bool CanGoBack => !IsBusy && (Stage == WizardStage.Details || (Stage == WizardStage.Progress && Failed));
 
-	private string NormalizedSubdomain => Subdomain.Trim().ToLowerInvariant();
+	// The view may set null.
+	private string NormalizedSubdomain => (Subdomain ?? string.Empty).Trim().ToLowerInvariant();
 
-	/// <summary>First run: the settings file has no <c>Server:PublicHost</c> yet (an unreadable file counts as set up: the wizard could not write it either).</summary>
-	public static bool NeedsSetup(DataDirectory dataDir)
+	/// <summary>
+	/// First run: no <c>Server:PublicHost</c> yet, neither in the settings file nor as a <c>Server__PublicHost</c> environment variable
+	/// (read through <paramref name="environment"/>, default the process's). An unreadable file counts as set up: the wizard could not write it either.
+	/// </summary>
+	public static bool NeedsSetup(DataDirectory dataDir, Func<string, string?>? environment = null)
 	{
+		if (!string.IsNullOrWhiteSpace((environment ?? Environment.GetEnvironmentVariable)($"{ServerOptions.Section}__{nameof(ServerOptions.PublicHost)}")))
+		{
+			return false;
+		}
+
 		try
 		{
 			return string.IsNullOrWhiteSpace(SettingsFile.Read(SettingsFile.LoadOrEmpty(dataDir), ServerOptions.Section, nameof(ServerOptions.PublicHost)));
@@ -113,9 +125,10 @@ public sealed partial class RemoteAccessViewModel(
 		}
 	}
 
-	/// <summary>The window closed: drop the API token and its client so an abandoned setup does not keep them.</summary>
+	/// <summary>The window closed: cancel what is running and drop the API token and its client so an abandoned setup does not keep them.</summary>
 	public void ForgetToken()
 	{
+		_closed.Cancel();
 		ApiToken = string.Empty;
 		_api = null;
 	}
@@ -136,8 +149,9 @@ public sealed partial class RemoteAccessViewModel(
 		try
 		{
 			var api = new CloudflareApi(http, ApiToken.Trim());
-			await api.VerifyTokenAsync(CancellationToken.None);
-			var zones = await api.ListZonesAsync(CancellationToken.None);
+			await api.VerifyTokenAsync(_closed.Token);
+			var zones = await api.ListZonesAsync(_closed.Token);
+			_closed.Token.ThrowIfCancellationRequested();
 			if (zones.Count == 0)
 			{
 				Errors = ["The token can see no active zone. Give it Zone: Zone Read and Zone: DNS Edit for your domain."];
@@ -164,7 +178,7 @@ public sealed partial class RemoteAccessViewModel(
 	private async Task SetUpAsync()
 	{
 		var subdomain = NormalizedSubdomain;
-		var emails = RemoteAccessInput.ParseEmails(Emails);
+		var emails = RemoteAccessInput.ParseEmails(Emails ?? string.Empty);
 		Errors = RemoteAccessInput.Validate(subdomain, SelectedZone?.Name, emails);
 		if (Errors.Count > 0 || _api is null || SelectedZone is null)
 		{
@@ -179,7 +193,8 @@ public sealed partial class RemoteAccessViewModel(
 		try
 		{
 			var request = new RemoteAccessRequest(SelectedZone, subdomain, emails, ReadPort(), machineName);
-			var result = await new RemoteAccessProvisioner(_api).ProvisionAsync(request, new StepProgress(Steps), CancellationToken.None);
+			var result = await new RemoteAccessProvisioner(_api).ProvisionAsync(request, new StepProgress(Steps), _closed.Token);
+			_closed.Token.ThrowIfCancellationRequested();
 			SettingsFile.Update(dataDir, settings =>
 			{
 				var access = SettingsFile.Section(settings, CloudflareAccessOptions.Section);
@@ -218,6 +233,7 @@ public sealed partial class RemoteAccessViewModel(
 	private async Task InstallServiceAsync()
 	{
 		Errors = [];
+		var installed = false;
 		try
 		{
 			var exitCode = await runElevated(AdminCommand.Install);
@@ -225,13 +241,15 @@ public sealed partial class RemoteAccessViewModel(
 			{
 				throw new InvalidOperationException($"Service install did not complete (exit code {exitCode}).");
 			}
+
+			installed = exitCode == 0;
 		}
 		catch (Exception ex)
 		{
 			Errors = [ex.Message];
 		}
 
-		OfferService();
+		OfferService(installed);
 	}
 
 	[RelayCommand(CanExecute = nameof(IsRestartOffered))]
@@ -253,15 +271,19 @@ public sealed partial class RemoteAccessViewModel(
 
 	private bool IsIdle() => !IsBusy;
 
-	/// <summary>Install when there is no service yet, restart a running one (it reads settings at start), else they apply at the next start.</summary>
-	private void OfferService()
+	/// <summary>
+	/// Install when there is no service yet, restart a running one (it reads settings at start), else they apply at the next start.
+	/// A service this wizard just <paramref name="installed"/> started with the new settings: nothing to restart.
+	/// </summary>
+	private void OfferService(bool installed = false)
 	{
 		var state = service.GetState();
 		IsInstallOffered = state == ServiceState.NotInstalled;
-		IsRestartOffered = state is ServiceState.Running or ServiceState.Starting;
+		IsRestartOffered = !installed && state is ServiceState.Running or ServiceState.Starting;
 		Status = state switch
 		{
 			ServiceState.NotInstalled => "Remote access is set up. Install the service to start it.",
+			ServiceState.Running or ServiceState.Starting when installed => "Service installed: remote access is live.",
 			ServiceState.Running or ServiceState.Starting => "Remote access is set up. Restart the service to apply.",
 			_ => "Remote access is set up. It applies when the service starts.",
 		};

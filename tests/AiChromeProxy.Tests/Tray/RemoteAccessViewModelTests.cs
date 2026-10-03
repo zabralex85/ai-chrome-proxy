@@ -204,6 +204,26 @@ public sealed class RemoteAccessViewModelTests : IDisposable
 		Assert.Equal([AdminCommand.Install], _elevated);
 		Assert.False(vm.IsInstallOffered);
 		Assert.Empty(vm.Errors);
+
+		// The service it started read the new settings: nothing to restart.
+		Assert.False(vm.IsRestartOffered);
+		Assert.Equal("Service installed: remote access is live.", vm.Status);
+	}
+
+	[Fact]
+	public async Task Install_UacDeclined_StillOffered()
+	{
+		_service.State = ServiceState.NotInstalled;
+		_elevatedExitCode = null;
+		RemoteAccessProvisionerTests.FreshAccount(_handler);
+		var vm = await DetailsAsync();
+		vm.Emails = "jane@example.com";
+		await vm.SetUpCommand.ExecuteAsync(null);
+
+		await vm.InstallServiceCommand.ExecuteAsync(null);
+
+		Assert.True(vm.IsInstallOffered);
+		Assert.Equal("Remote access is set up. Install the service to start it.", vm.Status);
 	}
 
 	[Fact]
@@ -374,6 +394,65 @@ public sealed class RemoteAccessViewModelTests : IDisposable
 		Assert.False(NeedsSetup(_dataDir));
 	}
 
+	[Fact]
+	public async Task WindowClosedWhileSettingUp_Cancelled_NoSettingsWritten()
+	{
+		RemoteAccessViewModel? vm = null;
+		RemoteAccessProvisionerTests.FreshAccount(_handler).OnResponse("POST", "accounts/a1/access/apps", () =>
+		{
+			// The last request is in flight when the window closes.
+			vm!.ForgetToken();
+			return FakeCloudflareHandler.Json(HttpStatusCode.OK, FakeCloudflareHandler.Envelope("""{"id":"app1","domain":"code.example.com","aud":"aud-123"}"""));
+		});
+		vm = await DetailsAsync();
+		vm.Emails = "jane@example.com";
+
+		await vm.SetUpCommand.ExecuteAsync(null);
+
+		Assert.False(vm.Succeeded);
+		Assert.True(vm.Failed);
+		Assert.False(File.Exists(_dataDir.SettingsFile));
+	}
+
+	[Fact]
+	public async Task WindowClosedWhileCheckingToken_Cancelled_StaysOnTokenStage()
+	{
+		RemoteAccessViewModel? vm = null;
+		_handler.OnResponse("GET", "user/tokens/verify", () =>
+		{
+			vm!.ForgetToken();
+			return FakeCloudflareHandler.Json(HttpStatusCode.OK, FakeCloudflareHandler.Envelope("""{"id":"t","status":"active"}"""));
+		});
+		vm = Create();
+		vm.ApiToken = "api-token";
+
+		await vm.ContinueCommand.ExecuteAsync(null);
+
+		Assert.True(vm.IsTokenStage);
+		Assert.DoesNotContain(_handler.Calls, c => c.StartsWith("GET zones", StringComparison.Ordinal));
+	}
+
+	[Fact]
+	public async Task NullInput_FromTheView_ValidationErrors_NoCrash()
+	{
+		var vm = await DetailsAsync();
+
+		vm.Subdomain = null!;
+		vm.Emails = null!;
+
+		Assert.Equal("https://.example.com/", vm.PublicUrl);
+		await vm.SetUpCommand.ExecuteAsync(null);
+		Assert.NotEmpty(vm.Errors);
+		Assert.True(vm.IsDetailsStage);
+	}
+
+	[Fact]
+	public void NeedsSetup_PublicHostFromTheEnvironment_False()
+	{
+		Assert.False(RemoteAccessViewModel.NeedsSetup(_dataDir, name => name == "Server__PublicHost" ? "code.example.com" : null));
+		Assert.True(RemoteAccessViewModel.NeedsSetup(_dataDir, name => name == "Server__PublicHost" ? " " : null));
+	}
+
 	public void Dispose()
 	{
 		_http.Dispose();
@@ -382,6 +461,9 @@ public sealed class RemoteAccessViewModelTests : IDisposable
 			Directory.Delete(_dataDir.Root, recursive: true);
 		}
 	}
+
+	/// <summary>Without environment variables, whatever the test machine has.</summary>
+	private static bool NeedsSetup(DataDirectory dataDir) => RemoteAccessViewModel.NeedsSetup(dataDir, _ => null);
 
 	private RemoteAccessViewModel Create() =>
 		new(_dataDir, _http, _service, command =>
