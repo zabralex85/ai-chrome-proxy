@@ -250,6 +250,19 @@ public sealed class CloudflareAccessMiddlewareTests
 		Assert.Equal(StatusCodes.Status204NoContent, ctx.Response.StatusCode);
 	}
 
+	[Fact]
+	public async Task ValidToken_StoresEmailClaimForTheHub()
+	{
+		var (validator, options) = Build(_issuer.Handler(), TimeProvider.System, enabled: true);
+		var ctx = new DefaultHttpContext();
+		ctx.Request.Headers[CloudflareAccessMiddleware.HeaderName] = _issuer.Token();
+
+		await new CloudflareAccessMiddleware(Ok, options, validator).InvokeAsync(ctx);
+
+		Assert.Equal(StatusCodes.Status204NoContent, ctx.Response.StatusCode);
+		Assert.Equal("user@example.com", ctx.Items[CloudflareAccessMiddleware.EmailItem]);
+	}
+
 	private static (CloudflareAccessTokenValidator Validator, IOptions<CloudflareAccessOptions> Options) Build(
 		HttpMessageHandler jwks, TimeProvider time, bool enabled)
 	{

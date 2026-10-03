@@ -1,4 +1,6 @@
 using System.Net;
+using System.Text.Json;
+using AiChromeProxy.Application.Transport;
 using AiChromeProxy.Client.Transport;
 using AiChromeProxy.Domain;
 using AiChromeProxy.Infrastructure.Security;
@@ -29,8 +31,11 @@ public sealed class TransportHubTests : IAsyncDisposable
 			b.UseSetting("Server:PublicHost", ServerHostingTests.PublicHost);
 			b.UseSetting("CloudflareAccess:TeamDomain", TestAccessIssuer.TeamDomain);
 			b.UseSetting("CloudflareAccess:Audience", TestAccessIssuer.Audience);
-			b.ConfigureServices(s => s.AddHttpClient(CloudflareAccessTokenValidator.JwksHttpClient)
-				.ConfigurePrimaryHttpMessageHandler(() => _issuer.Handler()));
+			b.ConfigureServices(s =>
+			{
+				s.AddHttpClient(CloudflareAccessTokenValidator.JwksHttpClient).ConfigurePrimaryHttpMessageHandler(() => _issuer.Handler());
+				s.AddSingleton<IEnvelopeHandler, ProbeHandler>();
+			});
 		});
 	}
 
@@ -53,6 +58,72 @@ public sealed class TransportHubTests : IAsyncDisposable
 			Assert.Equal([TransportState.Connecting, TransportState.Connected], states);
 			Assert.Equal(MessageTypes.Pong, reply.Type);
 			Assert.Equal("rt-1", reply.CorrelationId);
+		}
+	}
+
+	[Fact]
+	public async Task Request_Ping_ReturnsPongWithCorrelationId()
+	{
+		var ct = TestContext.Current.CancellationToken;
+		await using (var transport = new SignalRTransport(Connection(_issuer.Token())))
+		{
+			await transport.ConnectAsync(ct);
+
+			var reply = await transport.RequestAsync(Envelope.Create(MessageTypes.Ping, new { }), TimeSpan.FromSeconds(10), ct);
+
+			Assert.Equal(MessageTypes.Pong, reply.Type);
+		}
+	}
+
+	[Theory]
+	[InlineData("fail", ErrorCodes.NotFound, "missing")]
+	[InlineData("boom", ErrorCodes.Internal, ErrorCodes.Internal)]
+	public async Task Request_HandlerFails_ErrorReplyWithCode_NoInternalDetails(string mode, string code, string message)
+	{
+		var ct = TestContext.Current.CancellationToken;
+		await using (var transport = new SignalRTransport(Connection(_issuer.Token())))
+		{
+			await transport.ConnectAsync(ct);
+
+			var ex = await Assert.ThrowsAsync<RequestFailedException>(
+				() => transport.RequestAsync(Envelope.Create(ProbeHandler.MessageType, new { mode }), TimeSpan.FromSeconds(10), ct));
+
+			Assert.Equal(code, ex.Code);
+			Assert.Equal(message, ex.Message);
+		}
+	}
+
+	[Fact]
+	public async Task Request_NullType_BadRequest()
+	{
+		var ct = TestContext.Current.CancellationToken;
+		await using (var transport = new SignalRTransport(Connection(_issuer.Token())))
+		{
+			await transport.ConnectAsync(ct);
+
+			var ex = await Assert.ThrowsAsync<RequestFailedException>(
+				() => transport.RequestAsync(new Envelope(null!, JsonSerializer.SerializeToElement(new { })), TimeSpan.FromSeconds(10), ct));
+
+			Assert.Equal(ErrorCodes.BadRequest, ex.Code);
+		}
+	}
+
+	[Fact]
+	public async Task Handler_PushesThroughContext_WithAccessEmailAndConnectionId()
+	{
+		var ct = TestContext.Current.CancellationToken;
+		await using (var transport = new SignalRTransport(Connection(_issuer.Token())))
+		{
+			var pushed = new TaskCompletionSource<Envelope>();
+			transport.Received += e => pushed.TrySetResult(e);
+			await transport.ConnectAsync(ct);
+
+			await transport.SendAsync(Envelope.Create(ProbeHandler.MessageType, new { mode = "push" }), ct);
+			var push = await pushed.Task.WaitAsync(TimeSpan.FromSeconds(10), ct);
+
+			Assert.Equal("test.pushed", push.Type);
+			Assert.Equal("user@example.com", push.Payload.GetProperty("email").GetString());
+			Assert.False(string.IsNullOrEmpty(push.Payload.GetProperty("connectionId").GetString()));
 		}
 	}
 
@@ -185,6 +256,28 @@ public sealed class TransportHubTests : IAsyncDisposable
 			{
 				Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 				return await response.Content.ReadAsStringAsync(ct);
+			}
+		}
+	}
+
+	/// <summary>Exercises the error contract and the context: <c>{mode: "fail" | "boom" | "push"}</c>.</summary>
+	private sealed class ProbeHandler : IEnvelopeHandler
+	{
+		public const string MessageType = "test.probe";
+
+		public string Type => MessageType;
+
+		public async Task<Envelope?> HandleAsync(Envelope request, EnvelopeContext context, CancellationToken ct)
+		{
+			switch (request.Payload.GetProperty("mode").GetString())
+			{
+				case "fail":
+					throw new EnvelopeException(ErrorCodes.NotFound, "missing");
+				case "push":
+					await context.SendAsync(Envelope.Create("test.pushed", new { email = context.Email, connectionId = context.ConnectionId }), ct);
+					return null;
+				default:
+					throw new InvalidOperationException("secret detail");
 			}
 		}
 	}
