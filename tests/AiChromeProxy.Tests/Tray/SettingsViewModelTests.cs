@@ -34,11 +34,12 @@ public sealed class SettingsViewModelTests : IDisposable
 			["ASPNETCORE_URLS"] = "http://+:80",
 			["ServerName"] = "x",
 			["Serilog__MinimumLevel"] = "Debug",
-			["AICP_DATA_DIR"] = @"D:icp",
+			["AICP_DATA_DIR"] = @"D:\aicp",
+			["TUNNEL__TOKEN"] = "secret",
 		};
 
 		Assert.Equal(
-			["AICP_DATA_DIR", "ASPNETCORE_ENVIRONMENT", "cloudflareaccess__Audience", "DOTNET_ENVIRONMENT", "Serilog__MinimumLevel", "Server__PublicHost"],
+			["AICP_DATA_DIR", "ASPNETCORE_ENVIRONMENT", "cloudflareaccess__Audience", "DOTNET_ENVIRONMENT", "Serilog__MinimumLevel", "Server__PublicHost", "TUNNEL__TOKEN"],
 			SettingsViewModel.OverridingVariables(environment));
 		Assert.Empty(SettingsViewModel.OverridingVariables(new Dictionary<string, string> { ["PATH"] = "x" }));
 	}
@@ -99,7 +100,7 @@ public sealed class SettingsViewModelTests : IDisposable
 	[Fact]
 	public void Save_Valid_WritesExpectedJson_KeepsOtherKeys_SetsAutoStart()
 	{
-		WriteFile("""{ "Serilog": { "MinimumLevel": { "Default": "Debug" } }, "Server": { "Port": 5180, "Extra": true } }""");
+		WriteFile("""{ "Serilog": { "MinimumLevel": { "Default": "Debug" } }, "Server": { "Port": 5180, "Extra": true }, "Tunnel": { "Token": "secret" } }""");
 		var vm = Valid(Create());
 		vm.Port = " 6001 ";
 		vm.StartWithWindows = true;
@@ -111,6 +112,7 @@ public sealed class SettingsViewModelTests : IDisposable
 			{
 			  "Serilog": { "MinimumLevel": { "Default": "Debug" } },
 			  "Server": { "Port": 6001, "Extra": true, "PublicHost": "code.example.com" },
+			  "Tunnel": { "Token": "secret" },
 			  "CloudflareAccess": { "TeamDomain": "team.cloudflareaccess.com", "Audience": "aud" }
 			}
 			""");

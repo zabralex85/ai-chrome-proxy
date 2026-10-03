@@ -10,11 +10,9 @@ using CommunityToolkit.Mvvm.Input;
 
 namespace AiChromeProxy.Tray.ViewModels;
 
-/// <summary>Edits <c>&lt;DataDir&gt;\appsettings.json</c> with the Server's own validation rules; other keys in the file are kept.</summary>
+/// <summary>Edits <c>&lt;DataDir&gt;\appsettings.json</c> with the Server's own validation rules; other keys in the file (e.g. <c>Tunnel:Token</c>) are kept.</summary>
 public sealed partial class SettingsViewModel : ObservableObject
 {
-	private static readonly JsonSerializerOptions Indented = new() { WriteIndented = true };
-
 	private readonly DataDirectory _dataDir;
 	private readonly IAutoStart _autoStart;
 	private readonly IServiceControl _service;
@@ -28,7 +26,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 		var settings = new JsonObject();
 		try
 		{
-			settings = Load(dataDir);
+			settings = SettingsFile.Load(dataDir);
 		}
 		catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
 		{
@@ -75,10 +73,6 @@ public sealed partial class SettingsViewModel : ObservableObject
 	[NotifyCanExecuteChangedFor(nameof(RestartServiceCommand))]
 	public partial bool IsRestartOffered { get; private set; }
 
-	/// <summary>The settings file as a JSON object (empty when it does not exist yet).</summary>
-	public static JsonObject Load(DataDirectory dataDir) =>
-		File.Exists(dataDir.SettingsFile) ? JsonNode.Parse(File.ReadAllText(dataDir.SettingsFile))?.AsObject() ?? [] : [];
-
 	/// <summary>
 	/// Variables of <paramref name="environment"/> that win over <c>appsettings.json</c> (env vars come later in the Server's configuration),
 	/// typically left over from running the Server from source.
@@ -88,6 +82,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 			.Where(name => name.StartsWith("CloudflareAccess__", StringComparison.OrdinalIgnoreCase)
 				|| name.StartsWith("Server__", StringComparison.OrdinalIgnoreCase)
 				|| name.StartsWith("Serilog__", StringComparison.OrdinalIgnoreCase)
+				|| name.StartsWith("Tunnel__", StringComparison.OrdinalIgnoreCase)
 				|| name.Equals("AICP_DATA_DIR", StringComparison.OrdinalIgnoreCase)
 				|| name.Equals("ASPNETCORE_ENVIRONMENT", StringComparison.OrdinalIgnoreCase)
 				|| name.Equals("DOTNET_ENVIRONMENT", StringComparison.OrdinalIgnoreCase))
@@ -97,7 +92,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 	/// <summary>"Open UI": through the tunnel when a public host is set (local requests carry no Access token), else loopback.</summary>
 	public static Uri UiAddress(DataDirectory dataDir)
 	{
-		var settings = LoadOrEmpty(dataDir);
+		var settings = SettingsFile.LoadOrEmpty(dataDir);
 		var publicHost = (string?)settings[ServerOptions.Section]?[nameof(ServerOptions.PublicHost)];
 		var port = settings[ServerOptions.Section]?[nameof(ServerOptions.Port)]?.ToString() ?? ServerOptions.DefaultPort.ToString(CultureInfo.InvariantCulture);
 		return string.IsNullOrWhiteSpace(publicHost) ? new Uri($"http://127.0.0.1:{port}/") : new Uri($"https://{publicHost}/");
@@ -125,31 +120,6 @@ public sealed partial class SettingsViewModel : ObservableObject
 		return errors;
 	}
 
-	/// <summary>A broken file counts as empty: the user was told on open that saving replaces it.</summary>
-	private static JsonObject LoadOrEmpty(DataDirectory dataDir)
-	{
-		try
-		{
-			return Load(dataDir);
-		}
-		catch (JsonException)
-		{
-			return [];
-		}
-	}
-
-	private static JsonObject Section(JsonObject settings, string name)
-	{
-		if (settings[name] is JsonObject section)
-		{
-			return section;
-		}
-
-		section = [];
-		settings[name] = section;
-		return section;
-	}
-
 	[RelayCommand]
 	private void Save()
 	{
@@ -163,43 +133,18 @@ public sealed partial class SettingsViewModel : ObservableObject
 
 		try
 		{
-			var settings = LoadOrEmpty(_dataDir);
-			var access = Section(settings, CloudflareAccessOptions.Section);
-			access[nameof(CloudflareAccessOptions.TeamDomain)] = TeamDomain.Trim();
-			access[nameof(CloudflareAccessOptions.Audience)] = Audience.Trim();
-			var server = Section(settings, ServerOptions.Section);
-			server[nameof(ServerOptions.Port)] = ParsePort();
-			server[nameof(ServerOptions.PublicHost)] = PublicHost.Trim();
-
-			Directory.CreateDirectory(_dataDir.Root);
-			var tmpPath = _dataDir.SettingsFile + ".tmp";
-			try
+			SettingsFile.Update(_dataDir, settings =>
 			{
-				File.WriteAllText(tmpPath, settings.ToJsonString(Indented));
-				File.Move(tmpPath, _dataDir.SettingsFile, overwrite: true);
-			}
-			catch (Exception ex)
-			{
-				try
-				{
-					File.Delete(tmpPath);
-				}
-				catch
-				{
-					// Best effort cleanup; let the original exception be thrown
-				}
-
-				if (ex is IOException or UnauthorizedAccessException)
-				{
-					throw new IOException($"Could not write {_dataDir.SettingsFile}: {ex.Message}", ex);
-				}
-
-				throw;
-			}
-
+				var access = SettingsFile.Section(settings, CloudflareAccessOptions.Section);
+				access[nameof(CloudflareAccessOptions.TeamDomain)] = TeamDomain.Trim();
+				access[nameof(CloudflareAccessOptions.Audience)] = Audience.Trim();
+				var server = SettingsFile.Section(settings, ServerOptions.Section);
+				server[nameof(ServerOptions.Port)] = ParsePort();
+				server[nameof(ServerOptions.PublicHost)] = PublicHost.Trim();
+			});
 			_autoStart.IsEnabled = StartWithWindows;
 		}
-		catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 		{
 			Errors = [ex.Message];
 			return;
