@@ -17,6 +17,8 @@ public sealed class JsFolderAccess(IJSRuntime js) : IFolderAccess, IAsyncDisposa
 
 	public async Task<FolderGrant?> RestoreAsync() => await (await ModuleAsync()).InvokeAsync<FolderGrant?>("restore");
 
+	public async Task<bool> HasAccessAsync() => await (await ModuleAsync()).InvokeAsync<bool>("hasAccess");
+
 	public async Task<bool> RequestAccessAsync() => await (await ModuleAsync()).InvokeAsync<bool>("requestAccess");
 
 	public async Task<FolderScan> ScanAsync(IReadOnlyList<string> skipDirectories, int maxEntries) =>

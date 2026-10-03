@@ -948,6 +948,33 @@ public sealed class SyncEngineTests : IDisposable
 	}
 
 	[Fact]
+	public async Task AccessLostDuringUploads_PassEnds_NothingBackedOff_RestoreAccessResumes()
+	{
+		_folder.Write("a.txt", "a");
+		_folder.Write("b.txt", "b");
+		_folder.Write("c.txt", "c");
+		await OpenAsync();
+		_folder.ReadFailures.UnionWith(_folder.Files.Keys);
+		_folder.Granted = false;
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(["a.txt"], _folder.ChunkReads);
+		Assert.Equal(FolderStatus.NeedsPermission, _engine.Folder);
+		Assert.Equal(SyncPhase.Failed, _engine.Phase);
+		Assert.Contains("Restore access", _engine.Problem, StringComparison.Ordinal);
+		Assert.Equal(SyncActivityKind.AccessLost, _engine.Activity[0].Kind);
+
+		_folder.ReadFailures.Clear();
+		await _engine.RestoreAccessAsync();
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Synced, _engine.Phase);
+		Assert.Equal("a", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
+		Assert.Equal("c", File.ReadAllText(_server.PathOf(Repo, "c.txt")));
+	}
+
+	[Fact]
 	public async Task ScanFailsWithAccessStillGranted_CycleFails()
 	{
 		_folder.Write("a.txt", "a");

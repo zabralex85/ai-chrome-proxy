@@ -66,6 +66,8 @@ public sealed class FakeFolder : IFolderAccess
 
 	public Task<FolderGrant?> RestoreAsync() => Task.FromResult(Remembered ? new FolderGrant(Name, Granted) : null);
 
+	public Task<bool> HasAccessAsync() => Task.FromResult(Granted);
+
 	public Task<bool> RequestAccessAsync()
 	{
 		Granted = true;

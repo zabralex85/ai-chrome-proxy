@@ -9,6 +9,9 @@ public interface IFolderAccess
 	/// <summary>The folder picked on an earlier visit, or null.</summary>
 	Task<FolderGrant?> RestoreAsync();
 
+	/// <summary>Whether the picked folder is still readable (the browser's permission; asks nothing, changes nothing).</summary>
+	Task<bool> HasAccessAsync();
+
 	/// <summary>Asks the browser for read access again (must run from a click).</summary>
 	Task<bool> RequestAccessAsync();
 

@@ -133,6 +133,11 @@ export async function restore(): Promise<FolderGrant | null> {
     return { name: handle.name, granted: (await handle.queryPermission({ mode: 'read' })) === 'granted' };
 }
 
+/** Whether the picked folder is still readable; asks nothing (unlike requestAccess) and keeps the last scan. */
+export async function hasAccess(): Promise<boolean> {
+    return root !== null && (await root.queryPermission({ mode: 'read' })) === 'granted';
+}
+
 /** Asks for read access again; must run from a click. */
 export async function requestAccess(): Promise<boolean> {
     return root !== null && (await root.requestPermission({ mode: 'read' })) === 'granted';

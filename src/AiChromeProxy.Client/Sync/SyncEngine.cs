@@ -646,7 +646,7 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 
 	/// <summary>
 	/// Sequential uploads; a file that fails (refused, changed or unreadable) is marked and sent again on the next scan only,
-	/// a lost connection ends the cycle.
+	/// a lost connection or lost access to the folder ends the cycle.
 	/// </summary>
 	/// <returns>The stored entries and the failed files as "path: reason".</returns>
 	private async Task<(List<ManifestEntry> Uploaded, List<string> Failed)> UploadAsync(string repo, int generation, List<ManifestEntry> entries, CancellationToken ct)
@@ -671,6 +671,13 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 			}
 			catch (Exception ex) when (ex is RequestFailedException or IOException or JSException)
 			{
+				if (ex is JSException && !await folder.HasAccessAsync())
+				{
+					// Every remaining file would fail the same way: the pass ends, nothing is backed off.
+					Folder = FolderStatus.NeedsPermission;
+					throw new InvalidOperationException(AccessLost, ex);
+				}
+
 				// The same size and hash waits FailureBackoff before it is tried again, except after an internal server error (transient,
 				// retried on the next pass); the same failure is logged once.
 				var repeated = _failures.TryGetValue(entry.Path, out var earlier) && earlier.Entry == entry && earlier.Error == ex.Message;
