@@ -80,18 +80,8 @@ public sealed class StreamJsonParser
 		}
 	}
 
-	private static string? Str(JsonNode? node, string name) => node is JsonObject o && o[name] is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
-
-	private static bool Flag(JsonObject o, string name) => o[name] is JsonValue v && v.TryGetValue<bool>(out var b) && b;
-
-	private static IReadOnlyList<ChatEvent> New(string kind, string? text = null, string? toolId = null, string? name = null, string? summary = null, bool? isError = null)
-	{
-		// The Domain splitter truncates every summary (UTF-8 bytes, ellipsis, surrogate-safe) and splits long text.
-		var e = new ChatEvent(string.Empty, string.Empty, 0, kind, text, toolId, name, summary, isError);
-		return ChatEventSplitter.Split(e);
-	}
-
-	private static string Summarize(string? tool, JsonNode? input, string? cwd)
+	/// <summary>A one-line summary of a tool call: the command, a path relative to <paramref name="cwd"/>, the pattern, or the input as JSON.</summary>
+	internal static string Summarize(string? tool, JsonNode? input, string? cwd)
 	{
 		var path = Str(input, "file_path") ?? Str(input, "notebook_path");
 		return tool switch
@@ -101,6 +91,17 @@ public sealed class StreamJsonParser
 			"Glob" or "Grep" when Str(input, "pattern") is { } pattern => pattern,
 			_ => input?.ToJsonString(Readable) ?? string.Empty,
 		};
+	}
+
+	private static string? Str(JsonNode? node, string name) => node is JsonObject o && o[name] is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
+
+	private static bool Flag(JsonObject o, string name) => o[name] is JsonValue v && v.TryGetValue<bool>(out var b) && b;
+
+	private static IReadOnlyList<ChatEvent> New(string kind, string? text = null, string? toolId = null, string? name = null, string? summary = null, bool? isError = null)
+	{
+		// The Domain splitter truncates every summary (UTF-8 bytes, ellipsis, surrogate-safe) and splits long text.
+		var e = new ChatEvent(string.Empty, string.Empty, 0, kind, text, toolId, name, summary, isError);
+		return ChatEventSplitter.Split(e);
 	}
 
 	private static string Relative(string path, string? cwd)

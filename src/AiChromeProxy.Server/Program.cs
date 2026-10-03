@@ -5,6 +5,7 @@ using AiChromeProxy.Infrastructure.Hosting;
 using AiChromeProxy.Infrastructure.Projects;
 using AiChromeProxy.Infrastructure.Security;
 using AiChromeProxy.Infrastructure.Sync;
+using AiChromeProxy.Server.Chat;
 using AiChromeProxy.Server.Hosting;
 using AiChromeProxy.Server.Security;
 using AiChromeProxy.Server.Transport;
@@ -47,6 +48,7 @@ builder.Services.AddHostedService(sp => new CloudflaredSupervisor(
 	sp.GetRequiredService<TimeProvider>(),
 	CloudflaredProcess.Start));
 builder.Services.AddSignalR();
+builder.Services.AddApprovalMcp(server.Port);
 
 var app = builder.Build();
 
@@ -70,6 +72,7 @@ if (!access.Enabled)
 
 app.UseMiddleware<CloudflareAccessMiddleware>();
 app.UseMiddleware<HubOriginFilter>();
+app.MapApprovalMcp();
 app.MapStaticAssets();
 app.MapHub<TransportHub>(TransportHub.Path);
 app.MapClientPage();

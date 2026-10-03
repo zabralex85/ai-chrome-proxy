@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using AiChromeProxy.Application.Chat;
 using AiChromeProxy.Application.Transport;
 using AiChromeProxy.Domain;
@@ -6,6 +7,7 @@ using AiChromeProxy.Domain.Chat;
 using AiChromeProxy.Domain.Sync;
 using AiChromeProxy.Infrastructure.Sync;
 using AiChromeProxy.Tests.Server;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 
@@ -21,6 +23,7 @@ public sealed class ChatServiceTests : IDisposable
 	private const string ToolUse = """{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}""";
 	private const string ToolResult = """{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"a.txt","is_error":false}]}}""";
 	private const string Result = """{"type":"result","subtype":"success","is_error":false,"duration_ms":1234,"result":"Hello there.","total_cost_usd":0.0123,"session_id":"sess-1"}""";
+	private const string ApprovalUrl = "http://127.0.0.1:5180/mcp/approve";
 
 	private readonly string _root = Path.Combine(TempRootCleanup.Root, Guid.NewGuid().ToString("N"));
 	private readonly FakeTimeProvider _time = new();
@@ -28,6 +31,8 @@ public sealed class ChatServiceTests : IDisposable
 	private readonly MemoryProjectStore _projects = new();
 	private readonly FakeAgentRunner _runner = new();
 	private readonly ListLogger<ChatService> _logger = new();
+	private readonly Endpoint _endpoint = new();
+	private readonly PermissionBroker _broker;
 	private readonly ChatService _service;
 	private readonly EnvelopeRouter _router;
 
@@ -37,7 +42,8 @@ public sealed class ChatServiceTests : IDisposable
 		Directory.CreateDirectory(Path.Combine(_root, "other"));
 		_store = new MemoryChatStore(_time);
 		var mirror = new FileSystemMirrorStore(Options.Create(new MirrorOptions { Root = _root }));
-		_service = new ChatService(_store, mirror, _projects, _runner, _time, _logger);
+		_broker = new PermissionBroker(_projects, _time, new ListLogger<PermissionBroker>());
+		_service = new ChatService(_store, mirror, _projects, _runner, _time, _logger, _broker, _endpoint);
 		_router = new EnvelopeRouter([.. ChatHandler.Types.Select(t => new ChatHandler(t, _service))]);
 	}
 
@@ -554,6 +560,103 @@ public sealed class ChatServiceTests : IDisposable
 		Assert.Equal(1, stalled.Pushes);
 	}
 
+	[Fact]
+	public async Task Ask_PermissionCardAnsweredAllow_RunEndsNormally()
+	{
+		_endpoint.Url = ApprovalUrl;
+		var client = new Client("c1");
+		var started = await SendAsync(client, Repo, null, "List files");
+		var process = await _runner.NextAsync();
+		Assert.Equal(ApprovalUrl, process.Run.ApprovalUrl);
+		Assert.Equal(started.RunId, _broker.FindRun(process.Run.ApprovalToken));
+		process.Write(Init, ToolUse);
+		await client.WaitAsync(e => e.Kind == ChatEventKinds.Tool);
+
+		var tool = _broker.RequestAsync(started.RunId, "Bash", new JsonObject { ["command"] = "ls" }, Ct);
+		var permission = await client.WaitAsync(e => e.Kind == ChatEventKinds.Permission);
+		Assert.Equal((started.SessionId, started.RunId, "Bash", "ls"), (permission.SessionId, permission.RunId, permission.Name, permission.Summary));
+		Assert.Equal(ErrorCodes.BadRequest, await ErrorAsync(client, MessageTypes.ChatApprove, new ChatApprovePayload(started.RunId, permission.RequestId!, "sure")));
+		Assert.Equal(ErrorCodes.NotFound, await ErrorAsync(client, MessageTypes.ChatApprove, new ChatApprovePayload("other", permission.RequestId!, ChatDecisions.Allow)));
+		var echo = await RouteAsync(client, MessageTypes.ChatApprove, new ChatApprovePayload(started.RunId, permission.RequestId!, ChatDecisions.Allow));
+
+		Assert.Equal(MessageTypes.ChatApprove, echo.Type);
+		Assert.Equal(new ChatApprovePayload(started.RunId, permission.RequestId!, ChatDecisions.Allow), echo.Payload.Deserialize<ChatApprovePayload>(JsonSerializerOptions.Web));
+		Assert.True(await tool);
+		process.Write(ToolResult, Result);
+		process.Exit();
+		var result = await client.WaitAsync(e => e.Kind == ChatEventKinds.Result);
+		Assert.True(result.Ok);
+		Assert.Equal(
+			[ChatEventKinds.Prompt, ChatEventKinds.Tool, ChatEventKinds.Permission, ChatEventKinds.PermissionResolved, ChatEventKinds.ToolResult, ChatEventKinds.Result],
+			client.Events.Select(e => e.Kind));
+		Assert.Equal(client.Events, _store.Read(started.SessionId, 0, int.MaxValue).Events);
+		Assert.Equal(ChatDecisions.Allow, client.Events[3].Decision);
+		Assert.Null(_broker.FindRun(process.Run.ApprovalToken));
+	}
+
+	[Fact]
+	public async Task Ask_PendingPermission_RunCancelled_DeniedBeforeTheResult()
+	{
+		_endpoint.Url = ApprovalUrl;
+		var client = new Client("c1");
+		var started = await SendAsync(client, Repo, null, "Hi");
+		await _runner.NextAsync();
+		var tool = _broker.RequestAsync(started.RunId, "Bash", new JsonObject { ["command"] = "ls" }, Ct);
+		await client.WaitAsync(e => e.Kind == ChatEventKinds.Permission);
+
+		await RouteAsync(client, MessageTypes.ChatCancel, new ChatCancelPayload(started.RunId));
+
+		Assert.False(await tool);
+		await client.WaitAsync(e => e.Kind == ChatEventKinds.Result);
+		Assert.Equal([ChatEventKinds.Prompt, ChatEventKinds.Permission, ChatEventKinds.PermissionResolved, ChatEventKinds.Result], client.Events.Select(e => e.Kind));
+		Assert.Equal(ChatDecisions.Deny, client.Events[2].Decision);
+	}
+
+	[Fact]
+	public async Task Ask_WaitingForAnAnswer_IdleTimerPaused_RestartedAfterTheAnswer()
+	{
+		_endpoint.Url = ApprovalUrl;
+		var client = new Client("c1");
+		var started = await SendAsync(client, Repo, null, "Hi");
+		var process = await _runner.NextAsync();
+		_time.Advance(TimeSpan.FromMinutes(5));
+		var tool = _broker.RequestAsync(started.RunId, "Bash", new JsonObject { ["command"] = "ls" }, Ct);
+		var permission = await client.WaitAsync(e => e.Kind == ChatEventKinds.Permission);
+
+		_time.Advance(TimeSpan.FromMinutes(9));
+		await Task.Delay(50, Ct);
+		Assert.False(process.Killed);
+		await RouteAsync(client, MessageTypes.ChatApprove, new ChatApprovePayload(started.RunId, permission.RequestId!, ChatDecisions.Allow));
+		Assert.True(await tool);
+		_time.Advance(TimeSpan.FromMinutes(9));
+		await Task.Delay(50, Ct);
+		Assert.False(process.Killed);
+		_time.Advance(TimeSpan.FromMinutes(1));
+
+		var result = await client.WaitAsync(e => e.Kind == ChatEventKinds.Result);
+		Assert.True(process.Killed);
+		Assert.Contains("10 minutes", result.Error, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public async Task Ask_NoApprovalEndpoint_RunsWithoutTheTool_Warned_OtherModesNeverGetIt()
+	{
+		var client = new Client("c1");
+		await SendAsync(client, Repo, null, "Hi");
+		var process = await _runner.NextAsync();
+		Assert.Null(process.Run.ApprovalUrl);
+		Assert.Contains(_logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("approval", StringComparison.OrdinalIgnoreCase));
+		process.Write(Result);
+		process.Exit();
+		await client.WaitAsync(e => e.Kind == ChatEventKinds.Result);
+
+		_endpoint.Url = ApprovalUrl;
+		_projects.SaveSettings(Repo, new ProjectSettings { AgentPermissions = "settings" });
+		await SendAsync(client, Repo, null, "Again");
+		var next = await _runner.NextAsync();
+		Assert.Equal((null, null), (next.Run.ApprovalUrl, next.Run.ApprovalToken));
+	}
+
 	private async Task<ChatEvent> AdvanceUntilAsync(Client client, Func<ChatEvent, bool> match)
 	{
 		for (var i = 0; i < 100 && !client.Events.Any(match); i++)
@@ -589,6 +692,12 @@ public sealed class ChatServiceTests : IDisposable
 		var reply = await RouteAsync(client, MessageTypes.ChatSend, new ChatSendPayload(repo, sessionId, text));
 		Assert.Equal(MessageTypes.ChatStarted, reply.Type);
 		return reply.Payload.Deserialize<ChatStartedPayload>(JsonSerializerOptions.Web)!;
+	}
+
+	/// <summary>The Server's approval endpoint (none until a test sets one).</summary>
+	private sealed class Endpoint : IApprovalEndpoint
+	{
+		public string? Url { get; set; }
 	}
 
 	/// <summary>A connection: records what is pushed to it.</summary>

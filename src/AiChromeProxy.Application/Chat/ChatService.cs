@@ -7,6 +7,7 @@ using AiChromeProxy.Domain;
 using AiChromeProxy.Domain.Chat;
 using AiChromeProxy.Domain.Sync;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AiChromeProxy.Application.Chat;
 
@@ -42,13 +43,24 @@ public sealed class ChatService : IDisposable
 	private readonly TimeProvider _time;
 	private readonly ILogger<ChatService> _logger;
 	private readonly ILogger<StreamJsonParser>? _parserLogger;
+	private readonly PermissionBroker _broker;
+	private readonly IApprovalEndpoint? _approval;
 	private readonly ConcurrentDictionary<string, Subscriber> _subscribers = new(StringComparer.Ordinal);
 	private readonly ConcurrentDictionary<string, Run> _runs = new(StringComparer.OrdinalIgnoreCase);
 
 	// No timer inside: nothing to free, and a late Send during shutdown must not hit a disposed source.
 	private readonly CancellationTokenSource _stopping = new();
 
-	public ChatService(IChatStore store, IMirrorStore mirror, IProjectStore projects, IAgentRunner runner, TimeProvider time, ILogger<ChatService> logger, ILogger<StreamJsonParser>? parserLogger = null)
+	public ChatService(
+		IChatStore store,
+		IMirrorStore mirror,
+		IProjectStore projects,
+		IAgentRunner runner,
+		TimeProvider time,
+		ILogger<ChatService> logger,
+		PermissionBroker? broker = null,
+		IApprovalEndpoint? approval = null,
+		ILogger<StreamJsonParser>? parserLogger = null)
 	{
 		_store = store;
 		_mirror = mirror;
@@ -57,6 +69,8 @@ public sealed class ChatService : IDisposable
 		_time = time;
 		_logger = logger;
 		_parserLogger = parserLogger;
+		_broker = broker ?? new PermissionBroker(projects, time, NullLogger<PermissionBroker>.Instance);
+		_approval = approval;
 	}
 
 	/// <summary><c>chat.open</c>: subscribes the connection to the repo's chat (instead of any other repo) and lists its sessions.</summary>
@@ -122,14 +136,16 @@ public sealed class ChatService : IDisposable
 			run.ClaudeId = sessionId is null ? null : _store.GetClaudeSession(sessionId);
 			run.SessionId = sessionId ?? _store.CreateSession(repo, Title(text)).Id;
 
-			// Task 7: the approval endpoint (ApprovalUrl, ApprovalToken) goes here; without it `ask` only accepts edits.
+			var (url, token) = Approval(run, folder, settings.AgentPermissionsOrDefault);
 			var agentRun = new AgentRun(
 				folder,
 				text,
 				run.ClaudeId,
 				settings.AgentPermissionsOrDefault,
 				string.IsNullOrWhiteSpace(settings.AgentModel) ? null : settings.AgentModel,
-				settings.AgentAllowedTools);
+				settings.AgentAllowedTools,
+				url,
+				token);
 
 			// Stored before the run starts: its seq precedes the run's events.
 			Store(run, [.. Parts(run, new ChatEvent(run.SessionId, run.Id, 0, ChatEventKinds.Prompt, Text: text))]);
@@ -137,6 +153,7 @@ public sealed class ChatService : IDisposable
 		}
 		catch
 		{
+			_broker.CancelRun(run.Id);
 			_runs.TryRemove(new KeyValuePair<string, Run>(repo, run));
 			run.Dispose();
 			throw;
@@ -154,12 +171,8 @@ public sealed class ChatService : IDisposable
 		}
 	}
 
-	/// <summary><c>chat.approve</c>: answers a pending permission request.</summary>
-	public void Approve(ChatApprovePayload payload)
-	{
-		// Task 7: the permission broker answers pending requests; until then there are none.
-		throw new EnvelopeException(ErrorCodes.NotFound, "No such permission request.");
-	}
+	/// <summary><c>chat.approve</c>: answers a pending permission request (<c>not_found</c> when there is none, <c>bad_request</c> for an unknown decision).</summary>
+	public void Approve(ChatApprovePayload payload) => _broker.Answer(payload.RunId, payload.RequestId, payload.Decision);
 
 	/// <summary>Stops every run (each ends with a stored <c>result</c>) and waits a few seconds for them.</summary>
 	public void Dispose()
@@ -199,6 +212,30 @@ public sealed class ChatService : IDisposable
 	/// <summary>The event with the run's ids, split so that each part still fits a page once stored (the widest seq is assumed).</summary>
 	private static IEnumerable<ChatEvent> Parts(Run run, ChatEvent e) =>
 		ChatEventSplitter.Split(e with { SessionId = run.SessionId!, RunId = run.Id, Seq = long.MaxValue }, StoredEventBytes).Select(p => p with { Seq = 0 });
+
+	/// <summary>The approval endpoint and the run's token for <c>ask</c> when the Server hosts the endpoint; otherwise none.</summary>
+	private (string? Url, string? Token) Approval(Run run, string folder, string permissions)
+	{
+		if (permissions != "ask")
+		{
+			return (null, null);
+		}
+
+		if (_approval?.Url is not { } url)
+		{
+			_logger.LogWarning("Chat run {RunId}: no approval endpoint, so Claude may edit files but is denied anything that needs approval", run.Id);
+			return (null, null);
+		}
+
+		return (url, _broker.StartRun(run.Id, run.Repo, folder, e => Publish(run, e)));
+	}
+
+	/// <summary>A broker event: stored and pushed; the idle timer is paused while a request waits for the user.</summary>
+	private void Publish(Run run, ChatEvent e)
+	{
+		run.Waiting(e.Kind == ChatEventKinds.Permission ? 1 : e.Kind == ChatEventKinds.PermissionResolved ? -1 : 0);
+		Store(run, [.. Parts(run, e)]);
+	}
 
 	private void Subscribe(string repo, EnvelopeContext context)
 	{
@@ -242,7 +279,7 @@ public sealed class ChatService : IDisposable
 		CancellationTokenSource? idle = null;
 		try
 		{
-			idle = new CancellationTokenSource(_runner.IdleTimeout, _time);
+			idle = run.StartIdle(_runner.IdleTimeout, _time);
 			Push(run.Repo, Envelope.Create(MessageTypes.ChatSessions, Sessions(run.Repo)));
 			try
 			{
@@ -270,6 +307,9 @@ public sealed class ChatService : IDisposable
 		}
 		finally
 		{
+			// Pending approvals are denied (and stored) before the result.
+			_broker.CancelRun(run.Id);
+
 			// The process never outlives its run; killing also closes the run's job, which ends children it left in the background.
 			process?.Kill();
 			process?.Dispose();
@@ -291,7 +331,7 @@ public sealed class ChatService : IDisposable
 				{
 					await foreach (var line in process.Lines.WithCancellation(stop.Token))
 					{
-						idle.CancelAfter(_runner.IdleTimeout);
+						run.Touch();
 						result = Handle(run, parser.Feed(line));
 						if (parser.ClaudeSessionId is { } claudeId && claudeId != run.ClaudeId)
 						{
@@ -377,7 +417,12 @@ public sealed class ChatService : IDisposable
 	{
 		if (batch.Count > 0)
 		{
-			PushEvents(run.Repo, _store.Append(run.SessionId!, batch));
+			// The broker stores from the approval request's thread: one writer at a time keeps the pushes in seq order.
+			lock (run.StoreLock)
+			{
+				PushEvents(run.Repo, _store.Append(run.SessionId!, batch));
+			}
+
 			batch.Clear();
 		}
 	}
@@ -412,6 +457,10 @@ public sealed class ChatService : IDisposable
 	private sealed class Run(string repo, string id, CancellationToken stopping) : IDisposable
 	{
 		private readonly CancellationTokenSource _cancel = CancellationTokenSource.CreateLinkedTokenSource(stopping);
+		private readonly Lock _idleLock = new();
+		private CancellationTokenSource? _idle;
+		private TimeSpan _idleTimeout;
+		private int _waiting;
 
 		public string Repo => repo;
 
@@ -426,6 +475,39 @@ public sealed class ChatService : IDisposable
 		public CancellationToken Token => _cancel.Token;
 
 		public bool CancelRequested { get; private set; }
+
+		public Lock StoreLock { get; } = new();
+
+		/// <summary>Creates the idle timer (the caller disposes it); output (<see cref="Touch"/>) restarts it.</summary>
+		public CancellationTokenSource StartIdle(TimeSpan timeout, TimeProvider time)
+		{
+			lock (_idleLock)
+			{
+				_idleTimeout = timeout;
+				_idle = new CancellationTokenSource(timeout, time);
+				return _idle;
+			}
+		}
+
+		/// <summary>Output arrived: the idle timer restarts unless a permission request is waiting for the user.</summary>
+		public void Touch() => Waiting(0);
+
+		/// <summary>A permission request started (1) or ended (-1): the idle timer is paused while any waits and restarts after the last.</summary>
+		public void Waiting(int change)
+		{
+			lock (_idleLock)
+			{
+				_waiting += change;
+				try
+				{
+					_idle?.CancelAfter(_waiting > 0 ? Timeout.InfiniteTimeSpan : _idleTimeout);
+				}
+				catch (ObjectDisposedException)
+				{
+					// The run has just finished.
+				}
+			}
+		}
 
 		public void RequestCancel()
 		{

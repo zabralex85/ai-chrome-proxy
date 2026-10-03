@@ -19,3 +19,12 @@ The Server starts it as a child process to connect the Cloudflare Tunnel configu
 - SQLite (native library inside `e_sqlite3.dll`) — public domain (https://www.sqlite.org/copyright.html)
 
 The Server keeps the agreed hash per synced file and the project settings in `aicp.db` in the data folder.
+
+## MCP C# SDK (ModelContextProtocol.AspNetCore)
+
+- Files: `ModelContextProtocol.AspNetCore.dll`, `ModelContextProtocol.dll`, `ModelContextProtocol.Core.dll` and `Microsoft.Extensions.AI.Abstractions.dll` (in the Server folder), unmodified.
+- ModelContextProtocol.AspNetCore, ModelContextProtocol and ModelContextProtocol.Core 2.2.0 — Copyright Model Context Protocol a Series of LF Projects, LLC; License: Apache License 2.0 (https://licenses.nuget.org/Apache-2.0)
+- Microsoft.Extensions.AI.Abstractions 10.8.3 (a dependency of ModelContextProtocol.Core) — Copyright Microsoft Corporation; License: MIT (https://licenses.nuget.org/MIT)
+- Source: https://github.com/modelcontextprotocol/csharp-sdk (tag `v2.2.0`)
+
+The Server hosts the loopback-only approval endpoint (`/mcp/approve`) that Claude Code calls to ask for permissions in the chat.
