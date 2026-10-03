@@ -15,6 +15,9 @@ public enum FolderStatus
 	/// <summary>A folder is remembered but the browser needs a click to grant access again.</summary>
 	NeedsPermission,
 
+	/// <summary>The browser cannot open folders (no File System Access API, or not a secure context): nothing can be synced.</summary>
+	Unsupported,
+
 	Ready,
 }
 
@@ -47,6 +50,10 @@ public sealed partial class SyncEngine(ITransport transport, IFolderAccess folde
 	public const int MaxUploadsInFlight = 16;
 
 	public const string ConnectionLost = "Connection lost — reconnecting…";
+
+	/// <summary><see cref="Problem"/> in a browser that cannot open folders.</summary>
+	public const string Unsupported =
+		"This browser cannot open folders (the File System Access API is missing). Use Google Chrome or Microsoft Edge 123 or later on a desktop computer; in Brave, enable brave://flags/#file-system-access-api and relaunch.";
 
 	public static readonly TimeSpan ScanInterval = TimeSpan.FromSeconds(10);
 	public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
@@ -185,6 +192,15 @@ public sealed partial class SyncEngine(ITransport transport, IFolderAccess folde
 		transport.StateChanged += OnTransportStateChanged;
 		transport.Received -= OnReceived;
 		transport.Received += OnReceived;
+		if (!await folder.IsSupportedAsync())
+		{
+			Folder = FolderStatus.Unsupported;
+			Problem = Unsupported;
+			Log(SyncActivityKind.Error, Unsupported);
+			Raise();
+			return;
+		}
+
 		await folder.WatchVisibilityAsync(SetVisible);
 		if (await folder.RestoreAsync() is { } grant)
 		{
@@ -198,7 +214,18 @@ public sealed partial class SyncEngine(ITransport transport, IFolderAccess folde
 	/// <summary>Shows the picker (call it straight from the click); a new folder starts a fresh session (full manifest).</summary>
 	public async Task OpenFolderAsync()
 	{
-		if (await folder.PickAsync() is not { } name)
+		string? name;
+		try
+		{
+			name = await folder.PickAsync();
+		}
+		catch (JSException ex)
+		{
+			ClickFailed("Could not open the folder", ex);
+			return;
+		}
+
+		if (name is null)
 		{
 			return;
 		}
@@ -222,7 +249,18 @@ public sealed partial class SyncEngine(ITransport transport, IFolderAccess folde
 	/// <summary>Asks the browser for access to the remembered folder again (call it straight from the <b>Restore access</b> click).</summary>
 	public async Task RestoreAccessAsync()
 	{
-		if (await folder.RequestAccessAsync())
+		bool granted;
+		try
+		{
+			granted = await folder.RequestAccessAsync();
+		}
+		catch (JSException ex)
+		{
+			ClickFailed("Could not get access to the folder", ex);
+			return;
+		}
+
+		if (granted)
 		{
 			Folder = FolderStatus.Ready;
 			Blocked = false;
@@ -272,11 +310,11 @@ public sealed partial class SyncEngine(ITransport transport, IFolderAccess folde
 
 	/// <summary>
 	/// One cycle: open the session (when there is none) or apply the server's changes, scan, tell the server (full manifest or delta),
-	/// upload what it needs. Returns at once while another cycle runs or while <see cref="Blocked"/>. Never throws except on cancellation.
+	/// upload what it needs. Returns at once while another cycle runs, while <see cref="Blocked"/> or in a browser that cannot open folders. Never throws except on cancellation.
 	/// </summary>
 	public async Task SyncOnceAsync(CancellationToken ct)
 	{
-		if (Blocked || Interlocked.Exchange(ref _cycleRunning, 1) == 1)
+		if (Blocked || Folder == FolderStatus.Unsupported || Interlocked.Exchange(ref _cycleRunning, 1) == 1)
 		{
 			return;
 		}
@@ -461,6 +499,17 @@ public sealed partial class SyncEngine(ITransport transport, IFolderAccess folde
 		Log(
 			SyncActivityKind.PassFinished,
 			string.Create(CultureInfo.InvariantCulture, $"Uploaded {FileCount(uploaded.Count)}, {uploaded.Sum(e => e.Size):N0} bytes in {duration.TotalSeconds:0.0} s."));
+	}
+
+	/// <summary>
+	/// A click's browser call failed (a policy refusing the picker or the permission, a missing API): shown and logged instead of
+	/// reaching the renderer as an unhandled exception. Only the first line of the browser's message (no stack).
+	/// </summary>
+	private void ClickFailed(string what, JSException ex)
+	{
+		Problem = $"{what}: {ex.Message.Split('\n')[0].Trim()}";
+		Log(SyncActivityKind.Error, Problem);
+		Raise();
 	}
 
 	private void Log(SyncActivityKind kind, string text)

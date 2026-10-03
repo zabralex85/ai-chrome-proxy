@@ -3,12 +3,23 @@
 <aside class="panel panel-left @(Collapsed ? "collapsed" : null)" data-testid="file-tree" aria-label="Files">
     <header class="panel-header"><span class="panel-title">Explorer</span></header>
     <div class="panel-body" data-testid="explorer">
-        @if (Engine.Folder == FolderStatus.None)
+        @if (Engine.Folder == FolderStatus.Unsupported)
+        {
+            <div class="empty-state" role="alert" data-testid="unsupported">
+                <Icon Name="warning" Size="32" Class="empty-icon" />
+                <p>@SyncEngine.Unsupported</p>
+            </div>
+        }
+        else if (Engine.Folder == FolderStatus.None)
         {
             <div class="empty-state">
                 <Icon Name="folder-open" Size="32" Class="empty-icon" />
                 <p>No folder is open. Pick the repository folder to mirror it to the home server.</p>
                 <button type="button" class="button primary" data-testid="open-folder" @onclick="Engine.OpenFolderAsync">Open folder</button>
+                @if (Engine.Problem is { } problem)
+                {
+                    <p class="state-error" role="alert" data-testid="open-folder-error">@problem</p>
+                }
             </div>
         }
         else

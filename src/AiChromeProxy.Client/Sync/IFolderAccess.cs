@@ -3,6 +3,9 @@ namespace AiChromeProxy.Client.Sync;
 /// <summary>The picked folder in the browser (File System Access API; read access, write access only once granted); <see cref="JsFolderAccess"/> in the app, a fake in tests.</summary>
 public interface IFolderAccess
 {
+	/// <summary>Whether this browser can open folders at all: a secure context with the File System Access API (desktop Chrome, Edge).</summary>
+	Task<bool> IsSupportedAsync();
+
 	/// <summary>Shows the folder picker; the folder name, or null when the user cancelled.</summary>
 	Task<string?> PickAsync();
 

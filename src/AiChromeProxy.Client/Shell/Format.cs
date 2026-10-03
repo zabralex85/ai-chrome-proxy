@@ -7,6 +7,9 @@ namespace AiChromeProxy.Client.Shell;
 /// <summary>Texts the shell shows; culture-independent so the UI reads the same everywhere.</summary>
 public static class Format
 {
+	/// <summary>Status text while the browser cannot open folders.</summary>
+	public const string BrowserNotSupported = "Browser not supported";
+
 	/// <summary>Thousands separated by a no-break space: "1 234".</summary>
 	private static readonly NumberFormatInfo Grouped = new() { NumberGroupSeparator = " ", NumberDecimalSeparator = "." };
 
@@ -62,6 +65,11 @@ public static class Format
 			return "Access needed";
 		}
 
+		if (folder == FolderStatus.Unsupported)
+		{
+			return BrowserNotSupported;
+		}
+
 		return phase switch
 		{
 			SyncPhase.Scanning => "Scanning…",
@@ -83,14 +91,17 @@ public static class Format
 			: null;
 
 	/// <summary>What the collapsed file tree hides that needs the user: "Access needed", "3 errors", or null when nothing does.</summary>
-	public static string? Attention(FolderStatus folder, int errors) => folder == FolderStatus.NeedsPermission
-		? "Access needed"
-		: errors switch
+	public static string? Attention(FolderStatus folder, int errors) => folder switch
+	{
+		FolderStatus.NeedsPermission => "Access needed",
+		FolderStatus.Unsupported => BrowserNotSupported,
+		_ => errors switch
 		{
 			0 => null,
 			1 => "1 error",
 			_ => $"{Count(errors)} errors",
-		};
+		},
+	};
 
 	/// <summary>Icon kind for a file name (drives the icon colour): code, web, data, doc, image or file.</summary>
 	public static string FileKind(string name) => Path.GetExtension(name).ToLowerInvariant() switch

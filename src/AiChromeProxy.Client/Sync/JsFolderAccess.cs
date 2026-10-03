@@ -13,6 +13,8 @@ public sealed class JsFolderAccess(IJSRuntime js) : IFolderAccess, IAsyncDisposa
 	/// <summary>Imports the module at startup, so a click's <see cref="PickAsync"/> reaches <c>showDirectoryPicker</c> within the click's user activation.</summary>
 	public async Task InitAsync() => await ModuleAsync();
 
+	public async Task<bool> IsSupportedAsync() => await (await ModuleAsync()).InvokeAsync<bool>("supported");
+
 	public async Task<string?> PickAsync() => await (await ModuleAsync()).InvokeAsync<string?>("pick");
 
 	public async Task<FolderGrant?> RestoreAsync() => await (await ModuleAsync()).InvokeAsync<FolderGrant?>("restore");

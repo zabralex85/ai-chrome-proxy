@@ -2,7 +2,7 @@
 
 The folder you open in Chrome is mirrored to the home server and kept in sync. Edits made on the server (by Claude or by hand) come back to the folder (the [back channel](#back-channel)). Design: [sync and shell](superpowers/specs/2026-10-03-sync-and-shell-design.md), [back channel](superpowers/specs/2026-10-03-back-channel-design.md).
 
-Requires **Chrome 123 or newer** (File System Access API; the theme uses CSS `light-dark()`). The browser code is strict TypeScript (`src/AiChromeProxy.Client/Scripts`) compiled by `dotnet build`; no Node.js is needed.
+Requires **Chrome or Edge 123 or newer** on a desktop (File System Access API; the theme uses CSS `light-dark()`). Brave has the API switched off: enable `brave://flags/#file-system-access-api` and relaunch. Other browsers show "This browser cannot open folders" instead of the **Open folder** button. The browser code is strict TypeScript (`src/AiChromeProxy.Client/Scripts`) compiled by `dotnet build`; no Node.js is needed.
 
 ## The app shell
 

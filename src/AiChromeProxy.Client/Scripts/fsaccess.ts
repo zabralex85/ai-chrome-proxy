@@ -132,6 +132,11 @@ function toHex(buffer: ArrayBuffer): string {
 }
 
 /** Shows the folder picker; returns the folder name, or null when the user cancelled. The handle is kept in IndexedDB if possible. */
+/** Whether this browser can open folders: a secure context with the File System Access API (desktop Chrome, Edge). */
+export function supported(): boolean {
+    return isSecureContext && 'showDirectoryPicker' in window;
+}
+
 export async function pick(): Promise<string | null> {
     let handle: FileSystemDirectoryHandle;
     try {
