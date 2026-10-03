@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AiChromeProxy.Infrastructure.Hosting;
@@ -66,18 +68,39 @@ public static class SettingsFile
 		return section;
 	}
 
-	/// <summary>Reads the file (a broken one counts as empty), lets <paramref name="change"/> set values, then writes it atomically: a temporary file, then a replace.</summary>
-	/// <exception cref="IOException">The file could not be written; the message names it. The old file is left as it was.</exception>
+	/// <summary>
+	/// Reads the file (a broken one counts as empty), lets <paramref name="change"/> set values, then writes it atomically: a temporary file, then a replace.
+	/// It holds the tunnel token, so the folder is made safe first (<see cref="ServiceSetup.PrepareSettingsDirectory"/>) and the temporary file is
+	/// created with its own protected DACL: the replaced file is never readable by other users, whatever the old one allowed.
+	/// </summary>
+	/// <exception cref="IOException">The folder is unsafe or the file could not be written; the message names it. The old file is left as it was.</exception>
 	public static void Update(DataDirectory dataDir, Action<JsonObject> change)
 	{
 		var settings = LoadOrEmpty(dataDir);
 		change(settings);
 
-		Directory.CreateDirectory(dataDir.Root);
+		var user = WindowsIdentity.GetCurrent().User!;
+		try
+		{
+			ServiceSetup.PrepareSettingsDirectory(dataDir, user, DataDirectoryGuard.OwnerOf);
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+		{
+			throw CannotWrite(dataDir, ex);
+		}
+
 		var tmpPath = dataDir.SettingsFile + ".tmp";
 		try
 		{
-			File.WriteAllText(tmpPath, settings.ToJsonString(Indented));
+			// The DACL of an existing file would be kept: start from a new one.
+			File.Delete(tmpPath);
+			var security = new FileSecurity();
+			security.SetSecurityDescriptorSddlForm(ServiceSetup.SettingsFileDacl(user), AccessControlSections.Access);
+			using (var writer = new StreamWriter(new FileInfo(tmpPath).Create(FileMode.CreateNew, FileSystemRights.Write, FileShare.None, 4096, FileOptions.None, security)))
+			{
+				writer.Write(settings.ToJsonString(Indented));
+			}
+
 			File.Move(tmpPath, dataDir.SettingsFile, overwrite: true);
 		}
 		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -91,7 +114,9 @@ public static class SettingsFile
 				// Best effort; the original failure is what the user needs to see.
 			}
 
-			throw new IOException($"Could not write {dataDir.SettingsFile}: {ex.Message}", ex);
+			throw CannotWrite(dataDir, ex);
 		}
 	}
+
+	private static IOException CannotWrite(DataDirectory dataDir, Exception ex) => new($"Could not write {dataDir.SettingsFile}: {ex.Message}", ex);
 }

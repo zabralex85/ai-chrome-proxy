@@ -100,6 +100,40 @@ public static class ServiceSetup
 	}
 
 	/// <summary>
+	/// Before the tray (not elevated) writes the settings file, which holds the tunnel token, possibly before any install: a missing
+	/// <c>&lt;DataDir&gt;</c> is created with the <see cref="DataDirectoryDacl"/> of <paramref name="user"/>, one the user owns gets it as
+	/// install writes it, and one owned by Administrators or SYSTEM (an install made it) must already be protected. Links and untrusted owners are refused.
+	/// </summary>
+	public static void PrepareSettingsDirectory(DataDirectory dataDir, SecurityIdentifier user, Func<string, SecurityIdentifier?> ownerOf)
+	{
+		if (!Directory.Exists(dataDir.Root))
+		{
+			// Created protected: inheriting the %ProgramData% ACEs, even briefly, would let other users read or add files.
+			var security = new DirectorySecurity();
+			security.SetSecurityDescriptorSddlForm(DataDirectoryDacl(user), AccessControlSections.Access);
+			Directory.CreateDirectory(Path.GetDirectoryName(dataDir.Root)!);
+			security.CreateDirectory(dataDir.Root);
+		}
+
+		if (ownerOf(dataDir.Root) == user)
+		{
+			PrepareDataDirectory(dataDir, user, user, ownerOf);
+			return;
+		}
+
+		// Not ours: the user cannot change its DACL.
+		EnsureDataDirectorySafe(dataDir, user, user, ownerOf);
+		if (!new DirectoryInfo(dataDir.Root).GetAccessControl(AccessControlSections.Access).AreAccessRulesProtected)
+		{
+			throw new InvalidOperationException($"{dataDir.Root} is not protected; run Install service, or delete the folder, and retry.");
+		}
+	}
+
+	/// <summary>The settings file's own protected DACL, set when it is created: SYSTEM and Administrators Full Control, <paramref name="user"/> Modify.</summary>
+	public static string SettingsFileDacl(SecurityIdentifier user) =>
+		new RawSecurityDescriptor($"D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1301bf;;;{user.Value})").GetSddlForm(AccessControlSections.Access);
+
+	/// <summary>
 	/// The protected DACL (no ACEs inherited from <c>%ProgramData%</c>) of the root and <c>logs</c>, as normalized SDDL: SYSTEM and Administrators
 	/// Full Control, the service account Modify, all inherited by new children; nothing for Users, Authenticated Users or Everyone.
 	/// </summary>
@@ -107,14 +141,18 @@ public static class ServiceSetup
 		new RawSecurityDescriptor($"D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;{account.Value})").GetSddlForm(AccessControlSections.Access);
 
 	/// <summary>Throws when <c>&lt;DataDir&gt;</c> or its <c>logs</c> already exists as a link, or it or an entry in it has an untrusted owner (see <see cref="IsTrustedOwner"/>).</summary>
-	public static void EnsureDataDirectorySafe(DataDirectory dataDir, SecurityIdentifier account, SecurityIdentifier controlUser)
+	public static void EnsureDataDirectorySafe(DataDirectory dataDir, SecurityIdentifier account, SecurityIdentifier controlUser) =>
+		EnsureDataDirectorySafe(dataDir, account, controlUser, DataDirectoryGuard.OwnerOf);
+
+	/// <summary>As above, reading owners through <paramref name="ownerOf"/>.</summary>
+	public static void EnsureDataDirectorySafe(DataDirectory dataDir, SecurityIdentifier account, SecurityIdentifier controlUser, Func<string, SecurityIdentifier?> ownerOf)
 	{
 		foreach (var path in new[] { dataDir.Root, dataDir.Logs })
 		{
-			EnsureDirectorySafe(path, account, controlUser, DataDirectoryGuard.OwnerOf);
+			EnsureDirectorySafe(path, account, controlUser, ownerOf);
 			if (Directory.Exists(path))
 			{
-				EnsureEntriesTrusted(path, account, controlUser, DataDirectoryGuard.OwnerOf);
+				EnsureEntriesTrusted(path, account, controlUser, ownerOf);
 			}
 		}
 	}

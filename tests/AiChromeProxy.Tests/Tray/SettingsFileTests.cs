@@ -1,3 +1,5 @@
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AiChromeProxy.Infrastructure.Hosting;
@@ -7,6 +9,8 @@ namespace AiChromeProxy.Tests.Tray;
 
 public sealed class SettingsFileTests : IDisposable
 {
+	private static readonly SecurityIdentifier Current = WindowsIdentity.GetCurrent().User!;
+
 	private readonly DataDirectory _dataDir = new(Path.Combine(Path.GetTempPath(), "aicp-tests", Guid.NewGuid().ToString("N")));
 
 	private string TmpPath => _dataDir.SettingsFile + ".tmp";
@@ -152,12 +156,76 @@ public sealed class SettingsFileTests : IDisposable
 		Assert.False(File.Exists(TmpPath));
 	}
 
+	[Fact]
+	public void Update_NoFolderYet_FolderAndFileProtectedFromTheFirstSave()
+	{
+		SettingsFile.Update(_dataDir, s => SettingsFile.Section(s, "Tunnel")["Token"] = "t");
+
+		AssertProtectedWithoutBroadGroups(_dataDir.Root);
+		AssertProtectedWithoutBroadGroups(_dataDir.SettingsFile);
+	}
+
+	[Fact]
+	public void Update_WorldReadableFolderAndFile_BothProtectedAfterwards()
+	{
+		Directory.CreateDirectory(_dataDir.Root);
+		Assert.SkipWhen(DataDirectoryGuard.OwnerOf(_dataDir.Root) != Current, "Running elevated: the folder is owned by Administrators, which the tray never fixes.");
+
+		// As %ProgramData% hands it down: Users may read everything below.
+		var folder = new DirectoryInfo(_dataDir.Root);
+		var acl = folder.GetAccessControl();
+		acl.AddAccessRule(new FileSystemAccessRule(
+			new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null),
+			FileSystemRights.ReadAndExecute,
+			InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
+			PropagationFlags.None,
+			AccessControlType.Allow));
+		folder.SetAccessControl(acl);
+		WriteFile("{}");
+		Assert.Contains(Aces(_dataDir.SettingsFile), a => a.SecurityIdentifier.IsWellKnown(WellKnownSidType.BuiltinUsersSid));
+
+		SettingsFile.Update(_dataDir, s => SettingsFile.Section(s, "Tunnel")["Token"] = "t");
+
+		AssertProtectedWithoutBroadGroups(_dataDir.Root);
+		AssertProtectedWithoutBroadGroups(_dataDir.SettingsFile);
+		Assert.Equal("t", (string?)ReadFile()["Tunnel"]?["Token"]);
+	}
+
+	[Fact]
+	public void Update_FolderIsAJunction_Refused_NothingWrittenInTarget()
+	{
+		var target = Directory.CreateDirectory(_dataDir.Root + "-target").FullName;
+		ServiceSetupSecurityTests.Junction(_dataDir.Root, target);
+		try
+		{
+			var ex = Assert.Throws<IOException>(() => SettingsFile.Update(_dataDir, s => s["A"] = 1));
+
+			Assert.Equal($"Could not write {_dataDir.SettingsFile}: {_dataDir.Root} is a link; delete it and retry.", ex.Message);
+			Assert.Empty(Directory.GetFileSystemEntries(target));
+		}
+		finally
+		{
+			Directory.Delete(_dataDir.Root);
+			Directory.Delete(target);
+		}
+	}
+
 	public void Dispose()
 	{
 		if (Directory.Exists(_dataDir.Root))
 		{
 			Directory.Delete(_dataDir.Root, recursive: true);
 		}
+	}
+
+	private static List<CommonAce> Aces(string path) => new RawSecurityDescriptor(RawDacl.Sddl(path)).DiscretionaryAcl!.Cast<CommonAce>().ToList();
+
+	private static void AssertProtectedWithoutBroadGroups(string path)
+	{
+		Assert.True(new RawSecurityDescriptor(RawDacl.Sddl(path)).ControlFlags.HasFlag(ControlFlags.DiscretionaryAclProtected), path);
+		Assert.DoesNotContain(Aces(path), a => a.SecurityIdentifier.IsWellKnown(WellKnownSidType.BuiltinUsersSid)
+			|| a.SecurityIdentifier.IsWellKnown(WellKnownSidType.AuthenticatedUserSid)
+			|| a.SecurityIdentifier.IsWellKnown(WellKnownSidType.WorldSid));
 	}
 
 	private void WriteFile(string json)
