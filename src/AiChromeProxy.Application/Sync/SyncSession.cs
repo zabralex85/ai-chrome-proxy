@@ -9,46 +9,44 @@ namespace AiChromeProxy.Application.Sync;
 
 /// <summary>
 /// One connection's sync state: the open repo, the paths of the manifest being received, the files requested with
-/// <c>sync.need</c> and the upload in progress. SignalR runs one hub invocation per connection at a time, so a session is never
-/// used concurrently; uploads are sequential (ponytail: one upload at a time, parallelise if first syncs of large repos are too slow).
+/// <c>sync.need</c> and the upload in progress. Messages are handled one at a time; <see cref="Dispose"/> (the connection closed)
+/// may run while a message is still being handled, and the upload that message leaves is then discarded when it finishes. Uploads are
+/// sequential (ponytail: one upload at a time, parallelise if first syncs of large repos are too slow).
 /// </summary>
 public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider time) : IDisposable
 {
 	private readonly HashSet<string> _manifestPaths = new(StringComparer.OrdinalIgnoreCase);
 	private readonly Dictionary<string, ManifestEntry> _expected = new(StringComparer.Ordinal);
+	private readonly SemaphoreSlim _gate = new(1, 1);
+	private volatile bool _disposed;
 	private string? _repo;
 	private Upload? _upload;
 	private int _storedFiles;
 	private long _storedBytes;
 	private long _started;
+	private int _passNeed;
 
+	/// <summary>Handles one sync message; after <see cref="Dispose"/> messages are ignored (no reply).</summary>
 	public async Task<Envelope?> HandleAsync(Envelope request, CancellationToken ct)
 	{
-		switch (request.Type)
+		await _gate.WaitAsync(ct);
+		try
 		{
-			case MessageTypes.SyncOpen:
-				return Open(Read<SyncOpenPayload>(request), request);
-			case MessageTypes.SyncManifest:
-				return await ManifestAsync(Read<SyncManifestPayload>(request), request, ct);
-			case MessageTypes.SyncDelta:
-				return await DeltaAsync(Read<SyncDeltaPayload>(request), request, ct);
-			case MessageTypes.SyncChunk:
-				try
-				{
-					return await ChunkAsync(Read<SyncChunkPayload>(request), request, ct);
-				}
-				catch
-				{
-					DiscardUpload();
-					throw;
-				}
-
-			default:
-				throw new EnvelopeException(ErrorCodes.UnknownType, $"Not a sync message: {request.Type}");
+			return _disposed ? null : await RouteAsync(request, ct);
+		}
+		finally
+		{
+			_gate.Release();
+			DiscardIfDisposed();
 		}
 	}
 
-	public void Dispose() => DiscardUpload();
+	/// <summary>Discards the unfinished upload now, or as soon as the message being handled finishes.</summary>
+	public void Dispose()
+	{
+		_disposed = true;
+		DiscardIfDisposed();
+	}
 
 	private static EnvelopeException BadRequest(string message) => new(ErrorCodes.BadRequest, message);
 
@@ -95,11 +93,38 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 		}
 	}
 
+	private async Task<Envelope?> RouteAsync(Envelope request, CancellationToken ct)
+	{
+		switch (request.Type)
+		{
+			case MessageTypes.SyncOpen:
+				return Open(Read<SyncOpenPayload>(request), request);
+			case MessageTypes.SyncManifest:
+				return await ManifestAsync(Read<SyncManifestPayload>(request), request, ct);
+			case MessageTypes.SyncDelta:
+				return await DeltaAsync(Read<SyncDeltaPayload>(request), request, ct);
+			case MessageTypes.SyncChunk:
+				try
+				{
+					return await ChunkAsync(Read<SyncChunkPayload>(request), request, ct);
+				}
+				catch
+				{
+					DiscardUpload();
+					throw;
+				}
+
+			default:
+				throw new EnvelopeException(ErrorCodes.UnknownType, $"Not a sync message: {request.Type}");
+		}
+	}
+
 	private Envelope Open(SyncOpenPayload payload, Envelope request)
 	{
 		var repo = RepoName.Sanitize(payload.Repo) ?? throw BadRequest("sync.open needs the folder name in 'repo'.");
 		DiscardUpload();
 		_manifestPaths.Clear();
+		_passNeed = 0;
 		_expected.Clear();
 		_repo = repo;
 		ResetStats();
@@ -108,31 +133,50 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 
 	private async Task<Envelope> ManifestAsync(SyncManifestPayload payload, Envelope request, CancellationToken ct)
 	{
-		var repo = CheckRepo(payload.Repo);
-		var entries = payload.Entries ?? throw BadRequest("sync.manifest needs 'entries'.");
-		if (_manifestPaths.Count + entries.Count > SyncLimits.MaxFiles)
+		try
 		{
-			throw new EnvelopeException(ErrorCodes.TooLarge, $"A manifest may list at most {SyncLimits.MaxFiles} files.");
-		}
+			var repo = CheckRepo(payload.Repo);
+			var entries = payload.Entries ?? throw BadRequest("sync.manifest needs 'entries'.");
+			if (_manifestPaths.Count + entries.Count > SyncLimits.MaxFiles)
+			{
+				throw new EnvelopeException(ErrorCodes.TooLarge, $"A manifest may list at most {SyncLimits.MaxFiles} files.");
+			}
 
-		var need = await NeedAsync(repo, entries, ct);
-		_manifestPaths.UnionWith(entries.Select(e => e.Path));
-		if (payload.Final)
+			entries.ToList().ForEach(Validate);
+			var need = await NeedAsync(repo, entries, ct);
+			_manifestPaths.UnionWith(entries.Select(e => e.Path));
+			_passNeed += need.Count;
+			if (payload.Final)
+			{
+				// Case-insensitive: the mirror is on Windows, where "Readme.md" on disk is the manifest's "README.md".
+				var stale = store.ListFiles(repo).Where(p => !_manifestPaths.Contains(p)).ToList();
+				if (_manifestPaths.Count == 0 && stale.Count > 0)
+				{
+					// A browser that lost access to the folder must never wipe the mirror.
+					throw BadRequest("An empty folder would delete the whole mirror; refusing.");
+				}
+
+				stale.ForEach(p => store.Delete(repo, p));
+				store.DeleteStaleTemps(repo, _upload?.Entry.Path);
+				logger.LogInformation(
+					"Sync {Repo}: manifest of {Files} files, {Need} to upload, {Deleted} deleted",
+					repo,
+					_manifestPaths.Count,
+					_passNeed,
+					stale.Count);
+				_manifestPaths.Clear();
+				_passNeed = 0;
+			}
+
+			return Reply(MessageTypes.SyncNeed, new SyncNeedPayload(repo, need), request);
+		}
+		catch
 		{
-			// Case-insensitive: the mirror is on Windows, where "Readme.md" on disk is the manifest's "README.md".
-			var stale = store.ListFiles(repo).Where(p => !_manifestPaths.Contains(p)).ToList();
-			stale.ForEach(p => store.Delete(repo, p));
-			store.DeleteStaleTemps(repo, _upload?.Entry.Path);
-			logger.LogInformation(
-				"Sync {Repo}: manifest of {Files} files, {Need} to upload, {Deleted} deleted",
-				repo,
-				_manifestPaths.Count,
-				_expected.Count,
-				stale.Count);
+			// A refused page ends the pass; the client starts the next one from the first page.
 			_manifestPaths.Clear();
+			_passNeed = 0;
+			throw;
 		}
-
-		return Reply(MessageTypes.SyncNeed, new SyncNeedPayload(repo, need), request);
 	}
 
 	private async Task<Envelope> DeltaAsync(SyncDeltaPayload payload, Envelope request, CancellationToken ct)
@@ -150,6 +194,13 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 			}
 		}
 
+		upserts.ToList().ForEach(Validate);
+		var deleted = new HashSet<string>(deletes, StringComparer.OrdinalIgnoreCase);
+		if (upserts.FirstOrDefault(e => deleted.Contains(e.Path)) is { } both)
+		{
+			throw BadRequest($"'{both.Path}' is both upserted and deleted.");
+		}
+
 		var need = await NeedAsync(repo, upserts, ct);
 		foreach (var path in deletes)
 		{
@@ -160,24 +211,34 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 		return Reply(MessageTypes.SyncNeed, new SyncNeedPayload(repo, need), request);
 	}
 
-	/// <summary>Validates the entries and returns the paths whose mirror content differs; those are expected as chunks.</summary>
+	/// <summary>
+	/// Returns the paths of the (validated) entries whose mirror content differs; those are expected as chunks. Refuses when more
+	/// than <see cref="SyncLimits.MaxFiles"/> uploads would be pending, before anything changes.
+	/// </summary>
 	private async Task<List<string>> NeedAsync(string repo, IReadOnlyList<ManifestEntry> entries, CancellationToken ct)
 	{
-		entries.ToList().ForEach(Validate);
-		var need = new List<string>();
+		var same = new List<string>();
+		var changed = new List<ManifestEntry>();
 		foreach (var entry in entries)
 		{
 			if (await store.GetHashAsync(repo, entry.Path, ct) == entry.Sha256)
 			{
-				_expected.Remove(entry.Path);
-				continue;
+				same.Add(entry.Path);
 			}
-
-			_expected[entry.Path] = entry;
-			need.Add(entry.Path);
+			else
+			{
+				changed.Add(entry);
+			}
 		}
 
-		return need;
+		if (_expected.Count + changed.Select(e => e.Path).Distinct().Count(p => !_expected.ContainsKey(p)) > SyncLimits.MaxFiles)
+		{
+			throw new EnvelopeException(ErrorCodes.TooLarge, $"At most {SyncLimits.MaxFiles} files may wait for upload.");
+		}
+
+		same.ForEach(p => _expected.Remove(p));
+		changed.ForEach(e => _expected[e.Path] = e);
+		return [.. changed.Select(e => e.Path)];
 	}
 
 	private async Task<Envelope?> ChunkAsync(SyncChunkPayload payload, Envelope request, CancellationToken ct)
@@ -274,6 +335,24 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 		_storedFiles = 0;
 		_storedBytes = 0;
 		_started = time.GetTimestamp();
+	}
+
+	/// <summary>After <see cref="Dispose"/>: discards the upload unless a message is being handled (that message does it when it finishes).</summary>
+	private void DiscardIfDisposed()
+	{
+		if (!_disposed || !_gate.Wait(0))
+		{
+			return;
+		}
+
+		try
+		{
+			DiscardUpload();
+		}
+		finally
+		{
+			_gate.Release();
+		}
 	}
 
 	private void DiscardUpload()

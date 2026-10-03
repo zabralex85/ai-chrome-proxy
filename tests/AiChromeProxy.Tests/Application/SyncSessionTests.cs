@@ -335,6 +335,112 @@ public sealed class SyncSessionTests : IDisposable
 	}
 
 	[Fact]
+	public async Task EmptyFinalManifest_EmptyMirror_Ok()
+	{
+		await OpenAsync();
+
+		Assert.Empty(await NeedAsync(Manifest(true)));
+	}
+
+	[Fact]
+	public async Task EmptyFinalManifest_NonEmptyMirror_BadRequest_NothingDeleted()
+	{
+		File.WriteAllText(Path.Combine(_repoRoot, "keep.txt"), "k");
+		await OpenAsync();
+		Assert.Empty(await NeedAsync(Manifest(false)));
+
+		var ex = await Assert.ThrowsAsync<EnvelopeException>(() => _session.HandleAsync(Manifest(true), Ct));
+
+		Assert.Equal(ErrorCodes.BadRequest, ex.Code);
+		Assert.Equal("An empty folder would delete the whole mirror; refusing.", ex.Message);
+		Assert.True(File.Exists(Path.Combine(_repoRoot, "keep.txt")));
+	}
+
+	[Fact]
+	public async Task FinalPage_LogsThisPassNeed_NotEarlierPendingUploads()
+	{
+		await OpenAsync();
+		await NeedAsync(Manifest(true, Entry("a.txt", "a"), Entry("c.txt", "c")));
+
+		await NeedAsync(Manifest(true, Entry("b.txt", "b")));
+
+		Assert.Contains(_logger.Messages, m => m.Contains("Sync repo: manifest of 1 files, 1 to upload, 0 deleted", StringComparison.Ordinal));
+	}
+
+	[Fact]
+	public async Task Delta_SamePathUpsertedAndDeleted_BadRequest_NothingChanged()
+	{
+		File.WriteAllText(Path.Combine(_repoRoot, "a.txt"), "old");
+		await OpenAsync();
+
+		await AssertError(ErrorCodes.BadRequest, Envelope.Create(MessageTypes.SyncDelta, new SyncDeltaPayload(Repo, [Entry("a.txt", "new")], ["A.txt"])));
+
+		Assert.Equal("old", File.ReadAllText(Path.Combine(_repoRoot, "a.txt")));
+		await AssertError(ErrorCodes.NotFound, Chunk("a.txt", 0, "new"u8.ToArray(), last: true));
+	}
+
+	[Fact]
+	public async Task Deltas_PendingUploadsBeyondMaxFiles_TooLarge()
+	{
+		var session = new SyncSession(new FakeStore(), _logger, TimeProvider.System);
+		await session.HandleAsync(Envelope.Create(MessageTypes.SyncOpen, new SyncOpenPayload(Repo)), Ct);
+		var half = SyncLimits.MaxFiles / 2;
+
+		await session.HandleAsync(Delta(Enumerable.Range(0, half).Select(i => Entry($"a{i}", "x"))), Ct);
+		await session.HandleAsync(Delta(Enumerable.Range(0, half).Select(i => Entry($"b{i}", "x"))), Ct);
+		await session.HandleAsync(Delta([Entry("a0", "y")]), Ct);
+
+		var ex = await Assert.ThrowsAsync<EnvelopeException>(() => session.HandleAsync(Delta([Entry("c", "x")]), Ct));
+		Assert.Equal(ErrorCodes.TooLarge, ex.Code);
+	}
+
+	[Fact]
+	public async Task Manifest_MaxFilesAcrossPages_TooLarge_NextPassStartsFresh()
+	{
+		var session = new SyncSession(new FakeStore(), _logger, TimeProvider.System);
+		await session.HandleAsync(Envelope.Create(MessageTypes.SyncOpen, new SyncOpenPayload(Repo)), Ct);
+		await session.HandleAsync(Manifest(false, [.. Enumerable.Range(0, SyncLimits.MaxFiles).Select(i => Entry($"f{i}", "x"))]), Ct);
+
+		var ex = await Assert.ThrowsAsync<EnvelopeException>(() => session.HandleAsync(Manifest(true, Entry("one-more", "x")), Ct));
+		Assert.Equal(ErrorCodes.TooLarge, ex.Code);
+
+		var reply = await session.HandleAsync(Manifest(true, Entry("f0", "x")), Ct);
+		Assert.Equal(["f0"], Read<SyncNeedPayload>(reply!).Paths);
+	}
+
+	[Fact]
+	public async Task Dispose_DuringChunk_UploadDiscardedWhenChunkFinishes_LaterCallsIgnored()
+	{
+		using (var entered = new ManualResetEventSlim())
+		{
+			using (var release = new ManualResetEventSlim())
+			{
+				var store = new FakeStore
+				{
+					BeforeCreateTemp = () =>
+					{
+						entered.Set();
+						release.Wait(TimeSpan.FromSeconds(10));
+					},
+				};
+				var session = new SyncSession(store, _logger, TimeProvider.System);
+				await session.HandleAsync(Envelope.Create(MessageTypes.SyncOpen, new SyncOpenPayload(Repo)), Ct);
+				await session.HandleAsync(Manifest(true, Entry("a.txt", "abcd")), Ct);
+
+				var chunk = Task.Run(() => session.HandleAsync(Chunk("a.txt", 0, "ab"u8.ToArray(), last: false), Ct), Ct);
+				Assert.True(entered.Wait(TimeSpan.FromSeconds(10), Ct));
+				session.Dispose();
+				release.Set();
+				await chunk;
+
+				Assert.False(store.Temp!.CanWrite);
+				Assert.Equal(["a.txt"], store.Discarded);
+				Assert.Null(await session.HandleAsync(Manifest(true, Entry("a.txt", "abcd")), Ct));
+			}
+		}
+	}
+
+	[Fact]
 	public async Task NotASyncType_UnknownType()
 	{
 		await AssertError(ErrorCodes.UnknownType, Envelope.Create(MessageTypes.Ping, new { }));
@@ -348,6 +454,9 @@ public sealed class SyncSessionTests : IDisposable
 
 	private static Envelope Manifest(bool final, params ManifestEntry[] entries) =>
 		Envelope.Create(MessageTypes.SyncManifest, new SyncManifestPayload(Repo, entries, final));
+
+	private static Envelope Delta(IEnumerable<ManifestEntry> upserts) =>
+		Envelope.Create(MessageTypes.SyncDelta, new SyncDeltaPayload(Repo, [.. upserts], []));
 
 	private static Envelope Chunk(string path, long offset, byte[] data, bool last, string? sha256 = null) =>
 		Envelope.Create(MessageTypes.SyncChunk, new SyncChunkPayload(Repo, path, offset, SyncData.Encode(data), last, sha256));
@@ -367,5 +476,39 @@ public sealed class SyncSessionTests : IDisposable
 	{
 		var ex = await Assert.ThrowsAsync<EnvelopeException>(() => _session.HandleAsync(request, Ct));
 		Assert.Equal(code, ex.Code);
+	}
+
+	/// <summary>An empty mirror in memory: every file is missing, uploads go to a <see cref="MemoryStream"/>.</summary>
+	private sealed class FakeStore : IMirrorStore
+	{
+		public Action? BeforeCreateTemp { get; init; }
+
+		public MemoryStream? Temp { get; private set; }
+
+		public List<string> Discarded { get; } = [];
+
+		public Task<string?> GetHashAsync(string repo, string path, CancellationToken ct) => Task.FromResult<string?>(null);
+
+		public IReadOnlyList<string> ListFiles(string repo) => [];
+
+		public Stream CreateTemp(string repo, string path)
+		{
+			BeforeCreateTemp?.Invoke();
+			return Temp = new MemoryStream();
+		}
+
+		public void Commit(string repo, string path)
+		{
+		}
+
+		public void DiscardTemp(string repo, string path) => Discarded.Add(path);
+
+		public void DeleteStaleTemps(string repo, string? keep)
+		{
+		}
+
+		public void Delete(string repo, string path)
+		{
+		}
 	}
 }
