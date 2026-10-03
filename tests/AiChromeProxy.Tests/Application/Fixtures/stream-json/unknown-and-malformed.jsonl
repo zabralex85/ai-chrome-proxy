@@ -1,0 +1,8 @@
+{"type":"system","subtype":"init","session_id":"sess-5","cwd":"/srv/mirror/repo","tools":[],"model":"claude-sonnet-4"}
+{"type":"rate_limit_event","info":{"status":"allowed"}}
+this is not json
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hmm"},{"type":"text","text":"ok"}]},"future":{"a":1}}
+[1,2,3]
+{"type":"user","message":{"role":"user","content":"plain string content"}}
+
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"after"}]}}

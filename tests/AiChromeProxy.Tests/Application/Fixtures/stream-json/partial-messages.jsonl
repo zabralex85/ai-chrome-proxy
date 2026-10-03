@@ -1,0 +1,9 @@
+{"type":"system","subtype":"init","session_id":"sess-4","cwd":"/srv/mirror/repo","tools":[],"model":"claude-sonnet-4"}
+{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_1","role":"assistant","content":[]}},"session_id":"sess-4"}
+{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}},"session_id":"sess-4"}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hel"}},"session_id":"sess-4"}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"lo"}},"session_id":"sess-4"}
+{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"a\""}},"session_id":"sess-4"}
+{"type":"stream_event","event":{"type":"content_block_stop","index":0},"session_id":"sess-4"}
+{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"Hello"}]},"session_id":"sess-4"}
+{"type":"stream_event","event":{"type":"message_stop"},"session_id":"sess-4"}

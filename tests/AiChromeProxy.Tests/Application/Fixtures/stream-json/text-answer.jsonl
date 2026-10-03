@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"sess-1","cwd":"/srv/mirror/repo","tools":["Bash","Read"],"model":"claude-sonnet-4"}
+{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"Hello there."}]},"session_id":"sess-1"}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":1234,"num_turns":1,"result":"Hello there.","total_cost_usd":0.0123,"session_id":"sess-1"}
