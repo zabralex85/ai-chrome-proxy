@@ -39,8 +39,8 @@ public sealed class FileSystemMirrorStore(IOptions<MirrorOptions> options) : IMi
 
 	public async Task<string?> GetHashAsync(string repo, string path, CancellationToken ct)
 	{
-		var file = new FileInfo(Resolve(repo, path));
-		if (!file.Exists || file.Attributes.HasFlag(FileAttributes.ReparsePoint))
+		var file = RegularFile(repo, path);
+		if (file is null)
 		{
 			return null;
 		}
@@ -65,6 +65,25 @@ public sealed class FileSystemMirrorStore(IOptions<MirrorOptions> options) : IMi
 			return hash;
 		}
 	}
+
+	public async Task<byte[]?> ReadAsync(string repo, string path, long offset, int count, CancellationToken ct)
+	{
+		var file = RegularFile(repo, path);
+		if (file is null)
+		{
+			return null;
+		}
+
+		using (var stream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+		{
+			stream.Position = Math.Min(offset, stream.Length);
+			var buffer = new byte[Math.Min(count, stream.Length - stream.Position)];
+			var read = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, ct);
+			return read == buffer.Length ? buffer : buffer[..read];
+		}
+	}
+
+	public long GetSize(string repo, string path) => RegularFile(repo, path)?.Length ?? 0;
 
 	public IReadOnlyList<string> ListFiles(string repo)
 	{
@@ -157,6 +176,13 @@ public sealed class FileSystemMirrorStore(IOptions<MirrorOptions> options) : IMi
 
 	private string RepoRoot(string repo) =>
 		RepoName.IsValid(repo) ? Path.Combine(_root, repo) : throw BadRequest("Invalid repo name.");
+
+	/// <summary>The mirror file at a protocol path; null when it is missing, a folder or a link.</summary>
+	private FileInfo? RegularFile(string repo, string path)
+	{
+		var file = new FileInfo(Resolve(repo, path));
+		return file.Exists && !file.Attributes.HasFlag(FileAttributes.ReparsePoint) ? file : null;
+	}
 
 	/// <summary>The absolute path for a protocol path: valid, inside the repo folder, and no link or junction on the way (the repo folder included).</summary>
 	private string Resolve(string repo, string path)

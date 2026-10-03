@@ -9,11 +9,12 @@ namespace AiChromeProxy.Application.Sync;
 
 /// <summary>
 /// One connection's sync state: the open repo, the paths of the manifest being received, the files requested with
-/// <c>sync.need</c> and the upload in progress. Messages are handled one at a time; <see cref="Dispose"/> (the connection closed)
-/// may run while a message is still being handled, and the upload that message leaves is then discarded when it finishes. Uploads are
+/// <c>sync.need</c> and the upload in progress. Each path is decided with <see cref="SyncDecision"/> from the client's hash, the mirror's and
+/// the base kept in <see cref="IProjectStore"/>; what the server changed is pushed (<c>sync.remote</c>) instead of being overwritten or deleted.
+/// Messages are handled one at a time; <see cref="Dispose"/> (the connection closed) may run while a message is still being handled, and the upload that message leaves is then discarded when it finishes. Uploads are
 /// sequential (ponytail: one upload at a time, parallelise if first syncs of large repos are too slow).
 /// </summary>
-public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider time) : IDisposable
+public sealed partial class SyncSession(IMirrorStore store, IProjectStore projects, ILogger logger, TimeProvider time) : IDisposable
 {
 	private const string EmptyMirrorRefusal = "An empty folder would delete the whole mirror; refusing.";
 
@@ -23,6 +24,7 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 	private readonly SemaphoreSlim _gate = new(1, 1);
 	private readonly string _tag = Guid.NewGuid().ToString("N")[..SyncPath.TempTagLength];
 	private volatile bool _disposed;
+	private EnvelopeContext? _context;
 	private string? _repo;
 	private Upload? _upload;
 	private (string Path, Exception Error)? _chunkFailure;
@@ -33,12 +35,19 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 	private long _started;
 	private int _passNeed;
 
-	/// <summary>Handles one sync message; after <see cref="Dispose"/> messages are ignored (no reply).</summary>
-	public async Task<Envelope?> HandleAsync(Envelope request, CancellationToken ct)
+	/// <summary>The repo this session has open (null before <c>sync.open</c>).</summary>
+	public string? Repo => _repo;
+
+	/// <summary>
+	/// Handles one sync message; after <see cref="Dispose"/> messages are ignored (no reply). Pushes (<c>sync.remote</c>) go out through
+	/// <paramref name="context"/>, which is also kept for <see cref="MirrorChangedAsync"/>.
+	/// </summary>
+	public async Task<Envelope?> HandleAsync(Envelope request, EnvelopeContext context, CancellationToken ct)
 	{
 		await _gate.WaitAsync(ct);
 		try
 		{
+			_context = context;
 			return _disposed ? null : await RouteAsync(request, ct);
 		}
 		finally
@@ -94,11 +103,15 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 			throw new EnvelopeException(ErrorCodes.TooLarge, $"'{entry.Path}' is larger than {SyncLimits.MaxFileSize} bytes.");
 		}
 
-		if (entry.Sha256 is not { Length: 64 } || !entry.Sha256.All(char.IsAsciiHexDigitLower))
+		if (!IsSha256(entry.Sha256))
 		{
 			throw BadRequest($"'{entry.Path}' needs a SHA-256 as 64 lower-case hex characters.");
 		}
 	}
+
+	private static bool IsSha256(string? hash) => hash is { Length: 64 } && hash.All(char.IsAsciiHexDigitLower);
+
+	private static string CheckPath(string? path) => SyncPath.GetError(path) is { } error ? throw BadRequest(error) : path!;
 
 	private async Task<Envelope?> RouteAsync(Envelope request, CancellationToken ct)
 	{
@@ -125,6 +138,10 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 					throw;
 				}
 
+			case MessageTypes.SyncFetch:
+				return await FetchAsync(Read<SyncFetchPayload>(request), request, ct);
+			case MessageTypes.SyncAck:
+				return Ack(Read<SyncAckPayload>(request), request);
 			default:
 				throw new EnvelopeException(ErrorCodes.UnknownType, $"Not a sync message: {request.Type}");
 		}
@@ -166,32 +183,50 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 				throw BadRequest(keepError);
 			}
 
-			var need = await NeedAsync(repo, entries, ct);
+			var batch = await BeginAsync(repo, ct);
+			var need = await NeedAsync(batch, entries, ct);
 			_manifestPaths.UnionWith(entries.Select(e => e.Path));
 			_keep.UnionWith(keep);
 			_passNeed += need.Count;
 			if (payload.Final)
 			{
 				// Case-insensitive: the mirror is on Windows, where "Readme.md" on disk is the manifest's "README.md".
-				// What the browser could not read, list or sync (keep) stays as it is.
-				var stale = store.ListFiles(repo).Where(p => !_manifestPaths.Contains(p) && !SyncPath.IsKept(p, _keep)).ToList();
-				if (_manifestPaths.Count + _keep.Count == 0 && stale.Count > 0)
+				// What the browser could not read, list or sync (keep) and what is excluded (server-only files such as bin/) stays as it is.
+				var files = store.ListFiles(repo);
+				var stale = files.Where(p => !_manifestPaths.Contains(p) && !SyncPath.IsKept(p, _keep) && !batch.Rules.IsIgnored(p));
+				var deletes = await DecideAbsentAsync(batch, stale, ct);
+				if (_manifestPaths.Count + _keep.Count == 0 && deletes.Count > 0)
 				{
 					// A browser that lost access to the folder must never wipe the mirror.
 					throw BadRequest(EmptyMirrorRefusal);
 				}
 
-				stale.ForEach(p => store.Delete(repo, p));
+				Delete(batch, deletes);
+
+				// Bases of paths that neither side has any more.
+				var onMirror = new HashSet<string>(files, StringComparer.OrdinalIgnoreCase);
+				foreach (var path in batch.Bases.Keys.Where(p => !_manifestPaths.Contains(p) && !onMirror.Contains(p)))
+				{
+					batch.BaseChanges[path] = null;
+				}
+
 				store.DeleteStaleTemps(repo, _upload?.Entry.Path, _tag);
 				logger.LogInformation(
 					"Sync {Repo}: manifest of {Files} files, {Need} to upload, {Deleted} deleted",
 					repo,
 					_manifestPaths.Count,
 					_passNeed,
-					stale.Count);
+					deletes.Count);
+				SaveBases(batch);
+				if (!batch.Baselined)
+				{
+					projects.SetBaselined(repo);
+				}
+
 				EndManifestPass();
 			}
 
+			await FinishAsync(batch, ct);
 			return Reply(MessageTypes.SyncNeed, new SyncNeedPayload(repo, need), request);
 		}
 		catch
@@ -210,14 +245,7 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 		var deletes = payload.Deletes ?? throw BadRequest("sync.delta needs 'deletes'.");
 
 		// All paths are checked before anything changes, so a refused delta leaves the mirror as it was.
-		foreach (var path in deletes)
-		{
-			if (SyncPath.GetError(path) is { } error)
-			{
-				throw BadRequest(error);
-			}
-		}
-
+		deletes.ToList().ForEach(p => CheckPath(p));
 		upserts.ToList().ForEach(Validate);
 		var deleted = new HashSet<string>(deletes, StringComparer.OrdinalIgnoreCase);
 		if (upserts.FirstOrDefault(e => deleted.Contains(e.Path)) is { } both)
@@ -225,39 +253,54 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 			throw BadRequest($"'{both.Path}' is both upserted and deleted.");
 		}
 
-		// Like the empty-manifest guard: a delta may not leave a non-empty mirror with nothing (stored or awaited).
-		if (upserts.Count == 0 && deleted.Count > 0 && store.ListFiles(repo) is { Count: > 0 } stored && stored.Concat(_expected.Keys).All(deleted.Contains))
+		// Like the empty-manifest guard: a delta may not leave a non-empty mirror with nothing synced (stored or awaited); excluded files do not count.
+		var batch = await BeginAsync(repo, ct);
+		if (upserts.Count == 0
+			&& deleted.Count > 0
+			&& store.ListFiles(repo).Where(p => !batch.Rules.IsIgnored(p)).ToList() is { Count: > 0 } stored
+			&& stored.Concat(_expected.Keys).All(deleted.Contains))
 		{
 			throw BadRequest(EmptyMirrorRefusal);
 		}
 
-		var need = await NeedAsync(repo, upserts, ct);
-		foreach (var path in deletes)
-		{
-			store.Delete(repo, path);
-			_expected.Remove(path);
-		}
-
+		var need = await NeedAsync(batch, upserts, ct);
+		deletes.ToList().ForEach(p => _expected.Remove(p));
+		Delete(batch, await DecideAbsentAsync(batch, deletes.Where(p => !batch.Rules.IsIgnored(p)), ct));
+		await FinishAsync(batch, ct);
 		return Reply(MessageTypes.SyncNeed, new SyncNeedPayload(repo, need), request);
 	}
 
 	/// <summary>
-	/// Returns the paths of the (validated) entries whose mirror content differs; those are expected as chunks. Refuses when more
-	/// than <see cref="SyncLimits.MaxFiles"/> uploads would be pending, before anything changes.
+	/// Returns the paths of the (validated) entries the client changed; those are expected as chunks. Entries equal to the mirror get
+	/// their base, entries the server changed (or both did) are pushed instead. Refuses when more than <see cref="SyncLimits.MaxFiles"/>
+	/// uploads would be pending, before anything changes.
 	/// </summary>
-	private async Task<List<string>> NeedAsync(string repo, IReadOnlyList<ManifestEntry> entries, CancellationToken ct)
+	private async Task<List<string>> NeedAsync(Batch batch, IReadOnlyList<ManifestEntry> entries, CancellationToken ct)
 	{
 		var same = new List<string>();
 		var changed = new List<ManifestEntry>();
 		foreach (var entry in entries)
 		{
-			if (await store.GetHashAsync(repo, entry.Path, ct) == entry.Sha256)
+			var mirror = await store.GetHashAsync(batch.Repo, entry.Path, ct);
+			var baseHash = batch.Bases.GetValueOrDefault(entry.Path);
+			switch (SyncDecision.Decide(entry.Sha256, mirror, baseHash, batch.Baselined))
 			{
-				same.Add(entry.Path);
-			}
-			else
-			{
-				changed.Add(entry);
+				case SyncAction.Upload:
+					changed.Add(entry);
+					break;
+				case SyncAction.InSync:
+					same.Add(entry.Path);
+					if (baseHash != entry.Sha256)
+					{
+						batch.BaseChanges[entry.Path] = entry.Sha256;
+					}
+
+					break;
+				default:
+					// The server changed it (or both did): the client decides. An upload it asked for earlier must not overwrite it either.
+					same.Add(entry.Path);
+					AddPush(batch, entry.Path, mirror, baseHash);
+					break;
 			}
 		}
 
@@ -339,6 +382,9 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 		}
 
 		store.Commit(repo, entry.Path, _tag);
+
+		// Before the reply, so the watcher event of this very write finds the mirror equal to the base and pushes nothing.
+		projects.SetBases(repo, [new(entry.Path, entry.Sha256)]);
 		upload.Dispose();
 		_upload = null;
 		_expected.Remove(entry.Path);

@@ -20,16 +20,19 @@ public sealed class SyncSessionTests : IDisposable
 	private readonly string _root = Path.Combine(TempRootCleanup.Root, Guid.NewGuid().ToString("N"));
 	private readonly string _repoRoot;
 	private readonly ListLogger<SyncSession> _logger = new();
+	private readonly MemoryProjectStore _projects = new();
 	private readonly SyncSession _session;
 
 	public SyncSessionTests()
 	{
 		_repoRoot = Path.Combine(_root, Repo);
 		Directory.CreateDirectory(_repoRoot);
-		_session = new SyncSession(new FileSystemMirrorStore(Options.Create(new MirrorOptions { Root = _root })), _logger, TimeProvider.System);
+		_session = new SyncSession(new FileSystemMirrorStore(Options.Create(new MirrorOptions { Root = _root })), _projects, _logger, TimeProvider.System);
 	}
 
 	private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+	private static EnvelopeContext Context { get; } = new("conn-1", null, (_, _) => Task.CompletedTask);
 
 	public void Dispose()
 	{
@@ -40,7 +43,7 @@ public sealed class SyncSessionTests : IDisposable
 	[Fact]
 	public async Task Open_SanitizesRepo_RepliesOpenedWithCorrelationId()
 	{
-		var reply = await _session.HandleAsync(Envelope.Create(MessageTypes.SyncOpen, new SyncOpenPayload("My Repo"), "c1"), Ct);
+		var reply = await _session.HandleAsync(Envelope.Create(MessageTypes.SyncOpen, new SyncOpenPayload("My Repo"), "c1"), Context, Ct);
 
 		Assert.NotNull(reply);
 		Assert.Equal(MessageTypes.SyncOpened, reply.Type);
@@ -132,13 +135,13 @@ public sealed class SyncSessionTests : IDisposable
 		File.WriteAllText(Path.Combine(_repoRoot, "src", "old.cs.aicp-tmp"), "crashed upload");
 		await OpenAsync();
 		await NeedAsync(Manifest(false, Entry("a.txt", "abcd")));
-		await _session.HandleAsync(Chunk("a.txt", 0, "ab"u8.ToArray(), last: false), Ct);
+		await _session.HandleAsync(Chunk("a.txt", 0, "ab"u8.ToArray(), last: false), Context, Ct);
 
 		await NeedAsync(Manifest(true, Entry("a.txt", "abcd")));
 
 		Assert.False(File.Exists(Path.Combine(_repoRoot, "src", "old.cs.aicp-tmp")));
 		Assert.Single(Directory.GetFiles(_repoRoot, "a.txt.*.aicp-tmp"));
-		Assert.Equal(MessageTypes.SyncStored, (await _session.HandleAsync(Chunk("a.txt", 2, "cd"u8.ToArray(), last: true), Ct))!.Type);
+		Assert.Equal(MessageTypes.SyncStored, (await _session.HandleAsync(Chunk("a.txt", 2, "cd"u8.ToArray(), last: true), Context, Ct))!.Type);
 		Assert.Equal("abcd", File.ReadAllText(Path.Combine(_repoRoot, "a.txt")));
 	}
 
@@ -186,7 +189,7 @@ public sealed class SyncSessionTests : IDisposable
 		{
 			var length = Math.Min(SyncLimits.ChunkSize, content.Length - offset);
 			var last = offset + length == content.Length;
-			replies.Add(await _session.HandleAsync(Chunk("src/big.bin", offset, content.AsSpan(offset, length).ToArray(), last, last ? Sha(content) : null), Ct));
+			replies.Add(await _session.HandleAsync(Chunk("src/big.bin", offset, content.AsSpan(offset, length).ToArray(), last, last ? Sha(content) : null), Context, Ct));
 		}
 
 		Assert.Null(replies[0]);
@@ -202,11 +205,11 @@ public sealed class SyncSessionTests : IDisposable
 	public async Task StoredSummary_MeasuresThePass_NotTheSession()
 	{
 		var clock = new FakeTimeProvider();
-		using (var session = new SyncSession(new FileSystemMirrorStore(Options.Create(new MirrorOptions { Root = _root })), _logger, clock))
+		using (var session = new SyncSession(new FileSystemMirrorStore(Options.Create(new MirrorOptions { Root = _root })), new MemoryProjectStore(), _logger, clock))
 		{
 			async Task SendAsync(Envelope request)
 			{
-				await session.HandleAsync(request, Ct);
+				await session.HandleAsync(request, Context, Ct);
 			}
 
 			await SendAsync(Envelope.Create(MessageTypes.SyncOpen, new SyncOpenPayload(Repo)));
@@ -235,7 +238,7 @@ public sealed class SyncSessionTests : IDisposable
 		await OpenAsync();
 		await NeedAsync(Manifest(true, Entry("empty.txt", string.Empty)));
 
-		var reply = await _session.HandleAsync(Chunk("empty.txt", 0, [], last: true), Ct);
+		var reply = await _session.HandleAsync(Chunk("empty.txt", 0, [], last: true), Context, Ct);
 
 		Assert.Equal(MessageTypes.SyncStored, reply!.Type);
 		Assert.Empty(File.ReadAllBytes(Path.Combine(_repoRoot, "empty.txt")));
@@ -248,7 +251,7 @@ public sealed class SyncSessionTests : IDisposable
 		await AssertError(ErrorCodes.NotFound, Chunk("never-asked.txt", 0, [1], last: true));
 
 		await NeedAsync(Manifest(true, Entry("a.txt", "a")));
-		await _session.HandleAsync(Chunk("a.txt", 0, "a"u8.ToArray(), last: true), Ct);
+		await _session.HandleAsync(Chunk("a.txt", 0, "a"u8.ToArray(), last: true), Context, Ct);
 
 		await AssertError(ErrorCodes.NotFound, Chunk("a.txt", 0, "a"u8.ToArray(), last: true));
 	}
@@ -258,7 +261,7 @@ public sealed class SyncSessionTests : IDisposable
 	{
 		await OpenAsync();
 		await NeedAsync(Manifest(true, Entry("a.txt", "abcd")));
-		await _session.HandleAsync(Chunk("a.txt", 0, "ab"u8.ToArray(), last: false), Ct);
+		await _session.HandleAsync(Chunk("a.txt", 0, "ab"u8.ToArray(), last: false), Context, Ct);
 
 		await AssertError(ErrorCodes.BadRequest, Chunk("a.txt", 3, "d"u8.ToArray(), last: true));
 
@@ -271,17 +274,17 @@ public sealed class SyncSessionTests : IDisposable
 	{
 		await OpenAsync();
 		await NeedAsync(Manifest(true, Entry("a.txt", "abcdef")));
-		await _session.HandleAsync(Chunk("a.txt", 0, "ab"u8.ToArray(), last: false), Ct);
+		await _session.HandleAsync(Chunk("a.txt", 0, "ab"u8.ToArray(), last: false), Context, Ct);
 
-		var first = await Assert.ThrowsAsync<EnvelopeException>(() => _session.HandleAsync(Chunk("a.txt", 2, "cdefgh"u8.ToArray(), last: false), Ct));
-		Assert.Null(await _session.HandleAsync(Chunk("a.txt", 8, "x"u8.ToArray(), last: false), Ct));
-		var last = await Assert.ThrowsAsync<EnvelopeException>(() => _session.HandleAsync(Chunk("a.txt", 9, "y"u8.ToArray(), last: true), Ct));
+		var first = await Assert.ThrowsAsync<EnvelopeException>(() => _session.HandleAsync(Chunk("a.txt", 2, "cdefgh"u8.ToArray(), last: false), Context, Ct));
+		Assert.Null(await _session.HandleAsync(Chunk("a.txt", 8, "x"u8.ToArray(), last: false), Context, Ct));
+		var last = await Assert.ThrowsAsync<EnvelopeException>(() => _session.HandleAsync(Chunk("a.txt", 9, "y"u8.ToArray(), last: true), Context, Ct));
 
 		Assert.Equal(ErrorCodes.TooLarge, first.Code);
 		Assert.Equal((first.Code, first.Message), (last.Code, last.Message));
 		Assert.Empty(Directory.GetFiles(_repoRoot, "*.aicp-tmp"));
 		await AssertError(ErrorCodes.BadRequest, Chunk("a.txt", 6, "z"u8.ToArray(), last: true));
-		Assert.Equal(MessageTypes.SyncStored, (await _session.HandleAsync(Chunk("a.txt", 0, "abcdef"u8.ToArray(), last: true), Ct))!.Type);
+		Assert.Equal(MessageTypes.SyncStored, (await _session.HandleAsync(Chunk("a.txt", 0, "abcdef"u8.ToArray(), last: true), Context, Ct))!.Type);
 	}
 
 	[Fact]
@@ -351,7 +354,7 @@ public sealed class SyncSessionTests : IDisposable
 		File.WriteAllText(Path.Combine(_repoRoot, "gone.txt"), "g");
 		await OpenAsync();
 
-		var reply = await _session.HandleAsync(Envelope.Create(MessageTypes.SyncDelta, new SyncDeltaPayload(Repo, [Entry("keep.txt", "k"), Entry("new.txt", "n")], ["gone.txt"])), Ct);
+		var reply = await _session.HandleAsync(Envelope.Create(MessageTypes.SyncDelta, new SyncDeltaPayload(Repo, [Entry("keep.txt", "k"), Entry("new.txt", "n")], ["gone.txt"])), Context, Ct);
 
 		Assert.Equal(["new.txt"], Read<SyncNeedPayload>(reply!).Paths);
 		Assert.False(File.Exists(Path.Combine(_repoRoot, "gone.txt")));
@@ -377,7 +380,7 @@ public sealed class SyncSessionTests : IDisposable
 		await OpenAsync();
 
 		var ex = await Assert.ThrowsAsync<EnvelopeException>(() =>
-			_session.HandleAsync(Envelope.Create(MessageTypes.SyncDelta, new SyncDeltaPayload(Repo, [], ["a.txt", "B.TXT"])), Ct));
+			_session.HandleAsync(Envelope.Create(MessageTypes.SyncDelta, new SyncDeltaPayload(Repo, [], ["a.txt", "B.TXT"])), Context, Ct));
 
 		Assert.Equal(ErrorCodes.BadRequest, ex.Code);
 		Assert.Equal("An empty folder would delete the whole mirror; refusing.", ex.Message);
@@ -390,9 +393,9 @@ public sealed class SyncSessionTests : IDisposable
 	{
 		File.WriteAllText(Path.Combine(_repoRoot, "old.txt"), "o");
 		await OpenAsync();
-		await _session.HandleAsync(Delta([Entry("new.txt", "n")]), Ct);
+		await _session.HandleAsync(Delta([Entry("new.txt", "n")]), Context, Ct);
 
-		await _session.HandleAsync(Envelope.Create(MessageTypes.SyncDelta, new SyncDeltaPayload(Repo, [], ["old.txt"])), Ct);
+		await _session.HandleAsync(Envelope.Create(MessageTypes.SyncDelta, new SyncDeltaPayload(Repo, [], ["old.txt"])), Context, Ct);
 
 		Assert.False(File.Exists(Path.Combine(_repoRoot, "old.txt")));
 	}
@@ -402,14 +405,14 @@ public sealed class SyncSessionTests : IDisposable
 	{
 		await OpenAsync();
 		await NeedAsync(Manifest(true, Entry("a.txt", "abcd")));
-		await _session.HandleAsync(Chunk("a.txt", 0, "ab"u8.ToArray(), last: false), Ct);
+		await _session.HandleAsync(Chunk("a.txt", 0, "ab"u8.ToArray(), last: false), Context, Ct);
 		Assert.Single(Directory.GetFiles(_repoRoot, "a.txt.*.aicp-tmp"));
 
 		await OpenAsync();
 		Assert.Empty(Directory.GetFiles(_repoRoot, "*.aicp-tmp"));
 
 		await NeedAsync(Manifest(true, Entry("a.txt", "abcd")));
-		await _session.HandleAsync(Chunk("a.txt", 0, "ab"u8.ToArray(), last: false), Ct);
+		await _session.HandleAsync(Chunk("a.txt", 0, "ab"u8.ToArray(), last: false), Context, Ct);
 		_session.Dispose();
 		Assert.Empty(Directory.GetFiles(_repoRoot, "*.aicp-tmp"));
 	}
@@ -420,13 +423,13 @@ public sealed class SyncSessionTests : IDisposable
 		// A reconnect: the old connection's session is not closed yet and keeps its half-written temp file open.
 		await OpenAsync();
 		await NeedAsync(Manifest(true, Entry("a.txt", "abcd")));
-		await _session.HandleAsync(Chunk("a.txt", 0, "ab"u8.ToArray(), last: false), Ct);
-		using (var session = new SyncSession(new FileSystemMirrorStore(Options.Create(new MirrorOptions { Root = _root })), _logger, TimeProvider.System))
+		await _session.HandleAsync(Chunk("a.txt", 0, "ab"u8.ToArray(), last: false), Context, Ct);
+		using (var session = new SyncSession(new FileSystemMirrorStore(Options.Create(new MirrorOptions { Root = _root })), new MemoryProjectStore(), _logger, TimeProvider.System))
 		{
-			await session.HandleAsync(Envelope.Create(MessageTypes.SyncOpen, new SyncOpenPayload(Repo)), Ct);
-			await session.HandleAsync(Manifest(true, Entry("a.txt", "abcd")), Ct);
+			await session.HandleAsync(Envelope.Create(MessageTypes.SyncOpen, new SyncOpenPayload(Repo)), Context, Ct);
+			await session.HandleAsync(Manifest(true, Entry("a.txt", "abcd")), Context, Ct);
 
-			var reply = await session.HandleAsync(Chunk("a.txt", 0, "abcd"u8.ToArray(), last: true), Ct);
+			var reply = await session.HandleAsync(Chunk("a.txt", 0, "abcd"u8.ToArray(), last: true), Context, Ct);
 
 			Assert.Equal(MessageTypes.SyncStored, reply!.Type);
 		}
@@ -449,7 +452,7 @@ public sealed class SyncSessionTests : IDisposable
 		await OpenAsync();
 		Assert.Empty(await NeedAsync(Manifest(false)));
 
-		var ex = await Assert.ThrowsAsync<EnvelopeException>(() => _session.HandleAsync(Manifest(true), Ct));
+		var ex = await Assert.ThrowsAsync<EnvelopeException>(() => _session.HandleAsync(Manifest(true), Context, Ct));
 
 		Assert.Equal(ErrorCodes.BadRequest, ex.Code);
 		Assert.Equal("An empty folder would delete the whole mirror; refusing.", ex.Message);
@@ -498,6 +501,9 @@ public sealed class SyncSessionTests : IDisposable
 	{
 		File.WriteAllText(Path.Combine(_repoRoot, "a.txt"), "a");
 		File.WriteAllText(Path.Combine(_repoRoot, "b.txt"), "b");
+
+		// Agreed earlier: once the repo is baselined only a file the client had is deleted when it is missing (a server-only one is pushed).
+		_projects.SetBases(Repo, [new("b.txt", Sha("b"))]);
 		await OpenAsync();
 		await NeedAsync(Envelope.Create(MessageTypes.SyncManifest, new SyncManifestPayload(Repo, [Entry("a.txt", "a")], true, ["b.txt"])));
 
@@ -526,11 +532,11 @@ public sealed class SyncSessionTests : IDisposable
 	[Fact]
 	public async Task Manifest_KeepTooLong_TooLarge()
 	{
-		var session = new SyncSession(new FakeStore(), _logger, TimeProvider.System);
-		await session.HandleAsync(Envelope.Create(MessageTypes.SyncOpen, new SyncOpenPayload(Repo)), Ct);
+		var session = new SyncSession(new FakeStore(), new MemoryProjectStore(), _logger, TimeProvider.System);
+		await session.HandleAsync(Envelope.Create(MessageTypes.SyncOpen, new SyncOpenPayload(Repo)), Context, Ct);
 		var keep = Enumerable.Range(0, SyncLimits.MaxFiles + 1).Select(i => $"f{i}").ToArray();
 
-		var ex = await Assert.ThrowsAsync<EnvelopeException>(() => session.HandleAsync(Envelope.Create(MessageTypes.SyncManifest, new SyncManifestPayload(Repo, [], true, keep)), Ct));
+		var ex = await Assert.ThrowsAsync<EnvelopeException>(() => session.HandleAsync(Envelope.Create(MessageTypes.SyncManifest, new SyncManifestPayload(Repo, [], true, keep)), Context, Ct));
 
 		Assert.Equal(ErrorCodes.TooLarge, ex.Code);
 	}
@@ -561,29 +567,29 @@ public sealed class SyncSessionTests : IDisposable
 	[Fact]
 	public async Task Deltas_PendingUploadsBeyondMaxFiles_TooLarge()
 	{
-		var session = new SyncSession(new FakeStore(), _logger, TimeProvider.System);
-		await session.HandleAsync(Envelope.Create(MessageTypes.SyncOpen, new SyncOpenPayload(Repo)), Ct);
+		var session = new SyncSession(new FakeStore(), new MemoryProjectStore(), _logger, TimeProvider.System);
+		await session.HandleAsync(Envelope.Create(MessageTypes.SyncOpen, new SyncOpenPayload(Repo)), Context, Ct);
 		var half = SyncLimits.MaxFiles / 2;
 
-		await session.HandleAsync(Delta(Enumerable.Range(0, half).Select(i => Entry($"a{i}", "x"))), Ct);
-		await session.HandleAsync(Delta(Enumerable.Range(0, half).Select(i => Entry($"b{i}", "x"))), Ct);
-		await session.HandleAsync(Delta([Entry("a0", "y")]), Ct);
+		await session.HandleAsync(Delta(Enumerable.Range(0, half).Select(i => Entry($"a{i}", "x"))), Context, Ct);
+		await session.HandleAsync(Delta(Enumerable.Range(0, half).Select(i => Entry($"b{i}", "x"))), Context, Ct);
+		await session.HandleAsync(Delta([Entry("a0", "y")]), Context, Ct);
 
-		var ex = await Assert.ThrowsAsync<EnvelopeException>(() => session.HandleAsync(Delta([Entry("c", "x")]), Ct));
+		var ex = await Assert.ThrowsAsync<EnvelopeException>(() => session.HandleAsync(Delta([Entry("c", "x")]), Context, Ct));
 		Assert.Equal(ErrorCodes.TooLarge, ex.Code);
 	}
 
 	[Fact]
 	public async Task Manifest_MaxFilesAcrossPages_TooLarge_NextPassStartsFresh()
 	{
-		var session = new SyncSession(new FakeStore(), _logger, TimeProvider.System);
-		await session.HandleAsync(Envelope.Create(MessageTypes.SyncOpen, new SyncOpenPayload(Repo)), Ct);
-		await session.HandleAsync(Manifest(false, [.. Enumerable.Range(0, SyncLimits.MaxFiles).Select(i => Entry($"f{i}", "x"))]), Ct);
+		var session = new SyncSession(new FakeStore(), new MemoryProjectStore(), _logger, TimeProvider.System);
+		await session.HandleAsync(Envelope.Create(MessageTypes.SyncOpen, new SyncOpenPayload(Repo)), Context, Ct);
+		await session.HandleAsync(Manifest(false, [.. Enumerable.Range(0, SyncLimits.MaxFiles).Select(i => Entry($"f{i}", "x"))]), Context, Ct);
 
-		var ex = await Assert.ThrowsAsync<EnvelopeException>(() => session.HandleAsync(Manifest(true, Entry("one-more", "x")), Ct));
+		var ex = await Assert.ThrowsAsync<EnvelopeException>(() => session.HandleAsync(Manifest(true, Entry("one-more", "x")), Context, Ct));
 		Assert.Equal(ErrorCodes.TooLarge, ex.Code);
 
-		var reply = await session.HandleAsync(Manifest(true, Entry("f0", "x")), Ct);
+		var reply = await session.HandleAsync(Manifest(true, Entry("f0", "x")), Context, Ct);
 		Assert.Equal(["f0"], Read<SyncNeedPayload>(reply!).Paths);
 	}
 
@@ -602,11 +608,11 @@ public sealed class SyncSessionTests : IDisposable
 						release.Wait(TimeSpan.FromSeconds(10));
 					},
 				};
-				var session = new SyncSession(store, _logger, TimeProvider.System);
-				await session.HandleAsync(Envelope.Create(MessageTypes.SyncOpen, new SyncOpenPayload(Repo)), Ct);
-				await session.HandleAsync(Manifest(true, Entry("a.txt", "abcd")), Ct);
+				var session = new SyncSession(store, new MemoryProjectStore(), _logger, TimeProvider.System);
+				await session.HandleAsync(Envelope.Create(MessageTypes.SyncOpen, new SyncOpenPayload(Repo)), Context, Ct);
+				await session.HandleAsync(Manifest(true, Entry("a.txt", "abcd")), Context, Ct);
 
-				var chunk = Task.Run(() => session.HandleAsync(Chunk("a.txt", 0, "ab"u8.ToArray(), last: false), Ct), Ct);
+				var chunk = Task.Run(() => session.HandleAsync(Chunk("a.txt", 0, "ab"u8.ToArray(), last: false), Context, Ct), Ct);
 				Assert.True(entered.Wait(TimeSpan.FromSeconds(10), Ct));
 				session.Dispose();
 				release.Set();
@@ -614,7 +620,7 @@ public sealed class SyncSessionTests : IDisposable
 
 				Assert.False(store.Temp!.CanWrite);
 				Assert.Equal(["a.txt"], store.Discarded);
-				Assert.Null(await session.HandleAsync(Manifest(true, Entry("a.txt", "abcd")), Ct));
+				Assert.Null(await session.HandleAsync(Manifest(true, Entry("a.txt", "abcd")), Context, Ct));
 			}
 		}
 	}
@@ -642,18 +648,18 @@ public sealed class SyncSessionTests : IDisposable
 
 	private static T Read<T>(Envelope envelope) => envelope.Payload.Deserialize<T>(JsonSerializerOptions.Web)!;
 
-	private async Task OpenAsync() => await _session.HandleAsync(Envelope.Create(MessageTypes.SyncOpen, new SyncOpenPayload(Repo)), Ct);
+	private async Task OpenAsync() => await _session.HandleAsync(Envelope.Create(MessageTypes.SyncOpen, new SyncOpenPayload(Repo)), Context, Ct);
 
 	private async Task<IReadOnlyList<string>> NeedAsync(Envelope manifest)
 	{
-		var reply = await _session.HandleAsync(manifest, Ct);
+		var reply = await _session.HandleAsync(manifest, Context, Ct);
 		Assert.Equal(MessageTypes.SyncNeed, reply!.Type);
 		return Read<SyncNeedPayload>(reply).Paths;
 	}
 
 	private async Task AssertError(string code, Envelope request)
 	{
-		var ex = await Assert.ThrowsAsync<EnvelopeException>(() => _session.HandleAsync(request, Ct));
+		var ex = await Assert.ThrowsAsync<EnvelopeException>(() => _session.HandleAsync(request, Context, Ct));
 		Assert.Equal(code, ex.Code);
 	}
 
@@ -669,6 +675,10 @@ public sealed class SyncSessionTests : IDisposable
 		public Task<string?> GetHashAsync(string repo, string path, CancellationToken ct) => Task.FromResult<string?>(null);
 
 		public IReadOnlyList<string> ListFiles(string repo) => [];
+
+		public Task<byte[]?> ReadAsync(string repo, string path, long offset, int count, CancellationToken ct) => Task.FromResult<byte[]?>(null);
+
+		public long GetSize(string repo, string path) => 0;
 
 		public Stream CreateTemp(string repo, string path, string tag)
 		{

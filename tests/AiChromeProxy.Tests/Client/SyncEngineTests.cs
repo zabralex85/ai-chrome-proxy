@@ -664,6 +664,9 @@ public sealed class SyncEngineTests : IDisposable
 		await engine.OpenFolderAsync();
 		await engine.SyncOnceAsync(Ct);
 		File.WriteAllText(_server.PathOf(Repo, "stray.txt"), "s");
+
+		// A version both sides agreed on (deleted in the folder unseen by any delta); a file only the server created would be pushed instead.
+		_server.Projects.SetBases(Repo, [new("stray.txt", Sha("s"))]);
 		_server.Transport.Sent.Clear();
 
 		clock.Advance(SyncEngine.FullManifestInterval - TimeSpan.FromSeconds(1));

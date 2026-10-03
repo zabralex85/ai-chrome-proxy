@@ -7,7 +7,7 @@ namespace AiChromeProxy.Application;
 
 public static class DependencyInjection
 {
-	/// <summary>Registers the envelope router and its handlers (singletons). Needs an <see cref="IMirrorStore"/> (Infrastructure) and logging (the host).</summary>
+	/// <summary>Registers the envelope router and its handlers (singletons). Needs an <see cref="IMirrorStore"/> and an <see cref="IProjectStore"/> (Infrastructure) and logging (the host).</summary>
 	public static IServiceCollection AddApplication(this IServiceCollection services)
 	{
 		services.TryAddSingleton(TimeProvider.System);

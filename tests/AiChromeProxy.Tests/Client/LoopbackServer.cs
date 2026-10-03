@@ -3,6 +3,7 @@ using AiChromeProxy.Application.Transport;
 using AiChromeProxy.Client.Transport;
 using AiChromeProxy.Domain;
 using AiChromeProxy.Infrastructure.Sync;
+using AiChromeProxy.Tests.Application;
 using AiChromeProxy.Tests.Server;
 using Microsoft.Extensions.Options;
 
@@ -21,7 +22,7 @@ public sealed class LoopbackServer : IDisposable
 	public LoopbackServer()
 	{
 		var store = new FileSystemMirrorStore(Options.Create(new MirrorOptions { Root = MirrorRoot }));
-		_sessions = new SyncSessions(store, new ListLogger<SyncSession>(), TimeProvider.System);
+		_sessions = new SyncSessions(store, Projects, new ListLogger<SyncSession>(), TimeProvider.System);
 		_router = new EnvelopeRouter([.. SyncHandler.Types.Select(t => new SyncHandler(t, _sessions))]);
 		Transport.Reply = ReplyAsync;
 		Transport.SetState(TransportState.Connected);
@@ -30,6 +31,9 @@ public sealed class LoopbackServer : IDisposable
 	public string MirrorRoot { get; } = Path.Combine(TempRootCleanup.Root, Guid.NewGuid().ToString("N"));
 
 	public FakeTransport Transport { get; } = new();
+
+	/// <summary>The server's bases, baseline flags and project settings.</summary>
+	public MemoryProjectStore Projects { get; } = new();
 
 	public string ConnectionId => $"conn-{_connection}";
 
