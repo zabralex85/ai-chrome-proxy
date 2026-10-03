@@ -116,6 +116,13 @@ public sealed class CloudflaredSupervisor(
 	private ProcessStartInfo StartInfo()
 	{
 		var info = new ProcessStartInfo(ResolveExecutable(options.CloudflaredPath, AppContext.BaseDirectory)) { ArgumentList = { "tunnel", "--no-autoupdate", "run" } };
+
+		// cloudflared reads TUNNEL_* as settings and logs them, masking only its own secret names (so a Tunnel__Token would be printed): pass none but the token.
+		foreach (var name in info.Environment.Keys.Where(k => k.StartsWith("TUNNEL_", StringComparison.OrdinalIgnoreCase)).ToList())
+		{
+			info.Environment.Remove(name);
+		}
+
 		info.Environment[TokenVariable] = options.Token;
 		return info;
 	}

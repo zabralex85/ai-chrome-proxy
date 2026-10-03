@@ -37,14 +37,37 @@ public sealed class CloudflaredSupervisorTests
 	[Fact]
 	public async Task Start_TokenOnlyInChildEnvironment_OutputLogged()
 	{
+		// Inherited by the child unless removed: cloudflared would log the .NET form in clear, and read any TUNNEL_* as its own setting.
+		// Unique names, so tests running in parallel never see a variable they would act on.
+		var suffix = Guid.NewGuid().ToString("N");
+		string[] inherited = [$"Tunnel__AicpTest{suffix}", $"TUNNEL_AICPTEST{suffix}"];
+		ProcessStartInfo info;
 		using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
-		var run = Create().RunAsync(cts.Token);
+		Task run;
+		try
+		{
+			foreach (var name in inherited)
+			{
+				Environment.SetEnvironmentVariable(name, "inherited");
+			}
 
-		var info = Assert.Single(_starts);
+			run = Create().RunAsync(cts.Token);
+			info = Assert.Single(_starts);
+		}
+		finally
+		{
+			foreach (var name in inherited)
+			{
+				Environment.SetEnvironmentVariable(name, null);
+			}
+		}
+
 		Assert.Equal(ConfiguredPath, info.FileName);
 		Assert.Equal(["tunnel", "--no-autoupdate", "run"], info.ArgumentList);
 		Assert.Equal(string.Empty, info.Arguments);
 		Assert.Equal(Token, info.Environment[CloudflaredSupervisor.TokenVariable]);
+		Assert.Equal([CloudflaredSupervisor.TokenVariable], info.Environment.Keys.Where(k => k.StartsWith("TUNNEL_", StringComparison.OrdinalIgnoreCase)));
+		Assert.Contains("PATH", info.Environment.Keys, StringComparer.OrdinalIgnoreCase);
 
 		_output!("INF Registered tunnel connection");
 		Assert.Contains("cloudflared: INF Registered tunnel connection", _logger.Messages);
