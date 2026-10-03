@@ -16,6 +16,9 @@ public sealed class CloudflareAccessMiddleware(
 	/// <summary><see cref="HttpContext.Items"/> key holding the validated token's <c>email</c> claim (absent when Access is disabled).</summary>
 	public const string EmailItem = "aicp.access.email";
 
+	/// <summary><see cref="HttpContext.Items"/> key holding the validated token's expiry as a <see cref="DateTimeOffset"/> (absent when Access is disabled).</summary>
+	public const string ExpiryItem = "aicp.access.exp";
+
 	public async Task InvokeAsync(HttpContext context)
 	{
 		if (!options.Value.Enabled)
@@ -37,7 +40,9 @@ public sealed class CloudflareAccessMiddleware(
 		}
 
 		// Validated above: reading a claim needs no second check.
-		context.Items[EmailItem] = new JsonWebToken(token).TryGetPayloadValue<string>("email", out var email) ? email : null;
+		var jwt = new JsonWebToken(token);
+		context.Items[EmailItem] = jwt.TryGetPayloadValue<string>("email", out var email) ? email : null;
+		context.Items[ExpiryItem] = new DateTimeOffset(jwt.ValidTo);
 		await next(context);
 	}
 }

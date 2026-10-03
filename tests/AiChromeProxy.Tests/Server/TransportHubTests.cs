@@ -13,7 +13,10 @@ using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Time.Testing;
+using Microsoft.Net.Http.Headers;
 
 namespace AiChromeProxy.Tests.Server;
 
@@ -25,22 +28,7 @@ public sealed class TransportHubTests : IAsyncDisposable
 
 	public TransportHubTests()
 	{
-		_factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
-		{
-			b.UseEnvironment(Environments.Production);
-			b.UseStaticWebAssets();
-
-			// Cache headers as published: with the build manifest MapStaticAssets otherwise sends no-cache for everything.
-			b.UseSetting("ReloadStaticAssetsAtRuntime", "false");
-			b.UseSetting("Server:PublicHost", ServerHostingTests.PublicHost);
-			b.UseSetting("CloudflareAccess:TeamDomain", TestAccessIssuer.TeamDomain);
-			b.UseSetting("CloudflareAccess:Audience", TestAccessIssuer.Audience);
-			b.ConfigureServices(s =>
-			{
-				s.AddHttpClient(CloudflareAccessTokenValidator.JwksHttpClient).ConfigurePrimaryHttpMessageHandler(() => _issuer.Handler());
-				s.AddSingleton<IEnvelopeHandler, ProbeHandler>();
-			});
-		});
+		_factory = Create(_ => { });
 	}
 
 	[Fact]
@@ -128,6 +116,62 @@ public sealed class TransportHubTests : IAsyncDisposable
 			Assert.Equal("test.pushed", push.Type);
 			Assert.Equal("user@example.com", push.Payload.GetProperty("email").GetString());
 			Assert.False(string.IsNullOrEmpty(push.Payload.GetProperty("connectionId").GetString()));
+		}
+	}
+
+	[Fact]
+	public async Task TokenExpiry_AbortsConnection_WhenTheTokenExpires()
+	{
+		var ct = TestContext.Current.CancellationToken;
+		var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+		using (var factory = Create(s =>
+		{
+			s.RemoveAll<TimeProvider>();
+			s.AddSingleton<TimeProvider>(clock);
+		}))
+		{
+			await using (var transport = new SignalRTransport(Connection(_issuer.Token(expires: DateTime.UtcNow.AddSeconds(3)), factory)))
+			{
+				await transport.ConnectAsync(ct);
+
+				clock.Advance(TimeSpan.FromSeconds(1));
+				await Task.Delay(300, ct);
+				Assert.Equal(TransportState.Connected, transport.State);
+
+				clock.Advance(TimeSpan.FromSeconds(3));
+				await WaitForAsync(() => transport.State != TransportState.Connected, ct);
+				Assert.NotEqual(TransportState.Connected, transport.State);
+			}
+		}
+	}
+
+	[Fact]
+	public async Task NoAccess_Development_ConnectionNeverAborted()
+	{
+		var ct = TestContext.Current.CancellationToken;
+		var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+		using (var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+		{
+			b.UseEnvironment(Environments.Development);
+			b.UseSetting("Server:PublicHost", string.Empty);
+			b.UseSetting("CloudflareAccess:TeamDomain", string.Empty);
+			b.UseSetting("CloudflareAccess:Audience", string.Empty);
+			b.ConfigureServices(s =>
+			{
+				s.RemoveAll<TimeProvider>();
+				s.AddSingleton<TimeProvider>(clock);
+			});
+		}))
+		{
+			await using (var transport = new SignalRTransport(Connection(token: null, factory, "http://localhost:5197")))
+			{
+				await transport.ConnectAsync(ct);
+
+				clock.Advance(TimeSpan.FromDays(30));
+				await Task.Delay(300, ct);
+
+				Assert.Equal(TransportState.Connected, transport.State);
+			}
 		}
 	}
 
@@ -283,9 +327,36 @@ public sealed class TransportHubTests : IAsyncDisposable
 
 	public async ValueTask DisposeAsync() => await _factory.DisposeAsync();
 
-	private HubConnection Connection(string? token)
+	private static async Task WaitForAsync(Func<bool> condition, CancellationToken ct)
 	{
-		var server = _factory.Server;
+		for (var i = 0; i < 100 && !condition(); i++)
+		{
+			await Task.Delay(50, ct);
+		}
+	}
+
+	private WebApplicationFactory<Program> Create(Action<IServiceCollection> configureServices) =>
+		new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+		{
+			b.UseEnvironment(Environments.Production);
+			b.UseStaticWebAssets();
+
+			// Cache headers as published: with the build manifest MapStaticAssets otherwise sends no-cache for everything.
+			b.UseSetting("ReloadStaticAssetsAtRuntime", "false");
+			b.UseSetting("Server:PublicHost", ServerHostingTests.PublicHost);
+			b.UseSetting("CloudflareAccess:TeamDomain", TestAccessIssuer.TeamDomain);
+			b.UseSetting("CloudflareAccess:Audience", TestAccessIssuer.Audience);
+			b.ConfigureServices(s =>
+			{
+				s.AddHttpClient(CloudflareAccessTokenValidator.JwksHttpClient).ConfigurePrimaryHttpMessageHandler(() => _issuer.Handler());
+				s.AddSingleton<IEnvelopeHandler, ProbeHandler>();
+				configureServices(s);
+			});
+		});
+
+	private HubConnection Connection(string? token, WebApplicationFactory<Program>? factory = null, string? origin = null)
+	{
+		var server = (factory ?? _factory).Server;
 		return new HubConnectionBuilder()
 			.WithUrl(new Uri(server.BaseAddress, TransportHub.Path), o =>
 			{
@@ -294,10 +365,14 @@ public sealed class TransportHubTests : IAsyncDisposable
 				o.WebSocketFactory = async (ctx, ct) =>
 				{
 					var ws = server.CreateWebSocketClient();
-					if (token is not null)
+					ws.ConfigureRequest = r =>
 					{
-						ws.ConfigureRequest = r => r.Headers[CloudflareAccessMiddleware.HeaderName] = token;
-					}
+						r.Headers[HeaderNames.Origin] = origin ?? $"https://{ServerHostingTests.PublicHost}";
+						if (token is not null)
+						{
+							r.Headers[CloudflareAccessMiddleware.HeaderName] = token;
+						}
+					};
 
 					return await ws.ConnectAsync(ctx.Uri, ct);
 				};

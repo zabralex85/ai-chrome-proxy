@@ -6,10 +6,11 @@ using Microsoft.AspNetCore.SignalR;
 
 namespace AiChromeProxy.Server.Transport;
 
-public sealed class TransportHub(EnvelopeRouter router, SyncSessions syncSessions, IHubContext<TransportHub> hub, ILogger<TransportHub> logger) : Hub
+public sealed class TransportHub(EnvelopeRouter router, SyncSessions syncSessions, IHubContext<TransportHub> hub, TimeProvider time, ILogger<TransportHub> logger) : Hub
 {
 	public const string Path = "/hub";
 	public const string ReceiveMethod = "Receive";
+	private const string ExpiryTimerKey = "aicp.expiry-timer";
 
 	public async Task Send(Envelope? envelope)
 	{
@@ -38,8 +39,22 @@ public sealed class TransportHub(EnvelopeRouter router, SyncSessions syncSession
 		}
 	}
 
+	public override Task OnConnectedAsync()
+	{
+		// A connection outlives the request that carried the token: drop it when the token expires (the client reconnects through Access).
+		if (Context.GetHttpContext()?.Items[CloudflareAccessMiddleware.ExpiryItem] is DateTimeOffset expiry)
+		{
+			var context = Context;
+			var left = expiry - time.GetUtcNow();
+			context.Items[ExpiryTimerKey] = time.CreateTimer(_ => context.Abort(), null, left > TimeSpan.Zero ? left : TimeSpan.Zero, Timeout.InfiniteTimeSpan);
+		}
+
+		return base.OnConnectedAsync();
+	}
+
 	public override Task OnDisconnectedAsync(Exception? exception)
 	{
+		(Context.Items[ExpiryTimerKey] as IDisposable)?.Dispose();
 		syncSessions.Close(Context.ConnectionId);
 		return base.OnDisconnectedAsync(exception);
 	}

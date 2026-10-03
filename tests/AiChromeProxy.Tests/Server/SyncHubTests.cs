@@ -16,6 +16,7 @@ using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using Microsoft.Net.Http.Headers;
 
 namespace AiChromeProxy.Tests.Server;
 
@@ -216,7 +217,11 @@ public sealed class SyncHubTests : IAsyncDisposable
 				o.WebSocketFactory = async (ctx, ct) =>
 				{
 					var ws = server.CreateWebSocketClient();
-					ws.ConfigureRequest = r => r.Headers[CloudflareAccessMiddleware.HeaderName] = _issuer.Token();
+					ws.ConfigureRequest = r =>
+					{
+						r.Headers[HeaderNames.Origin] = $"https://{ServerHostingTests.PublicHost}";
+						r.Headers[CloudflareAccessMiddleware.HeaderName] = _issuer.Token();
+					};
 					return await ws.ConnectAsync(ctx.Uri, ct);
 				};
 			})

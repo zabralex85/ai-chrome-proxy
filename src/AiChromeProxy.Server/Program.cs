@@ -32,6 +32,7 @@ builder.Services.AddServerLogging(builder.Configuration, dataDir);
 
 var server = builder.Configuration.GetSection(ServerOptions.Section).Get<ServerOptions>() ?? new ServerOptions();
 builder.WebHost.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, server.Port));
+builder.Services.Configure<ServerOptions>(builder.Configuration.GetSection(ServerOptions.Section));
 builder.Services.Configure<HostFilteringOptions>(o => o.AllowedHosts = [.. server.AllowedHosts()]);
 
 builder.Services.AddApplication();
@@ -68,6 +69,7 @@ if (!access.Enabled)
 }
 
 app.UseMiddleware<CloudflareAccessMiddleware>();
+app.UseMiddleware<HubOriginFilter>();
 app.MapStaticAssets();
 app.MapHub<TransportHub>(TransportHub.Path);
 app.MapClientPage();
