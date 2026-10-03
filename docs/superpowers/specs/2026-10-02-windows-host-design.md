@@ -41,7 +41,7 @@ Edits `<DataDir>\appsettings.json`: `CloudflareAccess:TeamDomain`, `CloudflareAc
 - Install:
   1. Account defaults to the current user (`DOMAIN\user`); password verified with `LogonUser(LOGON32_LOGON_SERVICE)` for a clear error.
   2. Grant "Log on as a service" (`SeServiceLogonRight`) via `LsaAddAccountRights`.
-  3. Create service `AiChromeProxy` ("AI Chrome Proxy"), binary `<install dir>\current\server\AiChromeProxy.Server.exe`, start type Automatic, running as that account.
+  3. Create service `AiChromeProxy` ("AI Chrome Proxy"), binary `<install dir>\current\server\AiChromeProxy.Server.exe`, start type Automatic, running as that account. *(Superseded: the binary is `<DataDir>\server\AiChromeProxy.Server.exe`, see [Changes after the first real install](#changes-after-the-first-real-install-2026-10-03).)*
   4. Failure actions: restart after 10 s (three times), reset after 1 day.
   5. Service DACL grants the installing user `SERVICE_START | SERVICE_STOP | SERVICE_QUERY_STATUS | SERVICE_QUERY_CONFIG`, so Start/Stop/Restart from the tray need no UAC afterwards.
   6. Create `<DataDir>` and `<DataDir>\logs`, each with a protected DACL written through a held handle (no ACEs inherited from `%ProgramData%`): SYSTEM and Administrators Full Control, the account Modify, all `(OI)(CI)`; nothing for Users, Authenticated Users or Everyone. Written only when the stored DACL differs; existing children are not rewritten. Refused when either folder is a link, or it or any entry directly inside it is owned by anyone but SYSTEM, Administrators, TrustedInstaller or the account. The elevated install ignores `AICP_DATA_DIR`.
@@ -56,7 +56,7 @@ Tray → Domain, Infrastructure. Never Server or Application. Enforced by new ar
 ## 3. Installer, updates, releases
 
 - **Velopack** package (`Velopack` NuGet in the tray; `vpk` CLI in CI). Main executable: the tray. The Server is published **self-contained win-x64** into `server\` inside the package — no .NET install needed on the home server. Tray also self-contained.
-- Velopack installs per user (`%LocalAppData%\AiChromeProxy`); the service binary path points at the stable `current\server\` folder.
+- Velopack installs per user (`%LocalAppData%\AiChromeProxy`); the service binary path points at the stable `current\server\` folder. *(Superseded: the service runs from a copy in `<DataDir>\server\`, see [Changes after the first real install](#changes-after-the-first-real-install-2026-10-03).)*
 - **Updates:** the tray checks GitHub Releases (`GithubSource`) at start and every 24 h. "Update to vX" → download → stop service → apply update and restart the tray → Velopack after-update hook starts the service again only when the pending-update marker says the update stopped it. A failed download, stop or apply leaves the current version running (service started again) and shows that error. Pre-release tags (`-suffix`) are published as GitHub pre-releases and never offered.
 - **Uninstall:** Velopack before-uninstall hook stops and deletes the service (elevated `--admin uninstall`).
 - **Release workflow** `.github/workflows/release.yml`, trigger: push of tag `v*`, `windows-latest`:
@@ -127,6 +127,7 @@ Verified on a prototype before planning; these override the sections above where
 - Velopack **after-update** hook: same sync; start rule unchanged (start only when the pending-update marker exists, i.e. the update stopped it). `UpdateOrchestrator` keeps stopping the service before apply (harmless; keeps the marker semantics).
 - **Uninstall** (elevated, and the before-uninstall hook): delete the service as today, then delete `<DataDir>\server` (`<DataDir>` config and logs are kept).
 - **Migration:** a service installed by an older version still points to `current\server`. Hooks leave it alone (old behaviour: after-update starts it from `current\server`). The tray shows "Run Install service… once to move the service out of the app folder (needed to install updates with Setup.exe)" while the service's binary path is not `<DataDir>\server\…`.
+- Copy safety: `server.new` is created with a protected DACL (SYSTEM, Administrators and the creating token's owner only) and gets the data directory's inherited permissions only once the copy is complete, so the user cannot redirect the elevated install's writes through links planted meanwhile; links inside the package are skipped, not followed; the package must contain `AiChromeProxy.Server.exe` or nothing is touched. Renames and deletes are retried for a few seconds (the SCM reports Stopped slightly before the process lets go of its files). A crash between the two renames is repaired first (`server.old` back to `server`); stale `server.new`/`server.old` are deleted.
 - Testable decisions (paths, sync order, start rules, migration detection) live in tested code; the file copy runs on temp directories in tests; SCM calls stay behind `IServiceControl` (gains: the configured binary path).
 
 ## Done when

@@ -3,7 +3,8 @@ using AiChromeProxy.Tray.Services;
 namespace AiChromeProxy.Tray.Updates;
 
 /// <summary>
-/// Check at start and every 24 h; update = download, stop the service (its exe lives in the folder being replaced), apply and restart the tray.
+/// Check at start and every 24 h; update = download, stop the service (the after-update hook replaces its copy of the Server; a service
+/// installed by an older version runs from the folder being replaced), apply and restart the tray.
 /// A failed download leaves everything untouched; a failed stop or apply starts the service again and rethrows that failure.
 /// </summary>
 /// <param name="pendingMarker">File recording "service stopped for an update", so the next tray start resumes it if Update.exe failed out of process.</param>
