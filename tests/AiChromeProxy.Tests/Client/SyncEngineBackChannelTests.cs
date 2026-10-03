@@ -207,7 +207,6 @@ public sealed class SyncEngineBackChannelTests : IDisposable
 	{
 		await ConflictAsync();
 		_folder.WriteAccess = false;
-		await _engine.KeepMineAsync("missing.txt");
 
 		// The last answer was "granted": the write fails, the item stays and the engine notices the lost permission.
 		await _engine.TakeServersAsync("a.txt");
@@ -439,6 +438,159 @@ public sealed class SyncEngineBackChannelTests : IDisposable
 
 		Assert.Empty(_engine.Remote);
 		Assert.Equal(0, _engine.ConflictCount);
+	}
+
+	[Fact]
+	public async Task SavedHereDuringTheFetch_Conflict_NotOverwritten()
+	{
+		_folder.WriteAccess = true;
+		_folder.Write("a.txt", "v1");
+		await SyncedAsync();
+		await EditMirrorAsync("a.txt", "v2 from the server");
+		var real = _server.Transport.Reply!;
+		_server.Transport.Reply = e =>
+		{
+			if (e.Type == MessageTypes.SyncFetch)
+			{
+				_folder.Write("a.txt", "saved here during the fetch");
+			}
+
+			return real(e);
+		};
+
+		await _engine.SyncOnceAsync(Ct);
+
+		var item = Assert.Single(_engine.Remote);
+		Assert.Equal((RemoteStatus.Conflict, Sha("saved here during the fetch")), (item.Status, item.Local));
+		Assert.Equal("saved here during the fetch", Text("a.txt"));
+		Assert.Empty(_folder.Writes);
+		Assert.DoesNotContain(_server.Transport.Sent, e => e.Type == MessageTypes.SyncAck);
+	}
+
+	[Fact]
+	public async Task KeepMineAndTakeServers_OnlyForConflicts()
+	{
+		_folder.Write("a.txt", "a");
+		await SyncedAsync();
+		_server.Transport.Push(Remote(Repo, new RemoteChange(".env", Sha("x"), 1, null), new RemoteChange("a.txt", Sha("x"), 1, Sha("a"))));
+
+		await _engine.KeepMineAsync(".env");
+		await _engine.TakeServersAsync(".env");
+		await _engine.KeepMineAsync("a.txt");
+		await _engine.TakeServersAsync("a.txt");
+		await _engine.KeepMineAsync("missing.txt");
+		await _engine.TakeServersAsync("missing.txt");
+
+		Assert.Equal([".env", "a.txt"], _engine.Remote.Select(r => r.Change.Path));
+		Assert.All(_engine.Remote, r => Assert.Equal(RemoteStatus.Waiting, r.Status));
+		Assert.False(_engine.CanWrite);
+		Assert.Empty(_folder.Writes);
+		Assert.Empty(_server.Transport.Sent);
+	}
+
+	[Fact]
+	public async Task ConflictExcludedBySettings_ResolveDropsIt_NothingWrittenOrAcked()
+	{
+		_folder.WriteAccess = true;
+		_folder.Write("a.txt", "a");
+		_folder.Write("b.txt", "b");
+		_folder.Write("c.md", "c");
+		await SyncedAsync();
+		_folder.Write("a.txt", "a, edited here");
+		_folder.Write("b.txt", "b, edited here");
+		await EditMirrorAsync("a.txt", "a from the server");
+		await EditMirrorAsync("b.txt", "b from the server");
+		await _engine.SyncOnceAsync(Ct);
+		Assert.Equal(2, _engine.ConflictCount);
+		await _engine.SaveSettingsAsync(new ProjectSettings { Excludes = "*.txt" });
+		await _engine.SyncOnceAsync(Ct);
+		_server.Transport.Sent.Clear();
+		var errors = _engine.Activity.Count(a => a.Kind == SyncActivityKind.Error);
+
+		await _engine.KeepMineAsync("a.txt");
+		await _engine.TakeServersAsync("b.txt");
+
+		Assert.Empty(_engine.Remote);
+		Assert.Empty(_folder.Writes);
+		Assert.Equal(("a, edited here", "b, edited here"), (Text("a.txt"), Text("b.txt")));
+		Assert.Empty(_server.Transport.Sent);
+		Assert.Equal(errors + 2, _engine.Activity.Count(a => a.Kind == SyncActivityKind.Error && a.Text.StartsWith("Not written", StringComparison.Ordinal)));
+	}
+
+	[Fact]
+	public async Task ConflictDeletedHere_NoDeleteSent_UntilKeepMine()
+	{
+		_folder.WriteAccess = true;
+		_folder.Write("a.txt", "a");
+		_folder.Write("b.txt", "b");
+		await SyncedAsync();
+		_folder.Files.Remove("a.txt");
+		await EditMirrorAsync("a.txt", "a from the server");
+
+		await _engine.SyncOnceAsync(Ct);
+		await _engine.SyncOnceAsync(Ct);
+
+		var item = Assert.Single(_engine.Remote);
+		Assert.Equal((RemoteStatus.Conflict, null), (item.Status, item.Local));
+		Assert.DoesNotContain(_server.Transport.Sent, e => e.Type == MessageTypes.SyncDelta);
+		Assert.Equal("a from the server", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
+
+		await _engine.KeepMineAsync("a.txt");
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.False(File.Exists(_server.PathOf(Repo, "a.txt")));
+		Assert.Empty(_engine.Remote);
+	}
+
+	[Fact]
+	public async Task WriteAccessLostWhileApplying_RestKeepsWaiting()
+	{
+		_folder.Write("a.txt", "a");
+		_folder.Write("b.txt", "b");
+		await SyncedAsync();
+		await EditMirrorAsync("a.txt", "a from the server");
+		await EditMirrorAsync("b.txt", "b from the server");
+		var errors = _engine.Activity.Count(a => a.Kind == SyncActivityKind.Error);
+
+		// "Granted" when the cycle checks, gone when the first write is made.
+		_folder.WriteAccessAnswers.Enqueue(true);
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.False(_engine.CanWrite);
+		Assert.Equal(["a.txt", "b.txt"], _engine.Remote.Select(r => r.Change.Path));
+		Assert.All(_engine.Remote, r => Assert.Equal(RemoteStatus.Waiting, r.Status));
+		Assert.Empty(_folder.Writes);
+		Assert.Equal(errors, _engine.Activity.Count(a => a.Kind == SyncActivityKind.Error));
+
+		await _engine.ApplyAsync(null);
+		Assert.Contains(_engine.Activity, a => a.Text == "Server changes wait: allow writing to the folder first.");
+
+		await _engine.AllowWritingAsync();
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(("a from the server", "b from the server"), (Text("a.txt"), Text("b.txt")));
+		Assert.Empty(_engine.Remote);
+	}
+
+	[Fact]
+	public async Task AckRefusedAfterWrite_TreatedAsWritten_DistinctMessage()
+	{
+		_folder.WriteAccess = true;
+		_folder.Write("a.txt", "v1");
+		await SyncedAsync();
+		await EditMirrorAsync("a.txt", "v2 from the server");
+		var real = _server.Transport.Reply!;
+		_server.Transport.Reply = e => e.Type == MessageTypes.SyncAck
+			? Task.FromResult<Envelope?>(Envelope.Create(MessageTypes.Error, new ErrorPayload(ErrorCodes.Internal, "Database is locked."), e.CorrelationId))
+			: real(e);
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal("v2 from the server", Text("a.txt"));
+		Assert.Empty(_engine.Remote);
+		Assert.Contains(_engine.Activity, a => a.Text == "Wrote a.txt, but the server did not take the confirmation: Database is locked.");
+		Assert.DoesNotContain(_engine.Activity, a => a.Text.StartsWith("Could not apply", StringComparison.Ordinal));
+		Assert.DoesNotContain(_server.Transport.Sent, e => e.Type is MessageTypes.SyncDelta or MessageTypes.SyncChunk);
 	}
 
 	private static Envelope Remote(string repo, params RemoteChange[] changes) =>

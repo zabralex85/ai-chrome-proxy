@@ -309,8 +309,8 @@ public sealed partial class SyncEngine(ITransport transport, IFolderAccess folde
 			var repo = _repo;
 			var started = time.GetTimestamp();
 
-			// A file in conflict is treated like a backed-off one: neither uploaded nor deleted until the user resolves it.
-			var backedOff = entries.Where(e => BackedOff(e) is not null || _remote.GetValueOrDefault(e.Path)?.Status == RemoteStatus.Conflict).ToDictionary(e => e.Path, StringComparer.Ordinal);
+			// A file in conflict is treated like a backed-off one: neither uploaded nor deleted (also when it is gone here) until the user resolves it.
+			var backedOff = entries.Where(e => BackedOff(e) is not null || Conflicted(e.Path) is not null).ToDictionary(e => e.Path, StringComparer.Ordinal);
 			var listed = entries.Select(e => e.Path).ToHashSet(StringComparer.Ordinal);
 			bool Kept(string path) => !listed.Contains(path) && SyncPath.IsKept(path, scan.Keep);
 			List<string> need;
@@ -344,7 +344,7 @@ public sealed partial class SyncEngine(ITransport transport, IFolderAccess folde
 			else
 			{
 				// What is kept is neither upserted nor deleted; a backed-off file is left out as if the server had it.
-				var known = _known.Where(k => !Kept(k.Key)).ToDictionary(StringComparer.Ordinal);
+				var known = _known.Where(k => !Kept(k.Key) && Conflicted(k.Key) is null).ToDictionary(StringComparer.Ordinal);
 				foreach (var (path, entry) in backedOff)
 				{
 					known[path] = entry;
@@ -362,11 +362,11 @@ public sealed partial class SyncEngine(ITransport transport, IFolderAccess folde
 			}
 
 			// The server now has every entry except the ones it asked for and the backed-off ones: those (until uploaded) and the kept
-			// files stay known with an unknown hash, so that their deletion is sent too.
+			// files stay known with an unknown hash, so that their deletion is sent too. A conflicted file gone here stays known as it was.
 			EnsureCurrent(generation, repo);
 			var needed = need.ToHashSet(StringComparer.Ordinal);
 			var nowKnown = entries.ToDictionary(e => e.Path, e => needed.Contains(e.Path) || backedOff.ContainsKey(e.Path) ? e with { Sha256 = string.Empty } : e, StringComparer.Ordinal);
-			foreach (var (path, entry) in _known.Where(k => Kept(k.Key)))
+			foreach (var (path, entry) in _known.Where(k => Kept(k.Key) || Conflicted(k.Key) is not null))
 			{
 				nowKnown.TryAdd(path, entry);
 			}

@@ -329,16 +329,37 @@ export async function requestWriteAccess(): Promise<boolean> {
     return root !== null && (await root.requestPermission({ mode: 'readwrite' })) === 'granted';
 }
 
-/** Replaces (or creates, with its folders) the file: createWritable writes a swap file that replaces the original only on close. */
+/**
+ * Replaces (or creates, with its folders) the file: createWritable writes a swap file that replaces the original only on close.
+ * A file this call created is removed again when the write fails (no empty file is left behind).
+ */
 export async function write(path: string, bytes: Uint8Array<ArrayBuffer>): Promise<void> {
     const { folders, name } = splitPath(path);
-    const handle = await (await parentOf(folders, true)).getFileHandle(name, { create: true });
-    const writable = await handle.createWritable();
+    const dir = await parentOf(folders, true);
+    let created = false;
+    let handle: FileSystemFileHandle;
     try {
-        await writable.write(bytes);
-        await writable.close();
+        handle = await dir.getFileHandle(name);
     } catch (e) {
-        await writable.abort().catch(() => undefined);
+        if (!(e instanceof DOMException && e.name === 'NotFoundError')) {
+            throw e;
+        }
+        handle = await dir.getFileHandle(name, { create: true });
+        created = true;
+    }
+    try {
+        const writable = await handle.createWritable();
+        try {
+            await writable.write(bytes);
+            await writable.close();
+        } catch (e) {
+            await writable.abort().catch(() => undefined);
+            throw e;
+        }
+    } catch (e) {
+        if (created) {
+            await dir.removeEntry(name).catch(() => undefined);
+        }
         throw e;
     }
 }

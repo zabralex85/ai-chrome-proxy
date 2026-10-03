@@ -55,20 +55,35 @@ public sealed partial class SyncEngine
 		{
 			await ApplyWaitingAsync(repo, generation, path, CancellationToken.None);
 		}
+		else
+		{
+			Log(SyncActivityKind.Error, "Server changes wait: allow writing to the folder first.");
+		}
 	});
 
-	/// <summary><b>Keep mine</b>: the server's version counts as seen, so the next delta uploads this folder's version (or its deletion).</summary>
+	/// <summary>
+	/// <b>Keep mine</b> of a conflict (no-op for anything else): the server's version counts as seen, so the next delta uploads this
+	/// folder's version (or its deletion).
+	/// </summary>
 	public Task KeepMineAsync(string path) => ExclusiveAsync(async (repo, _) =>
 	{
-		if (_remote.GetValueOrDefault(path) is { } item)
+		if (Conflicted(path) is { } item && !Refused(item))
 		{
 			await AckAsync(repo, item, CancellationToken.None);
 		}
 	});
 
-	/// <summary><b>Take server's</b>: writes (or deletes) the server's version without the guard; asks for write access first when needed.</summary>
+	/// <summary>
+	/// <b>Take server's</b> of a conflict (no-op for anything else): writes (or deletes) the server's version without the guard; asks for
+	/// write access first when needed.
+	/// </summary>
 	public async Task TakeServersAsync(string path)
 	{
+		if (Conflicted(path) is null)
+		{
+			return;
+		}
+
 		if (!CanWrite)
 		{
 			await AllowWritingAsync();
@@ -76,7 +91,7 @@ public sealed partial class SyncEngine
 
 		await ExclusiveAsync(async (repo, _) =>
 		{
-			if (CanWrite && _remote.GetValueOrDefault(path) is { } item && await WriteChangeAsync(repo, item.Change, CancellationToken.None))
+			if (CanWrite && Conflicted(path) is { } item && !Refused(item) && await WriteChangeAsync(repo, item.Change, CancellationToken.None))
 			{
 				await AckAsync(repo, item, CancellationToken.None);
 			}
@@ -111,6 +126,8 @@ public sealed partial class SyncEngine
 		Raise();
 		Wake();
 	}
+
+	private static bool IsVersion(byte[]? content, string sha256) => content is not null && Convert.ToHexStringLower(SHA256.HashData(content)) == sha256;
 
 	/// <summary>A folder change: nothing of the previous folder's server changes or settings applies.</summary>
 	private void ResetRemote()
@@ -184,16 +201,29 @@ public sealed partial class SyncEngine
 			{
 				EnsureCurrent(generation, repo);
 				var change = item.Change;
-				if (!SyncPath.IsValid(change.Path) || _rules?.IsIgnored(change.Path) != false)
+				if (Refused(item))
 				{
-					Update(item, null);
-					Log(SyncActivityKind.Error, $"Not written: the server sent '{change.Path}', which this folder excludes or cannot hold.");
 					continue;
 				}
 
+				var written = false;
 				try
 				{
 					var now = await folder.HashNowAsync(change.Path);
+					byte[]? content = null;
+					if (now == change.Base && change.Sha256 is not null)
+					{
+						content = await FetchAsync(repo, change.Path, SyncLimits.MaxFileSize, ct);
+						if (!IsVersion(content, change.Sha256))
+						{
+							Update(item, null);
+							continue;
+						}
+
+						// The folder again, after the fetch's round trips: a save made meanwhile wins (a conflict), it is never overwritten.
+						now = await folder.HashNowAsync(change.Path);
+					}
+
 					if (now != change.Sha256 && now != change.Base)
 					{
 						Update(item, item with { Status = RemoteStatus.Conflict, Local = now });
@@ -203,13 +233,18 @@ public sealed partial class SyncEngine
 
 					if (now != change.Sha256)
 					{
-						if (!await WriteChangeAsync(repo, change, ct))
+						if (content is null)
 						{
-							Update(item, null);
-							continue;
+							await folder.DeleteAsync(change.Path);
+							deleted.Add(change.Path);
+						}
+						else
+						{
+							await folder.WriteAsync(change.Path, content);
+							received.Add(change.Path);
 						}
 
-						(change.Sha256 is null ? deleted : received).Add(change.Path);
+						written = true;
 					}
 
 					await AckAsync(repo, item, ct);
@@ -217,6 +252,15 @@ public sealed partial class SyncEngine
 				catch (Exception ex) when (ex is RequestFailedException or JSException or IOException or FormatException)
 				{
 					EnsureFolder(generation);
+					if (written)
+					{
+						// The folder has the server's version: known as such, so it is not uploaded back; the next full manifest agrees the base.
+						SetKnown(change);
+						Update(item, null);
+						Log(SyncActivityKind.Error, $"Wrote {change.Path}, but the server did not take the confirmation: {ex.Message}");
+						continue;
+					}
+
 					if (ex is JSException && !(CanWrite = await folder.HasWriteAccessAsync()))
 					{
 						return;
@@ -251,12 +295,12 @@ public sealed partial class SyncEngine
 		}
 
 		var content = await FetchAsync(repo, change.Path, SyncLimits.MaxFileSize, ct);
-		if (content is null || Convert.ToHexStringLower(SHA256.HashData(content)) != change.Sha256)
+		if (!IsVersion(content, change.Sha256))
 		{
 			return false;
 		}
 
-		await folder.WriteAsync(change.Path, content);
+		await folder.WriteAsync(change.Path, content!);
 		return true;
 	}
 
@@ -297,14 +341,7 @@ public sealed partial class SyncEngine
 	{
 		var change = item.Change;
 		await RequestAsync(MessageTypes.SyncAck, new SyncAckPayload(repo, change.Path, change.Sha256), ct);
-		if (change.Sha256 is null)
-		{
-			_known.Remove(change.Path);
-		}
-		else
-		{
-			_known[change.Path] = new ManifestEntry(change.Path, change.Size, change.Sha256);
-		}
+		SetKnown(change);
 
 		if (_remote.GetValueOrDefault(change.Path) is { } current && current != item)
 		{
@@ -318,6 +355,39 @@ public sealed partial class SyncEngine
 		{
 			Update(item, null);
 		}
+	}
+
+	/// <summary>What the server has, as far as this page knows: the change's version.</summary>
+	private void SetKnown(RemoteChange change)
+	{
+		if (change.Sha256 is null)
+		{
+			_known.Remove(change.Path);
+		}
+		else
+		{
+			_known[change.Path] = new ManifestEntry(change.Path, change.Size, change.Sha256);
+		}
+	}
+
+	/// <summary>The item of <paramref name="path"/> when it is a conflict; null otherwise.</summary>
+	private RemoteItem? Conflicted(string path) => _remote.GetValueOrDefault(path) is { Status: RemoteStatus.Conflict } item ? item : null;
+
+	/// <summary>
+	/// Drops a change of a path this folder excludes (current rules, settings included) or <see cref="SyncPath"/> rejects, with an
+	/// Actions-history error: such a path is never written or acknowledged.
+	/// </summary>
+	private bool Refused(RemoteItem item)
+	{
+		var path = item.Change.Path;
+		if (SyncPath.IsValid(path) && _rules?.IsIgnored(path) == false)
+		{
+			return false;
+		}
+
+		Update(item, null);
+		Log(SyncActivityKind.Error, $"Not written: the server sent '{path}', which this folder excludes or cannot hold.");
+		return true;
 	}
 
 	/// <summary>Replaces <paramref name="item"/> with <paramref name="next"/> (null removes it), unless a newer push replaced it meanwhile.</summary>

@@ -69,6 +69,9 @@ public sealed class FakeFolder : IFolderAccess
 	/// <summary>Whether the folder may be written; <see cref="RequestWriteAccessAsync"/> grants it. Writes without it throw like the browser.</summary>
 	public bool WriteAccess { get; set; }
 
+	/// <summary>Answers <see cref="HasWriteAccessAsync"/> gives first, one per call; <see cref="WriteAccess"/> once empty.</summary>
+	public Queue<bool> WriteAccessAnswers { get; } = new();
+
 	/// <summary>Path of every <see cref="WriteAsync"/> and <see cref="DeleteAsync"/> that changed the folder, in order.</summary>
 	public List<string> Writes { get; } = [];
 
@@ -157,7 +160,7 @@ public sealed class FakeFolder : IFolderAccess
 		return Task.FromResult(Files.TryGetValue(path, out var b) ? Convert.ToHexStringLower(SHA256.HashData(b)) : null);
 	}
 
-	public Task<bool> HasWriteAccessAsync() => Task.FromResult(WriteAccess);
+	public Task<bool> HasWriteAccessAsync() => Task.FromResult(WriteAccessAnswers.TryDequeue(out var answer) ? answer : WriteAccess);
 
 	public Task<bool> RequestWriteAccessAsync()
 	{
