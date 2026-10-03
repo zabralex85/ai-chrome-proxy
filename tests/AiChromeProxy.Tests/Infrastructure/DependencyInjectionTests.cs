@@ -1,4 +1,5 @@
 using AiChromeProxy.Application;
+using AiChromeProxy.Application.Transport;
 using AiChromeProxy.Infrastructure;
 using AiChromeProxy.Infrastructure.Security;
 using Microsoft.Extensions.Configuration;
@@ -22,9 +23,11 @@ public sealed class DependencyInjectionTests
 	[Fact]
 	public void AddApplication_ThenAddInfrastructure_BuildsWithValidation()
 	{
-		using (var provider = new ServiceCollection().AddApplication().AddInfrastructure(Config()).BuildServiceProvider(Strict))
+		// The host provides logging.
+		using (var provider = new ServiceCollection().AddLogging().AddApplication().AddInfrastructure(Config()).BuildServiceProvider(Strict))
 		{
 			Assert.NotNull(provider.GetRequiredService<CloudflareAccessTokenValidator>());
+			Assert.NotNull(provider.GetRequiredService<EnvelopeRouter>());
 		}
 	}
 
@@ -33,6 +36,7 @@ public sealed class DependencyInjectionTests
 		{
 			["CloudflareAccess:TeamDomain"] = "team.cloudflareaccess.com",
 			["CloudflareAccess:Audience"] = "aud",
+			["Mirror:Root"] = Path.Combine(TempRootCleanup.Root, "di-mirror"),
 		})
 		.Build();
 }

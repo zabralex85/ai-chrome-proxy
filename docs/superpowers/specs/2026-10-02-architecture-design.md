@@ -43,7 +43,7 @@ Chrome opens a web app served by the home server (through Cloudflare). The app:
 flowchart LR
   subgraph CLIENT["Client machine: Chrome"]
     FS[(Repo folder)]
-    JS[fsaccess.js<br/>FS Access API + FileSystemObserver]
+    JS[Scripts/fsaccess.ts<br/>FS Access API, polling scan]
     subgraph WASM["Blazor WASM (Client)"]
       SE[SyncEngine<br/>scan / hash / diff / guard]
       UI[UI: tree · viewer · chat · mermaid]
@@ -84,9 +84,9 @@ flowchart LR
 ### Sync flow
 
 1. "Open folder" → `showDirectoryPicker()`; the handle is stored in IndexedDB (after reload only `requestPermission` is needed).
-2. Initial scan: manifest `{path, size, mtime, sha256}` honoring `.gitignore` plus a built-in exclude list (`.git/`, `node_modules/`, `bin/`, `obj/`) → server.
+2. Initial scan: manifest `{path, size, mtime, sha256}` honoring `.gitignore` plus a built-in exclude list (`.git`, `node_modules/`, `bin/`, `obj/`, …) → server.
 3. Server diffs against the mirror → replies with missing/changed paths → browser uploads their content.
-4. Then: `FileSystemObserver` events + periodic scan → incremental deltas.
+4. Then: a periodic scan (polling every 10 s while visible; `FileSystemObserver` later) → incremental deltas, and the full manifest again every 10 minutes.
 5. Back channel: the mirror FileWatcher sees an edit not caused by sync → `{path, content, baseHash}` → browser checks the hash on the client → writes or raises a conflict.
 
 ### Chat flow
@@ -123,7 +123,7 @@ Each sub-project: its own spec → plan → SDD.
 1. **Skeleton + transport** ([spec](2026-10-02-skeleton-transport-design.md)) — 4-project solution (StyleCop via `Directory.Build.props`), Server hosts Client, single SignalR hub with envelope routing + client `ITransport`, Cloudflare Access JWT check, CI (build → test → coverage ≥ 85% via coverlet.MTP threshold), cloudflared + Access setup guide.
 1.5. **Clean architecture + test layers** ([spec](2026-10-02-clean-arch-and-test-layers-design.md)) — Domain/Application/Infrastructure/Server split with architecture tests; E2E BDD (Reqnroll + Playwright), k6 load, BenchmarkDotNet; only xunit runs in CI.
 2. **Windows host** — 2a ([spec](2026-10-02-windows-host-design.md)): service, tray, installer, releases; 2b ([spec](2026-10-03-remote-access-wizard-design.md)): remote access wizard — Cloudflare API token → tunnel, DNS, Access app; the Server runs `cloudflared` as a child process. Overall scope: Server as a Windows Service under the user's account (auto-start, no login needed), file logging, persistent config in `%ProgramData%`, Avalonia tray: first-run wizard, install/uninstall/start/stop, status, log viewer (current + historical), open UI; Velopack `Setup.exe` built by a tag-triggered release workflow.
-3. **Sync** — fsaccess.js, SyncEngine, sync handlers, mirror, FileWatcher, hash-guard, conflict UI.
+3. **Sync** — 3a ([spec](2026-10-03-sync-and-shell-design.md)): one-way sync (fsaccess.js, SyncEngine, sync handlers, mirror) and the app shell UI; 3b: back channel (FileWatcher, hash-guard, conflict UI).
 4. **Claude chat** — ClaudeRunner (configurable `Agent:*`, local-model ready), chat handlers, streaming, markdown + mermaid.
 5. **Code navigator** — tree, Monaco (read-only), highlighting via `path:line` / `path#Symbol`.
 6. **Mobile app** (`mobile/`, Flutter) — chat, progress, notifications over the same hub; Access service-token auth; push channel choice.
@@ -134,10 +134,10 @@ Found in the whole-branch review of sub-project 1; each must land in the sub-pro
 
 | Follow-up | Why | Lands in |
 |---|---|---|
-| Handler contract: `HandleAsync(Envelope, EnvelopeContext ctx, ct)` with connection id, Access identity (email from the JWT) and `ctx.SendAsync` for server-initiated messages; long-running work off the hub invocation (SignalR runs one invocation per client at a time by default). | Streaming agent events and pushing file changes need server→client sends; a long agent run must not block cancel/ping. | Sync (first spec after Windows host) |
-| Error contract: hub catches handler failures and replies `error {code, message?}` with the request's `correlationId` (`bad_request` for null/empty `Type`, `internal` for exceptions). Client `RequestAsync(envelope, timeout)` helper owns correlation. | Today a failing handler or a null `Type` leaves the caller waiting forever. | Sync |
-| Message size: keep SignalR's 32 KB `MaximumReceiveMessageSize`; chunk file content explicitly. | DoS-safe default; sync must not raise it blindly. | Sync |
-| Reconnect: the default retry policy gives up after ~42 s; sync needs indefinite reconnect + manifest re-exchange. | Long-lived sessions over a home connection. | Sync |
+| Handler contract: `HandleAsync(Envelope, EnvelopeContext ctx, ct)` with connection id, Access identity (email from the JWT) and `ctx.SendAsync` for server-initiated messages; long-running work off the hub invocation (SignalR runs one invocation per client at a time by default). | Streaming agent events and pushing file changes need server→client sends; a long agent run must not block cancel/ping. | Sync — **done (3a)** for the contract; **long-running work off the hub invocation moves to Claude chat** (sync handlers are short) |
+| Error contract: hub catches handler failures and replies `error {code, message?}` with the request's `correlationId` (`bad_request` for null/empty `Type`, `internal` for exceptions). Client `RequestAsync(envelope, timeout)` helper owns correlation. | Today a failing handler or a null `Type` leaves the caller waiting forever. | Sync — **done (3a)** |
+| Message size: keep SignalR's 32 KB `MaximumReceiveMessageSize`; chunk file content explicitly. | DoS-safe default; sync must not raise it blindly. | Sync — **done (3a)** |
+| Reconnect: the default retry policy gives up after ~42 s; sync needs indefinite reconnect + manifest re-exchange. | Long-lived sessions over a home connection. | Sync — **done (3a)** |
 | `Origin` allow-list on `/hub*` against the configured public hostname; docs: Access cookie HttpOnly + SameSite=Lax/Strict + binding cookie. | Auth rides on an ambient cookie; WebSockets aren't covered by CORS → cross-site WebSocket hijacking = RCE once the agent runs commands. | Before Claude chat |
 | Abort a connection when its Access token `exp` passes (store `exp` at upgrade time). | An open socket otherwise outlives the Access session/revocation. | Before Claude chat |
 | `AllowedHosts` restricted to the public host + `127.0.0.1`. | DNS-rebinding hardening on the home machine. | Windows host |

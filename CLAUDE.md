@@ -17,7 +17,8 @@ Open source (Apache-2.0). Everything in the repo is in English. No personal path
   - `src/AiChromeProxy.Client` — Blazor WebAssembly → Domain only.
   - `src/AiChromeProxy.Tray` — Windows tray app (Avalonia, `net10.0-windows`, CommunityToolkit.Mvvm, Velopack) → Domain, Infrastructure only: service status/control (`IServiceControl`), elevated `--admin install|uninstall`, settings, logs, updates. See [docs/windows-host.md](docs/windows-host.md).
 - Tests: `tests/AiChromeProxy.Tests` (xunit v3, CI; `net10.0-windows` because it covers the tray), `tests/AiChromeProxy.E2E` (Reqnroll + Playwright), `tests/load` (k6), `benchmarks/AiChromeProxy.Benchmarks` (BenchmarkDotNet) — see [docs/testing.md](docs/testing.md).
-- JS only where C# can't: `fsaccess.js` (File System Access API), Monaco, mermaid.
+- Sync (one way, browser → mirror) and the app shell: [docs/sync.md](docs/sync.md) — protocol (chunk data is base64url), path rules, excludes, `Mirror:Root`, known limitations, manual checklist. Browser JS interop sits behind `IFolderAccess` with a thin `[ExcludeFromCodeCoverage]` wrapper (`JsFolderAccess`).
+- Browser code only where C# can't — TypeScript (strict), compiled by MSBuild (`src/AiChromeProxy.Client/Scripts`); no Node.js needed (`Microsoft.TypeScript.MSBuild` 7 ships the native compiler).
 
 ## Process (SDD)
 

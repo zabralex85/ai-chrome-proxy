@@ -3,6 +3,7 @@ using AiChromeProxy.Application;
 using AiChromeProxy.Infrastructure;
 using AiChromeProxy.Infrastructure.Hosting;
 using AiChromeProxy.Infrastructure.Security;
+using AiChromeProxy.Infrastructure.Sync;
 using AiChromeProxy.Server.Hosting;
 using AiChromeProxy.Server.Security;
 using AiChromeProxy.Server.Transport;
@@ -34,6 +35,7 @@ builder.Services.Configure<HostFilteringOptions>(o => o.AllowedHosts = [.. serve
 
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.PostConfigure<MirrorOptions>(o => o.Root = MirrorOptions.ResolveRoot(o.Root, dataDir, builder.Environment.ContentRootPath));
 builder.Services.Configure<TunnelOptions>(builder.Configuration.GetSection(TunnelOptions.Section));
 builder.Services.AddHostedService(sp => new CloudflaredSupervisor(
 	sp.GetRequiredService<IOptions<TunnelOptions>>().Value,

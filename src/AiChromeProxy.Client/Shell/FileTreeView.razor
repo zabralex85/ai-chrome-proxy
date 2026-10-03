@@ -1,0 +1,127 @@
+@using AiChromeProxy.Client.Sync
+
+@* Roving tabindex: the active row is the tree's one Tab stop and gets DOM focus on keyboard moves (the browser scrolls it into view).
+   ponytail: every visible row is rendered; switch to <Virtualize> if expanded folders with thousands of files feel slow. *@
+@{
+    var tabStop = FileTree.TabStop(_rows, _active);
+}
+<div class="tree" role="tree" aria-label="Files" data-testid="tree" @onkeydown="OnKeyDownAsync">
+    @foreach (var row in _rows)
+    {
+        var node = row.Node;
+        var depth = row.Depth;
+        @* Keyed by path: a row keeps its element (and so its captured reference) when rows above it appear or vanish. *@
+        <div @key="node.Path" @ref="_rowElements[node.Path]" role="treeitem" tabindex="@(node.Path == tabStop ? 0 : -1)"
+             aria-level="@(depth + 1)" aria-expanded="@ExpandedAttribute(node)" aria-selected="@(node.Path == Selected ? "true" : "false")"
+             class="tree-row @(node.Path == Selected ? "selected" : null)"
+             style="padding-left: @(8 + (depth * 14))px" title="@node.Path" @onclick="() => ClickAsync(node)">
+            @if (node.IsFolder)
+            {
+                var open = _expanded.Contains(node.Path);
+                <Icon Name="@(open ? "chevron-down" : "chevron-right")" Class="chevron" />
+                <Icon Name="@(open ? "folder-open" : "folder")" Class="kind-folder" />
+                <span class="tree-name">@node.Name</span>
+            }
+            else
+            {
+                var kind = Format.FileKind(node.Name);
+                <span class="chevron"></span>
+                <Icon Name="@("file-" + kind)" Class="@("kind-" + kind)" />
+                <span class="tree-name">@node.Name</span>
+                @if (Engine.FileAt(node.Path) is { } file)
+                {
+                    <span class="badge badge-@file.State.ToString().ToLowerInvariant()" title="@BadgeTitle(file)" aria-label="@BadgeTitle(file)">@BadgeText(file.State)</span>
+                }
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private readonly HashSet<string> _expanded = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ElementReference> _rowElements = new(StringComparer.Ordinal);
+    private IReadOnlyList<SyncFile>? _files;
+    private IReadOnlyList<TreeNode> _roots = [];
+    private IReadOnlyList<TreeRow> _rows = [];
+    private string? _active;
+    private bool _focusActive;
+
+    [Parameter, EditorRequired]
+    public SyncEngine Engine { get; set; } = null!;
+
+    [Parameter]
+    public string? Selected { get; set; }
+
+    [Parameter]
+    public EventCallback<string> OnSelect { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        // The engine hands out a new list only when the set of files changed: rebuild the tree then, not on every progress tick.
+        if (!ReferenceEquals(Engine.Files, _files))
+        {
+            _files = Engine.Files;
+            _roots = FileTree.Build(Engine.Files.Select(f => f.Path));
+        }
+
+        _rows = FileTree.Rows(_roots, _expanded);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusActive && _active is not null && _rowElements.TryGetValue(_active, out var row))
+        {
+            _focusActive = false;
+            await row.FocusAsync();
+        }
+    }
+
+    private static string BadgeText(FileSyncState state) => state switch
+    {
+        FileSyncState.Synced => "✓",
+        FileSyncState.Pending => "•",
+        FileSyncState.TooLarge => "L",
+        _ => "!",
+    };
+
+    private static string BadgeTitle(SyncFile file) => file.State switch
+    {
+        FileSyncState.Synced => "Synced",
+        FileSyncState.Pending => "Pending upload",
+        FileSyncState.TooLarge => "Too large to sync (over 20 MB)",
+        _ => $"Error: {file.Error}",
+    };
+
+    private string? ExpandedAttribute(TreeNode node) => node.IsFolder ? (_expanded.Contains(node.Path) ? "true" : "false") : null;
+
+    private async Task ClickAsync(TreeNode node)
+    {
+        _active = node.Path;
+        if (!node.IsFolder)
+        {
+            await OnSelect.InvokeAsync(node.Path);
+            return;
+        }
+
+        if (!_expanded.Remove(node.Path))
+        {
+            _expanded.Add(node.Path);
+        }
+
+        _rows = FileTree.Rows(_roots, _expanded);
+    }
+
+    private async Task OnKeyDownAsync(KeyboardEventArgs e)
+    {
+        var (active, open) = FileTree.OnKey(e.Key, _rows, _active, _expanded);
+        // Only moves take focus: refocusing on Tab would pull focus back from where the browser just moved it.
+        _focusActive = e.Key is "ArrowUp" or "ArrowDown" or "Home" or "End" or "ArrowLeft" or "ArrowRight";
+        _active = active;
+
+        _rows = FileTree.Rows(_roots, _expanded);
+        if (open is not null)
+        {
+            await OnSelect.InvokeAsync(open);
+        }
+    }
+}

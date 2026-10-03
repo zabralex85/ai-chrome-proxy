@@ -11,7 +11,7 @@ public sealed class PingHandlerTests
 		var now = new DateTimeOffset(2026, 10, 2, 12, 30, 0, TimeSpan.Zero);
 		var handler = new PingHandler(new FixedTimeProvider(now));
 
-		var reply = await handler.HandleAsync(Envelope.Create(MessageTypes.Ping, new { }, "p1"), TestContext.Current.CancellationToken);
+		var reply = await handler.HandleAsync(Envelope.Create(MessageTypes.Ping, new { }, "p1"), new EnvelopeContext("conn-1", null, (_, _) => Task.CompletedTask), TestContext.Current.CancellationToken);
 
 		Assert.NotNull(reply);
 		Assert.Equal(MessageTypes.Pong, reply.Type);

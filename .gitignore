@@ -374,6 +374,8 @@ FodyWeavers.xsd
 
 # Server-side repo mirror (synced from RDP)
 /data/
+# Default dev mirror (Mirror:Root empty, no data directory): data/mirror under the Server content root
+/src/AiChromeProxy.Server/data/
 
 # Claude Code per-developer settings
 .claude/
@@ -386,3 +388,6 @@ AGENTS.md
 
 # Local packaging tools (vpk)
 /.tools/
+
+# Compiled from src/*/Scripts/*.ts by MSBuild (Microsoft.TypeScript.MSBuild)
+src/*/wwwroot/js/*.js

@@ -1,68 +1,264 @@
 @page "/"
 @using System.Diagnostics
+@using AiChromeProxy.Client.Sync
 @using AiChromeProxy.Client.Transport
 @using AiChromeProxy.Domain
 @inject ITransport Transport
+@inject SyncEngine Engine
+@inject HttpClient Http
+@inject IJSRuntime JS
+@inject TimeProvider Time
 @implements IDisposable
 
-<PageTitle>ai-chrome-proxy</PageTitle>
+<PageTitle>@(Engine.FolderName is null ? "ai-chrome-proxy" : $"{Engine.FolderName} — ai-chrome-proxy")</PageTitle>
 
-<h1>ai-chrome-proxy</h1>
-
-<p>Connection: <strong data-testid="connection-state">@Transport.State</strong></p>
-
-<button data-testid="ping-button" @onclick="PingAsync" disabled="@(Transport.State != TransportState.Connected)">Ping</button>
-
-@if (lastResult is not null)
-{
-	<p data-testid="ping-result">@lastResult</p>
-}
+<div class="shell @(_dragging is null ? null : "resizing")" data-testid="shell" data-theme="@_theme"
+     style="--left-width: @(_filesOpen ? _leftWidth : 0)px; --right-width: @(_historyOpen ? _rightWidth : 0)px">
+    <TopBar FolderName="@Engine.FolderName" State="@Transport.State" PingMs="@_pingMs" Theme="@_theme" OnToggleTheme="ToggleThemeAsync" User="@_user"
+            FilesOpen="@_filesOpen" OnToggleFiles="() => _filesOpen = !_filesOpen"
+            FilesAttention="@(_filesOpen ? null : Format.Attention(Engine.Folder, Engine.ErrorCount))"
+            HistoryOpen="@_historyOpen" OnToggleHistory="() => _historyOpen = !_historyOpen" />
+    @* Collapsed panels stay rendered (hidden by CSS) so the tree keeps its expanded folders and active row. *@
+    <Explorer Engine="Engine" Collapsed="@(!_filesOpen)" Selected="@TabSet.PathOf(_tabs.Active)" OnSelect="path => _tabs.Show(TabSet.FileTab(path))"
+              OnShowErrors="() => _tabs.Show(TabSet.Errors)" />
+    @if (_filesOpen)
+    {
+        <div class="resizer resizer-left" data-testid="sidebar-resizer" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize the file tree"
+             aria-valuenow="@_leftWidth" aria-valuemin="@PanelWidth.Min" aria-valuemax="@PanelWidth.Max"
+             @onpointerdown="e => StartDragAsync(Side.Left, e)" @onkeydown="e => ResizeByKeyAsync(Side.Left, e)"></div>
+    }
+    @* An EventCallback re-renders the component that created it once the handler ran: the tree then highlights the active tab's file. *@
+    <MainArea Engine="Engine" Tabs="_tabs" OnChanged="StateHasChanged" />
+    <ActionsHistory Engine="Engine" Collapsed="@(!_historyOpen)" State="@Transport.State" PingMs="@_pingMs" />
+    @if (_historyOpen)
+    {
+        <div class="resizer resizer-right" data-testid="history-resizer" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize the actions history"
+             aria-valuenow="@_rightWidth" aria-valuemin="@PanelWidth.Min" aria-valuemax="@PanelWidth.Max"
+             @onpointerdown="e => StartDragAsync(Side.Right, e)" @onkeydown="e => ResizeByKeyAsync(Side.Right, e)"></div>
+    }
+    @if (_dragging is not null)
+    {
+        @* Catches the pointer anywhere while a panel edge is dragged; only rendered during the drag. *@
+        <div class="resize-overlay" @onpointermove="OnDrag" @onpointerup="() => _dragging = null" @onpointerleave="() => _dragging = null"></div>
+    }
+</div>
 
 @code {
-	private readonly Dictionary<string, Stopwatch> pending = new();
-	private string? lastResult;
+    private const string ThemeKey = "aicp-theme";
 
-	protected override async Task OnInitializedAsync()
-	{
-		Transport.StateChanged += OnStateChanged;
-		Transport.Received += OnReceived;
-		if (Transport.State == TransportState.Disconnected)
-		{
-			try
-			{
-				await Transport.ConnectAsync();
-			}
-			catch (Exception ex)
-			{
-				lastResult = $"Connect failed: {ex.Message}";
-			}
-		}
-	}
+    /// <summary>Engine changes (one per file state during a sync) re-render the page at most this often.</summary>
+    private static readonly TimeSpan RenderInterval = TimeSpan.FromMilliseconds(150);
 
-	public void Dispose()
-	{
-		Transport.StateChanged -= OnStateChanged;
-		Transport.Received -= OnReceived;
-	}
+    private readonly CancellationTokenSource _stop = new();
+    private readonly TabSet _tabs = new();
+    private string? _theme;
+    private string? _user;
+    private bool _filesOpen = true;
+    private bool _historyOpen = true;
+    private int _leftWidth = 280;
+    private int _rightWidth = 300;
+    private Side? _dragging;
+    private double _dragStartX;
+    private int _dragStartWidth;
+    private long? _pingMs;
+    private int _viewport;
+    private RenderCoalescer? _render;
 
-	private async Task PingAsync()
-	{
-		var id = Guid.NewGuid().ToString("N");
-		pending[id] = Stopwatch.StartNew();
-		await Transport.SendAsync(Envelope.Create(MessageTypes.Ping, new { }, id));
-	}
+    private enum Side
+    {
+        Left,
+        Right,
+    }
 
-	private void OnStateChanged(TransportState state) => InvokeAsync(StateHasChanged);
+    public void Dispose()
+    {
+        Transport.StateChanged -= OnStateChanged;
+        Engine.Changed -= OnEngineChanged;
+        _render?.Dispose();
+        _stop.Cancel();
+        _stop.Dispose();
+    }
 
-	private void OnReceived(Envelope envelope)
-	{
-		if (envelope.Type != MessageTypes.Pong || envelope.CorrelationId is null || !pending.Remove(envelope.CorrelationId, out var sw))
-		{
-			return;
-		}
+    protected override async Task OnInitializedAsync()
+    {
+        _render = new RenderCoalescer(Time, RenderInterval, () => _ = InvokeAsync(StateHasChanged));
+        Transport.StateChanged += OnStateChanged;
+        Engine.Changed += OnEngineChanged;
+        _theme = await ReadThemeAsync();
+        await ReadViewportAsync();
+        if (Transport.State == TransportState.Disconnected)
+        {
+            _ = Transport.ConnectForeverAsync(Task.Delay, _stop.Token);
+        }
 
-		var serverTime = envelope.Payload.GetProperty("serverTime").GetString();
-		lastResult = $"Pong in {sw.ElapsedMilliseconds} ms, server time {serverTime}";
-		InvokeAsync(StateHasChanged);
-	}
+        _ = LoadUserAsync();
+        await Engine.InitializeAsync();
+        _ = Engine.RunAsync(_stop.Token);
+        _ = PingEveryAsync(TimeSpan.FromSeconds(15));
+    }
+
+    private async Task StartDragAsync(Side side, PointerEventArgs e)
+    {
+        _dragging = side;
+        _dragStartX = e.ClientX;
+        _dragStartWidth = side == Side.Left ? _leftWidth : _rightWidth;
+        await ReadViewportAsync();
+    }
+
+    private void OnDrag(PointerEventArgs e)
+    {
+        var dx = (int)(e.ClientX - _dragStartX);
+        Resize(_dragging!.Value, _dragging == Side.Left ? _dragStartWidth + dx : _dragStartWidth - dx);
+    }
+
+    /// <summary>Arrow keys on a focused panel edge move it by 16 px (towards the arrow).</summary>
+    private async Task ResizeByKeyAsync(Side side, KeyboardEventArgs e)
+    {
+        var step = e.Key switch
+        {
+            "ArrowLeft" => -16,
+            "ArrowRight" => 16,
+            _ => 0,
+        };
+        if (step != 0)
+        {
+            await ReadViewportAsync();
+            Resize(side, side == Side.Left ? _leftWidth + step : _rightWidth - step);
+        }
+    }
+
+    /// <summary>Keeps the centre at least <see cref="PanelWidth.MinCenter"/> wide (on a window resize, CSS keeps it so).</summary>
+    private void Resize(Side side, int width)
+    {
+        if (side == Side.Left)
+        {
+            _leftWidth = PanelWidth.Clamp(width, _historyOpen ? _rightWidth : 0, _viewport);
+        }
+        else
+        {
+            _rightWidth = PanelWidth.Clamp(width, _filesOpen ? _leftWidth : 0, _viewport);
+        }
+    }
+
+    private async Task ReadViewportAsync()
+    {
+        try
+        {
+            _viewport = (int)await JS.GetValueAsync<double>("window.innerWidth");
+        }
+        catch (JSException)
+        {
+            // Keep the last known width.
+        }
+    }
+
+    private async Task LoadUserAsync()
+    {
+        try
+        {
+            _user = await AccessIdentity.EmailAsync(Http, _stop.Token);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (OperationCanceledException)
+        {
+            // Disposed.
+        }
+    }
+
+    private void OnEngineChanged() => _render?.Request();
+
+    private void OnStateChanged(TransportState state)
+    {
+        if (state == TransportState.Connected)
+        {
+            _ = PingAsync();
+        }
+
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task PingEveryAsync(TimeSpan interval)
+    {
+        using (var timer = new PeriodicTimer(interval))
+        {
+            try
+            {
+                while (await timer.WaitForNextTickAsync(_stop.Token))
+                {
+                    await PingAsync();
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Disposed.
+            }
+        }
+    }
+
+    private async Task PingAsync()
+    {
+        if (Transport.State != TransportState.Connected)
+        {
+            return;
+        }
+
+        var watch = Stopwatch.StartNew();
+        try
+        {
+            await Transport.RequestAsync(Envelope.Create(MessageTypes.Ping, new { }), TimeSpan.FromSeconds(5), _stop.Token);
+            _pingMs = watch.ElapsedMilliseconds;
+        }
+        catch (Exception) when (_stop.IsCancellationRequested)
+        {
+            // Disposed: nothing to show.
+            return;
+        }
+        catch (Exception)
+        {
+            _pingMs = null;
+        }
+
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    /// <summary>System → light → dark → system; the choice is kept in localStorage (no attribute = follow the system).</summary>
+    private async Task ToggleThemeAsync()
+    {
+        _theme = _theme switch
+        {
+            null => "light",
+            "light" => "dark",
+            _ => null,
+        };
+
+        try
+        {
+            if (_theme is null)
+            {
+                await JS.InvokeVoidAsync("localStorage.removeItem", ThemeKey);
+            }
+            else
+            {
+                await JS.InvokeVoidAsync("localStorage.setItem", ThemeKey, _theme);
+            }
+        }
+        catch (JSException)
+        {
+            // Storage blocked: the choice lasts for this page only.
+        }
+    }
+
+    private async Task<string?> ReadThemeAsync()
+    {
+        try
+        {
+            var stored = await JS.InvokeAsync<string?>("localStorage.getItem", ThemeKey);
+            return stored is "light" or "dark" ? stored : null;
+        }
+        catch (JSException)
+        {
+            return null;
+        }
+    }
 }

@@ -1,5 +1,6 @@
 using AiChromeProxy.Infrastructure.Security;
 using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.JsonWebTokens;
 
 namespace AiChromeProxy.Server.Security;
 
@@ -11,6 +12,9 @@ public sealed class CloudflareAccessMiddleware(
 {
 	public const string HeaderName = "Cf-Access-Jwt-Assertion";
 	public const string CookieName = "CF_Authorization";
+
+	/// <summary><see cref="HttpContext.Items"/> key holding the validated token's <c>email</c> claim (absent when Access is disabled).</summary>
+	public const string EmailItem = "aicp.access.email";
 
 	public async Task InvokeAsync(HttpContext context)
 	{
@@ -32,6 +36,8 @@ public sealed class CloudflareAccessMiddleware(
 			return;
 		}
 
+		// Validated above: reading a claim needs no second check.
+		context.Items[EmailItem] = new JsonWebToken(token).TryGetPayloadValue<string>("email", out var email) ? email : null;
 		await next(context);
 	}
 }

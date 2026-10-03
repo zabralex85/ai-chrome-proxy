@@ -1,0 +1,72 @@
+@using AiChromeProxy.Client.Sync
+
+<aside class="panel panel-left @(Collapsed ? "collapsed" : null)" data-testid="file-tree" aria-label="Files">
+    <header class="panel-header"><span class="panel-title">Explorer</span></header>
+    <div class="panel-body" data-testid="explorer">
+        @if (Engine.Folder == FolderStatus.None)
+        {
+            <div class="empty-state">
+                <Icon Name="folder-open" Size="32" Class="empty-icon" />
+                <p>No folder is open. Pick the repository folder to mirror it to the home server.</p>
+                <button type="button" class="button primary" data-testid="open-folder" @onclick="Engine.OpenFolderAsync">Open folder</button>
+            </div>
+        }
+        else
+        {
+            var notice = Engine.Folder == FolderStatus.NeedsPermission || Engine.Blocked;
+            <div class="folder-row">
+                <Icon Name="folder" Class="kind-folder" />
+                <span class="folder-name" title="@Engine.FolderName">@Engine.FolderName</span>
+                @if (!notice)
+                {
+                    <button type="button" class="button link" data-testid="change-folder" @onclick="Engine.OpenFolderAsync">Change</button>
+                }
+            </div>
+            @if (notice)
+            {
+                <div class="notice" role="alert">
+                    <p>
+                        <Icon Name="@(Engine.Blocked ? "warning" : "lock")" />
+                        @(Engine.Blocked ? Engine.Problem : "Chrome needs your permission again to read this folder.")
+                    </p>
+                    <div class="notice-actions">
+                        <button type="button" class="button primary" data-testid="restore-access" @onclick="Engine.RestoreAccessAsync">Restore access</button>
+                        <button type="button" class="button secondary" data-testid="change-folder" @onclick="Engine.OpenFolderAsync">Change folder</button>
+                    </div>
+                </div>
+            }
+            <div class="sync-summary" data-testid="sync-summary">
+                <div><strong>@Format.Count(Engine.SyncedCount)</strong> / @Format.Count(Engine.SyncableCount) files synced · @Format.Bytes(Engine.SyncedBytes)</div>
+                <div class="muted">Last sync: @Format.Ago(Engine.LastSync, DateTimeOffset.Now)</div>
+                @if (Engine.Phase == SyncPhase.Uploading && Engine.UploadTotal > 0)
+                {
+                    <div class="progress" role="progressbar" aria-label="Upload progress" aria-valuemin="0" aria-valuemax="@Engine.UploadTotal" aria-valuenow="@Engine.UploadDone">
+                        <span style="width: @(Engine.UploadDone * 100 / Engine.UploadTotal)%"></span>
+                    </div>
+                }
+            </div>
+            <FileTreeView Engine="Engine" Selected="@Selected" OnSelect="OnSelect" />
+        }
+    </div>
+    <SyncStatus Engine="Engine" OnShowErrors="OnShowErrors" />
+</aside>
+
+@code {
+    [Parameter, EditorRequired]
+    public SyncEngine Engine { get; set; } = null!;
+
+    /// <summary>Hidden by CSS but still rendered, so the tree keeps its state.</summary>
+    [Parameter]
+    public bool Collapsed { get; set; }
+
+    /// <summary>The file of the active tab, highlighted in the tree.</summary>
+    [Parameter]
+    public string? Selected { get; set; }
+
+    [Parameter]
+    public EventCallback<string> OnSelect { get; set; }
+
+    [Parameter]
+    public EventCallback OnShowErrors { get; set; }
+}
+

@@ -9,12 +9,13 @@ public class RouterBenchmarks
 {
 	private static readonly Envelope Ping = Envelope.Create(MessageTypes.Ping, new { }, "c1");
 	private static readonly Envelope Unknown = Envelope.Create("unknown", new { }, "c2");
+	private static readonly EnvelopeContext Context = new("bench", null, (_, _) => Task.CompletedTask);
 
 	private readonly EnvelopeRouter _router = new([new PingHandler(TimeProvider.System)]);
 
 	[Benchmark]
-	public Task<Envelope?> RoutePingAsync() => _router.RouteAsync(Ping, CancellationToken.None);
+	public Task<Envelope?> RoutePingAsync() => _router.RouteAsync(Ping, Context, CancellationToken.None);
 
 	[Benchmark]
-	public Task<Envelope?> RouteUnknownAsync() => _router.RouteAsync(Unknown, CancellationToken.None);
+	public Task<Envelope?> RouteUnknownAsync() => _router.RouteAsync(Unknown, Context, CancellationToken.None);
 }

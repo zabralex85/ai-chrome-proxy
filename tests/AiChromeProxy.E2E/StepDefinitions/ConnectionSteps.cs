@@ -33,19 +33,23 @@ public sealed partial class ConnectionSteps(IPage page)
 		await ThenTheConnectionStateIsAsync("Connected");
 	}
 
-	[When("I click \"Ping\"")]
-	public async Task WhenIClickPingAsync()
+	[Then("the connection pill's tooltip shows the ping in milliseconds")]
+	public async Task ThenThePillShowsThePingAsync()
 	{
-		await page.GetByTestId("ping-button").ClickAsync();
+		await Expect(page.GetByTestId("connection-state")).ToHaveAttributeAsync("title", PingTitle());
 	}
 
-	[Then("I see \"Pong in <n> ms\" with a server time")]
-	public async Task ThenISeePongWithServerTimeAsync()
+	[Then("the connection status box shows the ping in milliseconds")]
+	public async Task ThenTheStatusBoxShowsThePingAsync()
 	{
-		await Expect(page.GetByTestId("ping-result")).ToHaveTextAsync(PongText());
+		await Expect(page.GetByTestId("connection-status")).ToContainTextAsync(PingText());
 	}
 
-	/// <summary>Home.razor: "Pong in {ms} ms, server time {DateTimeOffset UTC, round-trip format}".</summary>
-	[GeneratedRegex(@"^Pong in \d+ ms, server time \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+\+00:00$")]
-	private static partial Regex PongText();
+	/// <summary>TopBar.razor: "Ping {ms} ms" once a ping was answered (the first one is sent when the connection comes up).</summary>
+	[GeneratedRegex(@"^Ping \d+ ms$")]
+	private static partial Regex PingTitle();
+
+	/// <summary>ActionsHistory.razor: "Connected" and "{ms} ms".</summary>
+	[GeneratedRegex(@"Connected\s*\d+ ms")]
+	private static partial Regex PingText();
 }

@@ -1,4 +1,5 @@
 using AiChromeProxy.Client;
+using AiChromeProxy.Client.Sync;
 using AiChromeProxy.Client.Transport;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
@@ -10,6 +11,13 @@ builder.RootComponents.Add<HeadOutlet>("head::after");
 
 var hubUrl = new Uri(new Uri(builder.HostEnvironment.BaseAddress), "hub");
 builder.Services.AddSingleton<ITransport>(_ => new SignalRTransport(
-	new HubConnectionBuilder().WithUrl(hubUrl).WithAutomaticReconnect().Build()));
+	new HubConnectionBuilder().WithUrl(hubUrl).WithAutomaticReconnect(new ForeverRetryPolicy()).Build()));
+builder.Services.AddSingleton<JsFolderAccess>();
+builder.Services.AddSingleton<IFolderAccess>(s => s.GetRequiredService<JsFolderAccess>());
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<SyncEngine>();
+builder.Services.AddSingleton(new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
 
-await builder.Build().RunAsync();
+var host = builder.Build();
+await host.Services.GetRequiredService<JsFolderAccess>().InitAsync();
+await host.RunAsync();
