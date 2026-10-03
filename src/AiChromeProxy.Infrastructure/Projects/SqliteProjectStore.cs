@@ -10,11 +10,10 @@ namespace AiChromeProxy.Infrastructure.Projects;
 /// <summary>SQLite (WAL) implementation of <see cref="IProjectStore"/>: one connection per call, schema created once per instance.</summary>
 public sealed class SqliteProjectStore : IProjectStore
 {
-	private const string Schema = """
-		CREATE TABLE repo (name TEXT PRIMARY KEY, baselined INTEGER NOT NULL DEFAULT 0);
-		CREATE TABLE base (repo TEXT NOT NULL, path TEXT NOT NULL COLLATE NOCASE, sha256 TEXT NOT NULL, PRIMARY KEY (repo, path));
-		CREATE TABLE setting (repo TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (repo, key));
-		PRAGMA user_version=1;
+	private const string CreateTables = """
+		CREATE TABLE IF NOT EXISTS repo (name TEXT PRIMARY KEY, baselined INTEGER NOT NULL DEFAULT 0);
+		CREATE TABLE IF NOT EXISTS base (repo TEXT NOT NULL, path TEXT NOT NULL COLLATE NOCASE, sha256 TEXT NOT NULL, PRIMARY KEY (repo, path));
+		CREATE TABLE IF NOT EXISTS setting (repo TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (repo, key));
 		""";
 
 	private readonly string _path;
@@ -185,9 +184,21 @@ public sealed class SqliteProjectStore : IProjectStore
 				{
 					if (version.ExecuteScalar() is 0L)
 					{
-						using (var create = Command(connection, Schema))
+						using (var transaction = connection.BeginTransaction())
 						{
-							create.ExecuteNonQuery();
+							using (var create = Command(connection, CreateTables))
+							{
+								create.Transaction = transaction;
+								create.ExecuteNonQuery();
+							}
+
+							using (var setVersion = Command(connection, "PRAGMA user_version=1"))
+							{
+								setVersion.Transaction = transaction;
+								setVersion.ExecuteNonQuery();
+							}
+
+							transaction.Commit();
 						}
 					}
 				}

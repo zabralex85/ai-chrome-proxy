@@ -25,11 +25,15 @@ public sealed class SyncHubTests : IAsyncDisposable
 	private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
 
 	private readonly TestAccessIssuer _issuer = new();
-	private readonly string _mirror = Path.Combine(TempRootCleanup.Root, Guid.NewGuid().ToString("N"));
+	private readonly string _testRoot = Path.Combine(TempRootCleanup.Root, Guid.NewGuid().ToString("N"));
+	private readonly string _mirror;
+	private readonly string _database;
 	private readonly WebApplicationFactory<Program> _factory;
 
 	public SyncHubTests()
 	{
+		_mirror = Path.Combine(_testRoot, "mirror");
+		_database = Path.Combine(_testRoot, "aicp.db");
 		_factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
 		{
 			b.UseEnvironment(Environments.Production);
@@ -37,7 +41,7 @@ public sealed class SyncHubTests : IAsyncDisposable
 			b.UseSetting("CloudflareAccess:TeamDomain", TestAccessIssuer.TeamDomain);
 			b.UseSetting("CloudflareAccess:Audience", TestAccessIssuer.Audience);
 			b.UseSetting("Mirror:Root", _mirror);
-			b.UseSetting("Projects:Database", Path.Combine(_mirror, "aicp.db"));
+			b.UseSetting("Projects:Database", _database);
 			b.ConfigureServices(s => s.AddHttpClient(CloudflareAccessTokenValidator.JwksHttpClient)
 				.ConfigurePrimaryHttpMessageHandler(() => _issuer.Handler()));
 		});
@@ -129,9 +133,10 @@ public sealed class SyncHubTests : IAsyncDisposable
 	public async ValueTask DisposeAsync()
 	{
 		await _factory.DisposeAsync();
-		if (Directory.Exists(_mirror))
+		Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+		if (Directory.Exists(_testRoot))
 		{
-			Directory.Delete(_mirror, recursive: true);
+			Directory.Delete(_testRoot, recursive: true);
 		}
 	}
 

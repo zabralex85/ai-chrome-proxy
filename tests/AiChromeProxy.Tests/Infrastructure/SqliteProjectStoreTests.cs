@@ -82,6 +82,33 @@ public sealed class SqliteProjectStoreTests : IDisposable
 		Assert.Equal(@"C:\app\x.db", ProjectsOptions.ResolveDatabase("x.db", dataDir, @"C:\app"));
 	}
 
+	[Fact]
+	public void CrashDuringSchemaMigration_RecoveryOnNextOpen()
+	{
+		// Simulate a crash: create database with only the base table and user_version=0
+		Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+		using (var connection = new SqliteConnection($"Data Source={_path}"))
+		{
+			connection.Open();
+			using (var cmd = connection.CreateCommand())
+			{
+				cmd.CommandText = "CREATE TABLE base (repo TEXT NOT NULL, path TEXT NOT NULL COLLATE NOCASE, sha256 TEXT NOT NULL, PRIMARY KEY (repo, path))";
+				cmd.ExecuteNonQuery();
+			}
+		}
+
+		SqliteConnection.ClearAllPools();
+
+		// Next store instance should recover: create missing tables and set version to 1
+		var store = Create();
+		store.SetBases("r", [new("a.txt", "1")]);
+		var bases = store.GetBases("r");
+
+		Assert.Single(bases);
+		Assert.Equal("1", bases["a.txt"]);
+		Assert.Equal(1L, Scalar("PRAGMA user_version"));
+	}
+
 	private SqliteProjectStore Create() => new(Options.Create(new ProjectsOptions { Database = _path }));
 
 	private object? Scalar(string sql)
