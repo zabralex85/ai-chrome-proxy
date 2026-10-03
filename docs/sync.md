@@ -97,8 +97,8 @@ A synced path may be up to 260 characters (relative to the folder), so on the mi
 - **A short `Mirror:Root`** such as `C:\m` shortens every path. Set it in `%ProgramData%\AiChromeProxy\appsettings.json` (`"Mirror": { "Root": "C:\\m" }`) or as the machine environment variable `Mirror__Root`, then restart the service. Prefer the `appsettings.json` file: a machine-level environment variable reaches a Windows service only after a reboot. Outside the data directory the mirror gets **no** protected DACL, and standard users may create folders in `C:\`: create the folder yourself first and restrict it, for example (as administrator):
   ```powershell
   # The service account is the SERVICE_START_NAME of the service, not $env:USERNAME (under over-the-shoulder UAC that is the approving admin).
-  sc.exe qc AiChromeProxy
-  $svc = 'NT AUTHORITY\LocalService'   # replace with the SERVICE_START_NAME value
+  # The service account (the tray user), e.g. .\jane or DESKTOP-1\jane:
+  $svc = ((sc.exe qc AiChromeProxy) -match 'SERVICE_START_NAME') -replace '^.*:\s*', ''
   if (Test-Path C:\m) { (Get-Acl C:\m).Owner; throw 'C:\m exists and you did not create it: pick another name' }
   New-Item -ItemType Directory C:\m -ErrorAction Stop
   icacls C:\m /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "${svc}:(OI)(CI)M"
