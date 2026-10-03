@@ -17,7 +17,7 @@ public interface IServiceControl
 	/// <summary>
 	/// Elevated only, SCM/LSA/DACL work only. Protects the data directory, checks that the tray copied the Server to
 	/// <c>&lt;DataDir&gt;\server</c>, creates (or reconfigures) the service running from there as <paramref name="account"/>, lets
-	/// <paramref name="controlUser"/> start/stop it without UAC, and starts it when it is new.
+	/// <paramref name="controlUser"/> start/stop it without UAC. It does not start the service: the tray does, after a successful install.
 	/// </summary>
 	void Install(string account, string password, string controlUser);
 

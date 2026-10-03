@@ -50,7 +50,7 @@ internal static partial class ServiceInstaller
 
 	/// <summary>
 	/// Creates (or reconfigures) the service to run as <paramref name="account"/> from <c>&lt;DataDir&gt;\server</c>, which the tray already
-	/// filled (as the user, before elevating); starts it when it is new. No file is copied, renamed or deleted here.
+	/// filled (as the user, before elevating). No file is copied, renamed or deleted here, and the service is not started: the tray starts it.
 	/// </summary>
 	public static void Install(string serviceName, string account, string password, string controlUser, DataDirectory dataDir)
 	{
@@ -69,20 +69,10 @@ internal static partial class ServiceInstaller
 		{
 			ThrowIfInvalid(manager);
 			var binaryPath = ServiceSetup.BinaryPathName(ServiceSetup.ServerExecutable(dataDir.Root));
-			bool created;
-			using (var service = CreateOrReconfigure(manager, serviceName, binaryPath, ServiceSetup.ServiceStartName(account), password, out created))
+			using (var service = CreateOrReconfigure(manager, serviceName, binaryPath, ServiceSetup.ServiceStartName(account), password))
 			{
 				SetFailureActions(service);
 				GrantUserControl(service, controlSid);
-			}
-
-			// An existing service the tray stopped for the copy is started again by the tray; one that was stopped stays stopped.
-			if (created)
-			{
-				using (var controller = new ServiceController(serviceName))
-				{
-					controller.Start();
-				}
 			}
 		}
 	}
@@ -96,7 +86,15 @@ internal static partial class ServiceInstaller
 		using (var identity = WindowsIdentity.GetCurrent())
 		{
 			ServiceSetup.PrepareSettingsDirectory(dataDir, identity.User!, DataDirectoryGuard.OwnerOf, identity.Owner);
-			ServiceSetup.SyncServerDirectory(Path.Combine(AppContext.BaseDirectory, "server"), dataDir);
+			try
+			{
+				ServiceSetup.SyncServerDirectory(Path.Combine(AppContext.BaseDirectory, "server"), dataDir);
+			}
+			catch (UnauthorizedAccessException ex)
+			{
+				// A protected folder made for another account.
+				throw new IOException(ServiceSetup.AskAdministratorToDelete(dataDir.Root, $"cannot be written by you ({ex.Message})"), ex);
+			}
 		}
 	}
 
@@ -218,14 +216,13 @@ internal static partial class ServiceInstaller
 		}
 	}
 
-	private static ServiceHandle CreateOrReconfigure(ServiceHandle manager, string serviceName, string binaryPath, string account, string password, out bool created)
+	private static ServiceHandle CreateOrReconfigure(ServiceHandle manager, string serviceName, string binaryPath, string account, string password)
 	{
 		const uint access = ServiceChangeConfig | ServiceStart | ReadControl | WriteDac;
 		var service = CreateService(
 			manager, serviceName, ServiceSetup.DisplayName, access, ServiceWin32OwnProcess, ServiceAutoStart, ServiceErrorNormal,
 			binaryPath, null, IntPtr.Zero, null, account, password);
-		created = !service.IsInvalid;
-		if (created)
+		if (!service.IsInvalid)
 		{
 			return service;
 		}

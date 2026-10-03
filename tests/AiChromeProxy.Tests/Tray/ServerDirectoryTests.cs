@@ -14,11 +14,13 @@ public sealed class ServerDirectoryTests : IDisposable
 	private readonly string _temp = Path.Combine(Path.GetTempPath(), "aicp-tests", Guid.NewGuid().ToString("N"));
 	private readonly string _package;
 	private readonly DataDirectory _dataDir;
+	private readonly string _marker;
 
 	public ServerDirectoryTests()
 	{
 		_package = Path.Combine(_temp, "current", "server");
 		_dataDir = new DataDirectory(Path.Combine(_temp, "data"));
+		_marker = Path.Combine(_temp, "update-pending");
 		Directory.CreateDirectory(_dataDir.Logs);
 		File.WriteAllText(_dataDir.SettingsFile, "{}");
 		WritePackage("v2");
@@ -95,6 +97,20 @@ public sealed class ServerDirectoryTests : IDisposable
 		}
 
 		ServiceSetup.SyncServerDirectory(_package, _dataDir, attempts: 1);
+
+		Assert.Equal("v2", File.ReadAllText(Path.Combine(_dataDir.Server, Exe)));
+		AssertOnlyServer();
+	}
+
+	[Fact]
+	public async Task Sync_ServerBrieflyInUse_RetriedUntilFree()
+	{
+		WriteServer("v1");
+		var handle = new FileStream(Path.Combine(_dataDir.Server, Exe), FileMode.Open, FileAccess.Read, FileShare.Read);
+		var release = Task.Delay(TimeSpan.FromMilliseconds(700), TestContext.Current.CancellationToken).ContinueWith(_ => handle.Dispose(), TaskScheduler.Default);
+
+		ServiceSetup.SyncServerDirectory(_package, _dataDir);
+		await release;
 
 		Assert.Equal("v2", File.ReadAllText(Path.Combine(_dataDir.Server, Exe)));
 		AssertOnlyServer();
@@ -253,16 +269,55 @@ public sealed class ServerDirectoryTests : IDisposable
 	[Theory]
 	[InlineData(ServiceState.Running, "stop sync elevate:install start")]
 	[InlineData(ServiceState.Starting, "stop sync elevate:install start")]
-	[InlineData(ServiceState.Stopped, "sync elevate:install")]
-	[InlineData(ServiceState.NotInstalled, "sync elevate:install")]
-	public async Task AdminInstall_UserStopsAndSyncs_ElevatedPartOnly_RestartsWhatRan(ServiceState state, string calls)
+	[InlineData(ServiceState.Stopped, "sync elevate:install start")]
+	[InlineData(ServiceState.NotInstalled, "sync elevate:install start")]
+	public async Task AdminInstall_UserStopsAndSyncs_ElevatedPartOnly_ServiceStartedAfterwards(ServiceState state, string calls)
 	{
 		var service = new FakeServiceControl(state);
 
-		var exitCode = await RunAdminAsync(service, AdminCommand.Install, 0);
+		var exitCode = await RunAdminAsync(service, AdminCommand.Install, 0, _marker);
 
 		Assert.Equal(0, exitCode);
 		Assert.Equal(calls, string.Join(' ', service.Calls));
+		Assert.Equal(ServiceState.Running, service.State);
+	}
+
+	[Theory]
+	[InlineData(ServiceState.Running, true)]
+	[InlineData(ServiceState.Stopped, false)]
+	[InlineData(ServiceState.NotInstalled, false)]
+	public async Task AdminInstall_MarkerWhileTheServiceIsStoppedForTheCopy_GoneAfterwards(ServiceState state, bool marker)
+	{
+		var service = new FakeServiceControl(state);
+		var seen = new List<bool>();
+
+		await ServiceSetup.RunAdminCommandAsync(
+			AdminCommand.Install,
+			service,
+			() => seen.Add(File.Exists(_marker)),
+			() => service.Calls.Add("delete"),
+			command =>
+			{
+				seen.Add(File.Exists(_marker));
+				return Elevate(service, command, 0);
+			},
+			_marker);
+
+		Assert.Equal([marker, marker], seen);
+		Assert.False(File.Exists(_marker));
+	}
+
+	[Theory]
+	[InlineData(null)]
+	[InlineData(AdminCommand.Cancelled)]
+	[InlineData(5)]
+	public async Task AdminInstall_DeclinedOrFailed_StoppedServiceStaysStopped(int? elevatedExitCode)
+	{
+		var service = new FakeServiceControl(ServiceState.Stopped);
+
+		await RunAdminAsync(service, AdminCommand.Install, elevatedExitCode, _marker);
+
+		Assert.Equal("sync elevate:install", string.Join(' ', service.Calls));
 	}
 
 	[Theory]
@@ -273,7 +328,7 @@ public sealed class ServerDirectoryTests : IDisposable
 	{
 		var service = new FakeServiceControl(ServiceState.Running);
 
-		var exitCode = await RunAdminAsync(service, AdminCommand.Install, elevatedExitCode);
+		var exitCode = await RunAdminAsync(service, AdminCommand.Install, elevatedExitCode, _marker);
 
 		Assert.Equal(elevatedExitCode, exitCode);
 		Assert.Equal("stop sync elevate:install start", string.Join(' ', service.Calls));
@@ -294,10 +349,12 @@ public sealed class ServerDirectoryTests : IDisposable
 				throw error;
 			},
 			() => service.Calls.Add("delete"),
-			command => Elevate(service, command, 0)));
+			command => Elevate(service, command, 0),
+			_marker));
 
 		Assert.Same(error, thrown);
 		Assert.Equal("stop sync start", string.Join(' ', service.Calls));
+		Assert.False(File.Exists(_marker));
 	}
 
 	[Fact]
@@ -315,7 +372,8 @@ public sealed class ServerDirectoryTests : IDisposable
 				service.FailStart = new InvalidOperationException("start failed");
 			},
 			() => service.Calls.Add("delete"),
-			_ => throw error));
+			_ => throw error,
+			_marker));
 
 		Assert.Same(error, thrown);
 		Assert.Equal("stop sync start", string.Join(' ', service.Calls));
@@ -326,7 +384,7 @@ public sealed class ServerDirectoryTests : IDisposable
 	{
 		var service = new FakeServiceControl(ServiceState.Running);
 
-		var exitCode = await RunAdminAsync(service, AdminCommand.Uninstall, 0);
+		var exitCode = await RunAdminAsync(service, AdminCommand.Uninstall, 0, _marker);
 
 		Assert.Equal(0, exitCode);
 		Assert.Equal("elevate:uninstall delete", string.Join(' ', service.Calls));
@@ -340,28 +398,29 @@ public sealed class ServerDirectoryTests : IDisposable
 	{
 		var service = new FakeServiceControl(ServiceState.Running);
 
-		var exitCode = await RunAdminAsync(service, AdminCommand.Uninstall, elevatedExitCode);
+		var exitCode = await RunAdminAsync(service, AdminCommand.Uninstall, elevatedExitCode, _marker);
 
 		Assert.Equal(elevatedExitCode, exitCode);
 		Assert.Equal("elevate:uninstall", string.Join(' ', service.Calls));
 	}
 
-	private static Task<int?> RunAdminAsync(FakeServiceControl service, string command, int? elevatedExitCode) =>
+	private static Task<int?> RunAdminAsync(FakeServiceControl service, string command, int? elevatedExitCode, string marker) =>
 		ServiceSetup.RunAdminCommandAsync(
 			command,
 			service,
 			() => service.Calls.Add("sync"),
 			() => service.Calls.Add("delete"),
-			c => Elevate(service, c, elevatedExitCode));
+			c => Elevate(service, c, elevatedExitCode),
+			marker);
 
-	/// <summary>The elevated instance: on success it creates (and starts) a missing service or removes it.</summary>
+	/// <summary>The elevated instance: on success it creates a missing service (stopped) or removes it.</summary>
 	private static Task<int?> Elevate(FakeServiceControl service, string command, int? exitCode)
 	{
 		service.Calls.Add("elevate:" + command);
 		if (exitCode == 0)
 		{
 			service.State = command == AdminCommand.Uninstall ? ServiceState.NotInstalled
-				: service.State == ServiceState.NotInstalled ? ServiceState.Running : service.State;
+				: service.State == ServiceState.NotInstalled ? ServiceState.Stopped : service.State;
 		}
 
 		return Task.FromResult(exitCode);

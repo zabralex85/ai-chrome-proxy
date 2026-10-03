@@ -15,7 +15,7 @@ internal static class Program
 		// Must run first: handles Velopack's --veloapp-* hook invocations and exits.
 		VelopackApp.Build()
 			.SetAutoApplyOnStartup(false) // updates are applied only by UpdateOrchestrator, after it stopped the service
-			.OnAfterInstallFastCallback(_ => VelopackHooks.AfterInstall(new WindowsServiceControl(), SyncServer))
+			.OnAfterInstallFastCallback(_ => VelopackHooks.AfterInstall(new WindowsServiceControl(), SyncServer, UpdateOrchestrator.DefaultPendingMarker))
 			.OnAfterUpdateFastCallback(_ => VelopackHooks.AfterUpdate(new WindowsServiceControl(), UpdateOrchestrator.DefaultPendingMarker, SyncServer))
 			.OnBeforeUninstallFastCallback(_ =>
 			{
@@ -47,7 +47,7 @@ internal static class Program
 	/// work): the Server is copied before the install, and its copy deleted after a successful uninstall.
 	/// </summary>
 	internal static Func<string, Task<int?>> AdminCommands(IServiceControl service) =>
-		command => ServiceSetup.RunAdminCommandAsync(command, service, SyncServer, DeleteServer, AdminCommand.RunElevatedAsync);
+		command => ServiceSetup.RunAdminCommandAsync(command, service, SyncServer, DeleteServer, AdminCommand.RunElevatedAsync, UpdateOrchestrator.DefaultPendingMarker);
 
 	/// <summary>The service's copy of the Server always lives in the default data directory (<c>AICP_DATA_DIR</c> is ignored).</summary>
 	private static void SyncServer() => ServiceInstaller.SyncServer(DataDirectory.Resolve(null));

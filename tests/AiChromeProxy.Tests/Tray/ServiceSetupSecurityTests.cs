@@ -274,7 +274,9 @@ public sealed class ServiceSetupSecurityTests : IDisposable
 
 		var ex = Assert.Throws<InvalidOperationException>(() => ServiceSetup.PrepareSettingsDirectory(dataDir, Current, OwnedByAdministrators(dataDir.Root)));
 
-		Assert.Equal($"{dataDir.Root} is not protected; run Install service, or delete the folder, and retry.", ex.Message);
+		Assert.Equal(
+			$"{dataDir.Root} is not protected. Ask an administrator to delete it (back up appsettings.json and the logs folder first: they are deleted with it), then retry.",
+			ex.Message);
 	}
 
 	[Fact]

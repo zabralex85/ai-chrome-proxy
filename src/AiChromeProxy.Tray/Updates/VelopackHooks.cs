@@ -15,10 +15,10 @@ public static class VelopackHooks
 
 	/// <summary>
 	/// Setup.exe installed this version (also over an existing install): a service running from <c>&lt;DataDir&gt;\server</c> is stopped (the user
-	/// has SERVICE_STOP), <paramref name="sync"/>ed and started again if it was running. Nothing when the service is not installed; one installed by
+	/// has SERVICE_STOP), <paramref name="sync"/>ed and started again if it was running; meanwhile <paramref name="pendingMarker"/> exists. Nothing when the service is not installed; one installed by
 	/// an older version (running from the app folder) is left alone until "Install service…" moves it.
 	/// </summary>
-	public static void AfterInstall(IServiceControl service, Action sync)
+	public static void AfterInstall(IServiceControl service, Action sync, string pendingMarker)
 	{
 		try
 		{
@@ -28,8 +28,13 @@ public static class VelopackHooks
 			}
 
 			var wasRunning = service.GetState() is ServiceState.Running or ServiceState.Starting;
+			if (wasRunning)
+			{
+				// Left behind if this hook is cut off before the service runs again: the next tray start then starts it.
+				File.WriteAllText(pendingMarker, string.Empty);
+			}
 
-			// Still stopping after the wait: its files are in use, so no sync (the SCM finishes the stop; the tray shows it stopped).
+			// Still stopping after the wait: its files are in use, so no sync (the SCM finishes the stop; the tray start resumes it).
 			if (wasRunning && !service.StopAsync(CancellationToken.None).Wait(AfterInstallStopWait))
 			{
 				return;
@@ -45,6 +50,7 @@ public static class VelopackHooks
 				if (wasRunning)
 				{
 					service.StartAsync(CancellationToken.None).Wait(AfterInstallStartWait);
+					File.Delete(pendingMarker);
 				}
 			}
 		}

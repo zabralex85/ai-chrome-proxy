@@ -82,15 +82,16 @@ public static class ServiceSetup
 			Retry(() => Directory.Move(target, old), attempts);
 		}
 
+		// Fresh files: an antivirus or indexer may hold them for a moment, like the stopped service holds the old ones.
 		try
 		{
-			Directory.Move(staging, target);
+			Retry(() => Directory.Move(staging, target), attempts);
 		}
 		catch
 		{
 			if (Directory.Exists(old) && !Directory.Exists(target))
 			{
-				Directory.Move(old, target);
+				Retry(() => Directory.Move(old, target), attempts);
 			}
 
 			throw;
@@ -160,12 +161,14 @@ public static class ServiceSetup
 	/// <summary>
 	/// The tray side of <c>--admin install|uninstall</c>: every file operation runs here, as the user, so the elevated instance never copies,
 	/// renames or deletes anything in a folder the user can write (it only does SCM, LSA and DACL work).
-	/// Install: stop the service if it runs (the user has SERVICE_STOP; its files are in use), <paramref name="syncServer"/>, run the elevated
-	/// install (which starts a new service), then start again a service that was running, whatever the elevated step did. A failed sync is not
-	/// elevated. Uninstall: the elevated instance deletes the service; on success <paramref name="deleteServer"/> removes its copy of the Server.
+	/// Install: stop the service if it runs (the user has SERVICE_STOP; its files are in use), <paramref name="syncServer"/> off the UI thread,
+	/// run the elevated install, then start the service: always after a successful install (re-running it after a password change must bring an
+	/// unattended server back), else only when it was running. A failed sync is not elevated. While a running service is stopped for this,
+	/// <paramref name="pendingMarker"/> exists, so a tray killed meanwhile has it started again at the next tray start.
+	/// Uninstall: the elevated instance deletes the service; on success <paramref name="deleteServer"/> removes its copy of the Server.
 	/// </summary>
 	/// <returns>The elevated instance's exit code (null: UAC declined).</returns>
-	public static async Task<int?> RunAdminCommandAsync(string command, IServiceControl service, Action syncServer, Action deleteServer, Func<string, Task<int?>> runElevated)
+	public static async Task<int?> RunAdminCommandAsync(string command, IServiceControl service, Action syncServer, Action deleteServer, Func<string, Task<int?>> runElevated, string pendingMarker)
 	{
 		if (command == AdminCommand.Uninstall)
 		{
@@ -179,40 +182,55 @@ public static class ServiceSetup
 		}
 
 		var wasRunning = service.GetState() is ServiceState.Running or ServiceState.Starting;
-		int? exitCode;
+		if (wasRunning)
+		{
+			await File.WriteAllTextAsync(pendingMarker, string.Empty);
+		}
+
 		try
 		{
-			if (wasRunning)
+			int? exitCode;
+			try
 			{
-				await service.StopAsync(CancellationToken.None);
+				if (wasRunning)
+				{
+					await service.StopAsync(CancellationToken.None);
+				}
+
+				await Task.Run(syncServer);
+				exitCode = await runElevated(command);
+			}
+			catch
+			{
+				if (wasRunning)
+				{
+					try
+					{
+						await service.StartAsync(CancellationToken.None);
+					}
+					catch (Exception)
+					{
+						// The first error is the one to show; the tray status shows the service stopped.
+					}
+				}
+
+				throw;
 			}
 
-			syncServer();
-			exitCode = await runElevated(command);
+			if ((exitCode == 0 || wasRunning) && service.GetState() == ServiceState.Stopped)
+			{
+				await service.StartAsync(CancellationToken.None);
+			}
+
+			return exitCode;
 		}
-		catch
+		finally
 		{
 			if (wasRunning)
 			{
-				try
-				{
-					await service.StartAsync(CancellationToken.None);
-				}
-				catch (Exception)
-				{
-					// The first error is the one to show; the tray status shows the service stopped.
-				}
+				File.Delete(pendingMarker);
 			}
-
-			throw;
 		}
-
-		if (wasRunning && service.GetState() == ServiceState.Stopped)
-		{
-			await service.StartAsync(CancellationToken.None);
-		}
-
-		return exitCode;
 	}
 
 	/// <summary>Always quoted: the path is under the user's profile and may contain spaces (unquoted service paths are also a privilege-escalation hole).</summary>
@@ -322,9 +340,16 @@ public static class ServiceSetup
 		EnsureDataDirectorySafe(dataDir, user, user, ownerOf);
 		if (!new DirectoryInfo(dataDir.Root).GetAccessControl(AccessControlSections.Access).AreAccessRulesProtected)
 		{
-			throw new InvalidOperationException($"{dataDir.Root} is not protected; run Install service, or delete the folder, and retry.");
+			throw new InvalidOperationException(AskAdministratorToDelete(dataDir.Root, "is not protected"));
 		}
 	}
+
+	/// <summary>
+	/// The way out when the tray (not elevated) cannot use a data folder it does not own: "Install service…" prepares it as the user too, so only
+	/// an administrator can remove it.
+	/// </summary>
+	public static string AskAdministratorToDelete(string root, string problem) =>
+		$"{root} {problem}. Ask an administrator to delete it (back up appsettings.json and the logs folder first: they are deleted with it), then retry.";
 
 	/// <summary>The settings file's own protected DACL, set when it is created: SYSTEM and Administrators Full Control, <paramref name="user"/> Modify.</summary>
 	public static string SettingsFileDacl(SecurityIdentifier user) =>

@@ -260,9 +260,33 @@ public sealed class UpdateOrchestratorTests : IDisposable
 	{
 		_service.State = state;
 
-		VelopackHooks.AfterInstall(_service, Sync);
+		VelopackHooks.AfterInstall(_service, Sync, _marker);
 
 		Assert.Equal(calls, string.Join(' ', _service.Calls));
+	}
+
+	[Theory]
+	[InlineData(ServiceState.Running, true)]
+	[InlineData(ServiceState.Stopped, false)]
+	public void AfterInstallHook_MarkerWhileStoppedForTheCopy_GoneOnceStartedAgain(ServiceState state, bool marker)
+	{
+		_service.State = state;
+		var seen = false;
+
+		VelopackHooks.AfterInstall(_service, () => seen = File.Exists(_marker), _marker);
+
+		Assert.Equal(marker, seen);
+		Assert.False(File.Exists(_marker));
+	}
+
+	[Fact]
+	public void AfterInstallHook_StopFails_MarkerLeftForTheTrayToResolve()
+	{
+		_service.FailStop = new InvalidOperationException("denied");
+
+		VelopackHooks.AfterInstall(_service, Sync, _marker);
+
+		Assert.True(File.Exists(_marker));
 	}
 
 	[Fact]
@@ -270,7 +294,7 @@ public sealed class UpdateOrchestratorTests : IDisposable
 	{
 		_service.BinaryPathName = OldLayout;
 
-		VelopackHooks.AfterInstall(_service, Sync);
+		VelopackHooks.AfterInstall(_service, Sync, _marker);
 
 		Assert.Empty(_service.Calls);
 		Assert.Equal(ServiceState.Running, _service.State);
@@ -279,11 +303,14 @@ public sealed class UpdateOrchestratorTests : IDisposable
 	[Fact]
 	public void AfterInstallHook_SyncFails_StartedAgain_DoesNotThrow()
 	{
-		VelopackHooks.AfterInstall(_service, () =>
-		{
-			_service.Calls.Add("sync");
-			throw new IOException("in use");
-		});
+		VelopackHooks.AfterInstall(
+			_service,
+			() =>
+			{
+				_service.Calls.Add("sync");
+				throw new IOException("in use");
+			},
+			_marker);
 
 		Assert.Equal(["stop", "sync", "start"], _service.Calls);
 		Assert.Equal(ServiceState.Running, _service.State);
@@ -294,7 +321,7 @@ public sealed class UpdateOrchestratorTests : IDisposable
 	{
 		_service.FailStop = new InvalidOperationException("denied");
 
-		VelopackHooks.AfterInstall(_service, Sync);
+		VelopackHooks.AfterInstall(_service, Sync, _marker);
 
 		Assert.Equal(["stop"], _service.Calls);
 	}
