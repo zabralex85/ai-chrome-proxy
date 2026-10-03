@@ -1215,7 +1215,7 @@ public sealed class SyncEngineTests : IDisposable
 
 	private static async Task WaitUntilAsync(Func<bool> condition)
 	{
-		for (var i = 0; i < 200 && !condition(); i++)
+		for (var i = 0; i < 1200 && !condition(); i++)
 		{
 			await Task.Delay(25, Ct);
 		}

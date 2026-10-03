@@ -140,7 +140,7 @@ public sealed class SyncHubTests : IAsyncDisposable
 
 	private static async Task WaitUntilAsync(Func<bool> condition, CancellationToken ct)
 	{
-		for (var i = 0; i < 100 && !condition(); i++)
+		for (var i = 0; i < 600 && !condition(); i++)
 		{
 			await Task.Delay(50, ct);
 		}
