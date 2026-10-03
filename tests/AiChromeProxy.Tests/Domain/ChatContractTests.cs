@@ -10,6 +10,7 @@ public sealed class ChatContractTests
 {
 	public static TheoryData<ChatEvent, string> EventShapes => new()
 	{
+		{ new ChatEvent("s", "u", 1, ChatEventKinds.Prompt, Text: "hi"), """{"sessionId":"s","runId":"u","seq":1,"kind":"prompt","text":"hi","toolId":null,"name":null,"summary":null,"isError":null,"requestId":null,"decision":null,"ok":null,"costUsd":null,"durationMs":null,"error":null}""" },
 		{ new ChatEvent("s", "u", 1, ChatEventKinds.Text, Text: "he"), """{"sessionId":"s","runId":"u","seq":1,"kind":"text","text":"he","toolId":null,"name":null,"summary":null,"isError":null,"requestId":null,"decision":null,"ok":null,"costUsd":null,"durationMs":null,"error":null}""" },
 		{ new ChatEvent("s", "u", 2, ChatEventKinds.Message, Text: "hello"), """{"sessionId":"s","runId":"u","seq":2,"kind":"message","text":"hello","toolId":null,"name":null,"summary":null,"isError":null,"requestId":null,"decision":null,"ok":null,"costUsd":null,"durationMs":null,"error":null}""" },
 		{ new ChatEvent("s", "u", 3, ChatEventKinds.Tool, ToolId: "t1", Name: "Bash", Summary: "ls"), """{"sessionId":"s","runId":"u","seq":3,"kind":"tool","text":null,"toolId":"t1","name":"Bash","summary":"ls","isError":null,"requestId":null,"decision":null,"ok":null,"costUsd":null,"durationMs":null,"error":null}""" },
@@ -85,6 +86,43 @@ public sealed class ChatContractTests
 		Assert.All(parts, p => Assert.True(p.Text!.Length <= ChatLimits.MaxTextChars));
 		Assert.All(parts, p => Assert.Equal((e.SessionId, e.RunId, e.Seq, e.Kind), (p.SessionId, p.RunId, p.Seq, p.Kind)));
 		Assert.Equal(text, string.Concat(parts.Select(p => p.Text)));
+	}
+
+	[Theory]
+	[InlineData("\"")]
+	[InlineData("<")]
+	public void Split_LongestPromptOfEscapedCharacters_PartsFit(string unit)
+	{
+		var text = string.Concat(Enumerable.Repeat(unit, ChatLimits.MaxTextChars));
+
+		var parts = ChatEventSplitter.Split(new ChatEvent("s", "u", 1, ChatEventKinds.Prompt, Text: text));
+
+		Assert.True(parts.Count > 1);
+		Assert.All(parts, p => Assert.Equal(ChatEventKinds.Prompt, p.Kind));
+		Assert.All(parts, p => Assert.True(JsonSerializer.SerializeToUtf8Bytes(p, JsonSerializerOptions.Web).Length <= ChatLimits.MaxEventBytes));
+		Assert.Equal(text, string.Concat(parts.Select(p => p.Text)));
+	}
+
+	[Fact]
+	public void Split_SmallerLimit_PartsFitIt()
+	{
+		var text = new string('a', 30_000);
+
+		var parts = ChatEventSplitter.Split(new ChatEvent("s", "u", 1, ChatEventKinds.Message, Text: text), 10_000);
+
+		Assert.True(parts.Count >= 3);
+		Assert.All(parts, p => Assert.True(JsonSerializer.SerializeToUtf8Bytes(p, JsonSerializerOptions.Web).Length <= 10_000));
+		Assert.Equal(text, string.Concat(parts.Select(p => p.Text)));
+	}
+
+	[Fact]
+	public void Truncate_ByUtf8Bytes_WithEllipsis_ShortUnchanged()
+	{
+		var cut = ChatEventSplitter.Truncate(new string('é', 100), 21);
+
+		Assert.Equal(new string('é', 9) + "…", cut);
+		Assert.Equal("short", ChatEventSplitter.Truncate("short"));
+		Assert.Equal(ChatLimits.ToolSummaryBytes, Encoding.UTF8.GetByteCount(ChatEventSplitter.Truncate(new string('a', 5_000))));
 	}
 
 	[Fact]

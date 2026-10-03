@@ -11,11 +11,19 @@ public sealed class FakeAgentRunner : IAgentRunner
 	/// <summary>Thrown by <see cref="StartAsync"/> when set.</summary>
 	public Exception? StartError { get; set; }
 
+	/// <summary>When set, <see cref="StartAsync"/> waits for it (or for the run's cancellation) before starting.</summary>
+	public Task? StartGate { get; set; }
+
 	/// <summary>Every started process, in order.</summary>
 	public Channel<FakeAgentProcess> Started { get; } = Channel.CreateUnbounded<FakeAgentProcess>();
 
-	public Task<IAgentProcess> StartAsync(AgentRun run, CancellationToken ct)
+	public async Task<IAgentProcess> StartAsync(AgentRun run, CancellationToken ct)
 	{
+		if (StartGate is not null)
+		{
+			await StartGate.WaitAsync(ct);
+		}
+
 		if (StartError is not null)
 		{
 			throw StartError;
@@ -23,7 +31,7 @@ public sealed class FakeAgentRunner : IAgentRunner
 
 		var process = new FakeAgentProcess(run);
 		Started.Writer.TryWrite(process);
-		return Task.FromResult<IAgentProcess>(process);
+		return process;
 	}
 
 	/// <summary>The next started process (waits up to 10 seconds).</summary>

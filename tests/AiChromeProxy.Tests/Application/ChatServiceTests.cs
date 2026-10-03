@@ -68,18 +68,19 @@ public sealed class ChatServiceTests : IDisposable
 		await watcher.WaitAsync(e => e.Kind == ChatEventKinds.Result);
 		await sender.WaitAsync(e => e.Kind == ChatEventKinds.Result);
 
-		Assert.Equal([ChatEventKinds.Text, ChatEventKinds.Message, ChatEventKinds.Tool, ChatEventKinds.ToolResult, ChatEventKinds.Result], watcher.Events.Select(e => e.Kind));
+		Assert.Equal([ChatEventKinds.Prompt, ChatEventKinds.Text, ChatEventKinds.Message, ChatEventKinds.Tool, ChatEventKinds.ToolResult, ChatEventKinds.Result], watcher.Events.Select(e => e.Kind));
 		Assert.Equal(watcher.Events, sender.Events);
 		Assert.Empty(elsewhere.Events);
 		Assert.All(watcher.Events, e => Assert.Equal((started.SessionId, started.RunId), (e.SessionId, e.RunId)));
-		Assert.Equal(0, watcher.Events[0].Seq);
+		Assert.Equal(0, watcher.Events[1].Seq);
 
 		var (stored, final) = _store.Read(started.SessionId, 0, ChatLimits.MaxEventBytes);
 		Assert.True(final);
-		Assert.Equal(watcher.Events.Skip(1), stored);
-		Assert.Equal([1L, 2, 3, 4], stored.Select(e => e.Seq));
-		Assert.Equal("Hello there.", stored[0].Text);
-		Assert.Equal(new ChatEvent(started.SessionId, started.RunId, 4, ChatEventKinds.Result, Ok: true, CostUsd: 0.0123m, DurationMs: 1234), stored[3]);
+		Assert.Equal(watcher.Events.Where(e => e.Kind != ChatEventKinds.Text), stored);
+		Assert.Equal([1L, 2, 3, 4, 5], stored.Select(e => e.Seq));
+		Assert.Equal(new ChatEvent(started.SessionId, started.RunId, 1, ChatEventKinds.Prompt, Text: "Say hello"), stored[0]);
+		Assert.Equal("Hello there.", stored[1].Text);
+		Assert.Equal(new ChatEvent(started.SessionId, started.RunId, 5, ChatEventKinds.Result, Ok: true, CostUsd: 0.0123m, DurationMs: 1234), stored[4]);
 
 		var session = Assert.Single(await SessionsAsync(sender, Repo));
 		Assert.Equal((started.SessionId, "Say hello", false), (session.Id, session.Title, session.Running));
@@ -113,6 +114,7 @@ public sealed class ChatServiceTests : IDisposable
 		Assert.Equal(ErrorCodes.Busy, await ErrorAsync(client, MessageTypes.ChatSend, new ChatSendPayload(Repo, first.SessionId, "Two")));
 		Assert.Equal(ErrorCodes.Busy, await ErrorAsync(client, MessageTypes.ChatSend, new ChatSendPayload(Repo, null, "Two")));
 		Assert.Single(_store.ListSessions(Repo));
+		Assert.Equal([ChatEventKinds.Prompt], _store.Read(first.SessionId, 0, int.MaxValue).Events.Select(e => e.Kind));
 		await SendAsync(new Client("c2"), "other", null, "Elsewhere");
 
 		process.Write(Result);
@@ -295,7 +297,7 @@ public sealed class ChatServiceTests : IDisposable
 
 		await watcher.WaitAsync(e => e.Kind == ChatEventKinds.Result);
 		Assert.False(process.Killed);
-		Assert.Empty(sender.Events);
+		Assert.Equal([ChatEventKinds.Prompt], sender.Events.Select(e => e.Kind));
 	}
 
 	[Fact]
@@ -392,6 +394,21 @@ public sealed class ChatServiceTests : IDisposable
 		Assert.Equal(text, string.Concat(messages.Select(e => e.Text)));
 		Assert.All(client.Events, e => Assert.True(JsonSerializer.SerializeToUtf8Bytes(e, JsonSerializerOptions.Web).Length <= ChatLimits.MaxEventBytes));
 		Assert.Equal(client.Events, _store.Read(started.SessionId, 0, int.MaxValue).Events);
+
+		// Near-limit parts: every history page still fits the limit literally.
+		var after = 0L;
+		while (true)
+		{
+			var reply = await RouteAsync(client, MessageTypes.ChatHistory, new ChatHistoryPayload(started.SessionId, after));
+			Assert.True(JsonSerializer.SerializeToUtf8Bytes(reply.Payload, JsonSerializerOptions.Web).Length <= ChatLimits.MaxEventBytes);
+			var page = reply.Payload.Deserialize<ChatEventsPayload>(JsonSerializerOptions.Web)!;
+			if (page.Final)
+			{
+				break;
+			}
+
+			after = page.Events[^1].Seq;
+		}
 	}
 
 	[Fact]
@@ -406,6 +423,146 @@ public sealed class ChatServiceTests : IDisposable
 		Assert.True(process.Killed);
 		var last = _store.Read(started.SessionId, 0, int.MaxValue).Events[^1];
 		Assert.Equal((ChatEventKinds.Result, false), (last.Kind, last.Ok));
+	}
+
+	[Fact]
+	public async Task LongestPromptOfEscapes_StoredInPartsWithinTheLimit_BeforeTheRunsEvents()
+	{
+		var client = new Client("c1");
+		var text = new string('"', ChatLimits.MaxTextChars);
+
+		var started = await SendAsync(client, Repo, null, text);
+		var process = await _runner.NextAsync();
+		process.Write(Message, Result);
+		process.Exit();
+		await client.WaitAsync(e => e.Kind == ChatEventKinds.Result);
+
+		var stored = _store.Read(started.SessionId, 0, int.MaxValue).Events;
+		var prompts = stored.TakeWhile(e => e.Kind == ChatEventKinds.Prompt).ToList();
+		Assert.True(prompts.Count > 1);
+		Assert.Equal(text, string.Concat(prompts.Select(e => e.Text)));
+		Assert.Equal([ChatEventKinds.Message, ChatEventKinds.Result], stored.Skip(prompts.Count).Select(e => e.Kind));
+		Assert.All(stored, e => Assert.True(JsonSerializer.SerializeToUtf8Bytes(e, JsonSerializerOptions.Web).Length <= ChatLimits.MaxEventBytes));
+		Assert.Equal(stored, client.Events);
+	}
+
+	[Fact]
+	public async Task InvalidIdleTimeout_StillOneResult_RepoFreed()
+	{
+		_runner.IdleTimeout = TimeSpan.FromMilliseconds(-5);
+		var client = new Client("c1");
+
+		var started = await SendAsync(client, Repo, null, "Hi");
+
+		var result = await client.WaitAsync(e => e.Kind == ChatEventKinds.Result);
+		Assert.False(result.Ok);
+		Assert.Single(_store.Read(started.SessionId, 0, int.MaxValue).Events, e => e.Kind == ChatEventKinds.Result);
+		Assert.Contains(_logger.Messages, m => m.Contains("failed", StringComparison.OrdinalIgnoreCase));
+		_runner.IdleTimeout = TimeSpan.FromMinutes(10);
+		await SendAsync(client, Repo, started.SessionId, "Again");
+	}
+
+	[Fact]
+	public async Task ResultButNoExit_KilledAfterTheGrace_ResultKept()
+	{
+		var client = new Client("c1");
+		await SendAsync(client, Repo, null, "Hi");
+		var process = await _runner.NextAsync();
+
+		process.Write(Result);
+
+		var result = await AdvanceUntilAsync(client, e => e.Kind == ChatEventKinds.Result);
+		Assert.True(result.Ok);
+		Assert.True(process.Killed);
+	}
+
+	[Fact]
+	public async Task OutputClosedButNoExit_KilledAfterTheGrace_Failed()
+	{
+		var client = new Client("c1");
+		await SendAsync(client, Repo, null, "Hi");
+		var process = await _runner.NextAsync();
+
+		process.CloseOutput();
+
+		var result = await AdvanceUntilAsync(client, e => e.Kind == ChatEventKinds.Result);
+		Assert.Equal((false, "Claude's output ended but it did not exit."), (result.Ok, result.Error));
+		Assert.True(process.Killed);
+	}
+
+	[Fact]
+	public async Task CancelBeforeTheProcessStarts_Cancelled_NothingStarted()
+	{
+		_runner.StartGate = new TaskCompletionSource().Task;
+		var client = new Client("c1");
+		var started = await SendAsync(client, Repo, null, "Hi");
+
+		await RouteAsync(client, MessageTypes.ChatCancel, new ChatCancelPayload(started.RunId));
+
+		var result = await client.WaitAsync(e => e.Kind == ChatEventKinds.Result);
+		Assert.Equal((false, "Cancelled."), (result.Ok, result.Error));
+		Assert.False(_runner.Started.Reader.TryRead(out _));
+	}
+
+	[Fact]
+	public async Task StoreFailsMidRun_ProcessKilled_RepoFreed()
+	{
+		var client = new Client("c1");
+		var started = await SendAsync(client, Repo, null, "Hi");
+		var process = await _runner.NextAsync();
+
+		_store.AppendError = new IOException("disk full");
+		process.Write(Message);
+
+		var result = await client.WaitAsync(e => e.Kind == ChatEventKinds.Result);
+		Assert.False(result.Ok);
+		Assert.True(process.Killed);
+		_store.AppendError = null;
+		await SendAsync(client, Repo, started.SessionId, "Again");
+	}
+
+	[Fact]
+	public async Task ConcurrentSends_ExactlyOneBusy()
+	{
+		var client = new Client("c1");
+
+		var replies = await Task.WhenAll(Enumerable.Range(0, 2).Select(_ => Task.Run(() => RouteAsync(client, MessageTypes.ChatSend, new ChatSendPayload(Repo, null, "Hi")), Ct)));
+
+		Assert.Single(replies, r => r.Type == MessageTypes.ChatStarted);
+		Assert.Single(replies, r => r.Type == MessageTypes.Error && r.Payload.Deserialize<ErrorPayload>(JsonSerializerOptions.Web)!.Code == ErrorCodes.Busy);
+		Assert.Single(_store.ListSessions(Repo));
+	}
+
+	[Fact]
+	public async Task StalledSubscriber_DroppedAndAbortedAtTheLimit_OthersServed()
+	{
+		var stalled = new Client("c1") { Stalled = new TaskCompletionSource().Task };
+		var watcher = new Client("c2");
+		await OpenAsync(stalled, Repo);
+		await OpenAsync(watcher, Repo);
+		await SendAsync(watcher, Repo, null, "Hi");
+		var process = await _runner.NextAsync();
+
+		process.Write([.. Enumerable.Repeat(Delta, ChatService.MaxPendingPushes + 10)]);
+		process.Write(Result);
+		process.Exit();
+
+		await watcher.WaitAsync(e => e.Kind == ChatEventKinds.Result);
+		Assert.Equal(1, stalled.Aborts);
+		Assert.Equal(0, watcher.Aborts);
+		Assert.Equal(ChatService.MaxPendingPushes + 10, watcher.Events.Count(e => e.Kind == ChatEventKinds.Text));
+		Assert.Equal(1, stalled.Pushes);
+	}
+
+	private async Task<ChatEvent> AdvanceUntilAsync(Client client, Func<ChatEvent, bool> match)
+	{
+		for (var i = 0; i < 100 && !client.Events.Any(match); i++)
+		{
+			_time.Advance(TimeSpan.FromSeconds(1));
+			await Task.Delay(20, Ct);
+		}
+
+		return await client.WaitAsync(match);
 	}
 
 	private async Task<Envelope> RouteAsync(Client client, string type, object? payload) =>
@@ -438,23 +595,45 @@ public sealed class ChatServiceTests : IDisposable
 	private sealed class Client(string id)
 	{
 		private readonly List<Envelope> _pushed = [];
+		private int _aborts;
 
 		public bool Fails { get; init; }
 
-		public EnvelopeContext Context => new(id, null, (e, _) =>
+		/// <summary>When set, every send waits for it (a connection that stopped reading).</summary>
+		public Task? Stalled { get; init; }
+
+		public int Aborts => Volatile.Read(ref _aborts);
+
+		public EnvelopeContext Context => new(
+			id,
+			null,
+			(e, _) =>
+			{
+				if (Fails)
+				{
+					throw new IOException("gone");
+				}
+
+				lock (_pushed)
+				{
+					_pushed.Add(e);
+				}
+
+				return Stalled ?? Task.CompletedTask;
+			},
+			() => Interlocked.Increment(ref _aborts));
+
+		/// <summary>Gets how many envelopes reached the send function (stalled or not).</summary>
+		public int Pushes
 		{
-			if (Fails)
+			get
 			{
-				throw new IOException("gone");
+				lock (_pushed)
+				{
+					return _pushed.Count;
+				}
 			}
-
-			lock (_pushed)
-			{
-				_pushed.Add(e);
-			}
-
-			return Task.CompletedTask;
-		});
+		}
 
 		public IReadOnlyList<ChatEvent> Events => [.. Pushed(MessageTypes.ChatEvent).Select(p => p.Deserialize<ChatEvent>(JsonSerializerOptions.Web)!)];
 

@@ -91,8 +91,6 @@ public sealed class StreamJsonParser
 		return ChatEventSplitter.Split(e);
 	}
 
-	private static string Cap(string text) => New(ChatEventKinds.Result, summary: text)[0].Summary!;
-
 	private static string Summarize(string? tool, JsonNode? input, string? cwd)
 	{
 		var path = Str(input, "file_path") ?? Str(input, "notebook_path");
@@ -184,7 +182,7 @@ public sealed class StreamJsonParser
 		var ok = !Flag(root, "is_error") && subtype is null or "success";
 		decimal? cost = root["total_cost_usd"] is JsonValue c && c.TryGetValue<decimal>(out var d) ? d : null;
 		long? duration = root["duration_ms"] is JsonValue m && m.TryGetValue<long>(out var l) ? l : null;
-		var error = ok ? null : Cap(Str(root, "result") is { Length: > 0 } text ? text : subtype is null or "success" ? "error" : subtype);
+		var error = ok ? null : ChatEventSplitter.Truncate(Str(root, "result") is { Length: > 0 } text ? text : subtype is null or "success" ? "error" : subtype);
 		return [new ChatEvent(string.Empty, string.Empty, 0, ChatEventKinds.Result, Ok: ok, CostUsd: cost, DurationMs: duration, Error: error)];
 	}
 }

@@ -3,7 +3,7 @@ using AiChromeProxy.Application.Chat;
 
 namespace AiChromeProxy.Tests.Application;
 
-/// <summary>A scripted agent process: the test writes stdout lines and ends it; <see cref="Kill"/> ends it with -1.</summary>
+/// <summary>A scripted agent process: the test writes stdout lines and ends it; <see cref="Kill"/> ends a running one with -1.</summary>
 public sealed class FakeAgentProcess : IAgentProcess
 {
 	private readonly Channel<string> _lines = Channel.CreateUnbounded<string>();
@@ -23,6 +23,7 @@ public sealed class FakeAgentProcess : IAgentProcess
 
 	public string Stderr { get; set; } = string.Empty;
 
+	/// <summary>Gets a value indicating whether <see cref="Kill"/> found it still running.</summary>
 	public bool Killed { get; private set; }
 
 	public bool Disposed { get; private set; }
@@ -39,13 +40,16 @@ public sealed class FakeAgentProcess : IAgentProcess
 	/// <summary>Closes stdout and exits with <paramref name="code"/>.</summary>
 	public void Exit(int code = 0)
 	{
-		_lines.Writer.TryComplete();
+		CloseOutput();
 		_exited.TrySetResult(code);
 	}
 
+	/// <summary>Closes stdout without exiting (like a child process still holding the other pipes).</summary>
+	public void CloseOutput() => _lines.Writer.TryComplete();
+
 	public void Kill()
 	{
-		Killed = true;
+		Killed |= !_exited.Task.IsCompleted;
 		Exit(-1);
 	}
 

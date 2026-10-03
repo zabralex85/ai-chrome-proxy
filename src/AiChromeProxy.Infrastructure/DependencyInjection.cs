@@ -28,7 +28,10 @@ public static class DependencyInjection
 		services.Configure<ProjectsOptions>(configuration.GetSection(ProjectsOptions.Section));
 		services.AddSingleton<IProjectStore, SqliteProjectStore>();
 		services.AddSingleton<IChatStore, SqliteChatStore>();
-		services.Configure<AgentOptions>(configuration.GetSection(AgentOptions.Section));
+		services.AddOptions<AgentOptions>()
+			.Bind(configuration.GetSection(AgentOptions.Section))
+			.Validate(o => o.HasValidIdleTimeout, "Agent:IdleTimeout must be positive and at most 49 days, or -00:00:00.001 for no limit.")
+			.ValidateOnStart();
 		services.AddSingleton<IAgentRunner, ClaudeRunner>();
 		return services;
 	}

@@ -10,14 +10,16 @@ public static class ChatEventSplitter
 
 	/// <summary>
 	/// Truncates <c>summary</c> to <see cref="ChatLimits.ToolSummaryBytes"/> UTF-8 bytes (ending in an ellipsis) and splits a long
-	/// <c>text</c>/<c>message</c> into parts that each serialize to at most <see cref="ChatLimits.MaxEventBytes"/> bytes;
+	/// <c>prompt</c>/<c>text</c>/<c>message</c> into parts that each serialize to at most <paramref name="maxBytes"/> bytes;
 	/// parts keep the original <c>Seq</c> (the caller numbers them) and never cut a surrogate pair.
 	/// </summary>
-	public static IReadOnlyList<ChatEvent> Split(ChatEvent value)
+	/// <param name="value">The event.</param>
+	/// <param name="maxBytes">Largest serialized part; below <see cref="ChatLimits.MaxEventBytes"/> when the event must also fit a page with others' fields.</param>
+	public static IReadOnlyList<ChatEvent> Split(ChatEvent value, int maxBytes = ChatLimits.MaxEventBytes)
 	{
-		var e = value.Summary is null ? value : value with { Summary = Truncate(value.Summary, ChatLimits.ToolSummaryBytes) };
-		var splittable = e.Kind is ChatEventKinds.Text or ChatEventKinds.Message;
-		if (!splittable || e.Text is null || (e.Text.Length <= ChatLimits.MaxTextChars && Size(e) <= ChatLimits.MaxEventBytes))
+		var e = value.Summary is null ? value : value with { Summary = Truncate(value.Summary) };
+		var splittable = e.Kind is ChatEventKinds.Prompt or ChatEventKinds.Text or ChatEventKinds.Message;
+		if (!splittable || e.Text is null || (e.Text.Length <= ChatLimits.MaxTextChars && Size(e) <= maxBytes))
 		{
 			return [e];
 		}
@@ -35,7 +37,7 @@ public static class ChatEventSplitter
 					length--;
 				}
 
-				var excess = Size(e with { Text = text.Substring(start, length) }) - ChatLimits.MaxEventBytes;
+				var excess = Size(e with { Text = text.Substring(start, length) }) - maxBytes;
 				if (excess <= 0 || length <= 2)
 				{
 					break;
@@ -52,9 +54,11 @@ public static class ChatEventSplitter
 		return parts;
 	}
 
-	private static int Size(ChatEvent e) => JsonSerializer.SerializeToUtf8Bytes(e, JsonSerializerOptions.Web).Length;
-
-	private static string Truncate(string s, int maxBytes)
+	/// <summary>
+	/// <paramref name="s"/> cut to at most <paramref name="maxBytes"/> UTF-8 bytes, ending in "…" when cut; never cuts a surrogate pair.
+	/// Used for summaries and error texts.
+	/// </summary>
+	public static string Truncate(string s, int maxBytes = ChatLimits.ToolSummaryBytes)
 	{
 		if (Encoding.UTF8.GetByteCount(s) <= maxBytes)
 		{
@@ -79,4 +83,6 @@ public static class ChatEventSplitter
 
 		return string.Concat(s.AsSpan(0, end), Ellipsis);
 	}
+
+	private static int Size(ChatEvent e) => JsonSerializer.SerializeToUtf8Bytes(e, JsonSerializerOptions.Web).Length;
 }

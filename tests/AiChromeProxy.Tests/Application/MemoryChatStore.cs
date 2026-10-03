@@ -16,6 +16,9 @@ public sealed class MemoryChatStore : IChatStore
 		_time = time ?? TimeProvider.System;
 	}
 
+	/// <summary>Thrown by <see cref="Append"/> when set (a failing database).</summary>
+	public Exception? AppendError { get; set; }
+
 	public ChatSessionInfo CreateSession(string repo, string title)
 	{
 		lock (_lock)
@@ -63,6 +66,11 @@ public sealed class MemoryChatStore : IChatStore
 		if (events.Any(e => e.Kind == ChatEventKinds.Text))
 		{
 			throw new ArgumentException("Streaming text deltas are not stored.", nameof(events));
+		}
+
+		if (AppendError is not null)
+		{
+			throw AppendError;
 		}
 
 		lock (_lock)

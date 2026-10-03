@@ -16,4 +16,7 @@ public sealed class AgentOptions
 
 	/// <summary>A run with no output for this long is killed (enforced by the chat service).</summary>
 	public TimeSpan IdleTimeout { get; set; } = TimeSpan.FromMinutes(10);
+
+	/// <summary>Gets a value indicating whether <see cref="IdleTimeout"/> is positive and fits a timer (or is <see cref="Timeout.InfiniteTimeSpan"/>).</summary>
+	public bool HasValidIdleTimeout => IdleTimeout == Timeout.InfiniteTimeSpan || (IdleTimeout > TimeSpan.Zero && IdleTimeout.TotalMilliseconds <= uint.MaxValue - 1);
 }

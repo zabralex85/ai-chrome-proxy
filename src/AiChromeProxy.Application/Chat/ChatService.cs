@@ -11,19 +11,29 @@ using Microsoft.Extensions.Logging;
 namespace AiChromeProxy.Application.Chat;
 
 /// <summary>
-/// Runs the agent once per <c>chat.send</c>, one run per repo at a time, off the hub invocation; stores the run's events and pushes them
-/// (<c>chat.event</c>) to every connection subscribed to the repo (<c>chat.open</c>), plus <c>chat.sessions</c> when a run starts and ends.
+/// Runs the agent once per <c>chat.send</c>, one run per repo at a time, off the hub invocation; stores the user's message (<c>prompt</c>)
+/// and the run's events and pushes them (<c>chat.event</c>) to every connection subscribed to the repo (<c>chat.open</c>), plus
+/// <c>chat.sessions</c> when a run starts and ends.
 /// Every run ends with exactly one stored <c>result</c>: Claude's own, or <c>ok:false</c> for a cancel, the idle timeout, the server stopping,
-/// a start failure or an exit without a result line.
+/// a start failure, an exit without a result line or an unexpected error.
 /// Streaming <c>text</c> deltas are pushed with <c>seq</c> 0 and never stored: the following <c>message</c> replaces them, and catching up
 /// after a reconnect (<c>chat.history</c>) uses stored events only. Disposing (the host shutting down) stops the runs.
 /// </summary>
 public sealed class ChatService : IDisposable
 {
-	/// <summary>Room left in a <c>chat.events</c> page for its own fields and the separators between events.</summary>
-	private const int PageReserveBytes = 1024;
+	/// <summary>Pushes a connection may have pending; beyond that it is dropped (and aborted) so that it reconnects and catches up.</summary>
+	public const int MaxPendingPushes = 1_000;
+
+	/// <summary>Room kept in a <c>chat.events</c> page for its own fields and the separators between events.</summary>
+	private const int PageReserveBytes = 1_024;
+
+	/// <summary>Largest stored event, so that a page with it alone still fits <see cref="ChatLimits.MaxEventBytes"/>.</summary>
+	private const int StoredEventBytes = ChatLimits.MaxEventBytes - PageReserveBytes;
 
 	private const int TitleChars = 60;
+
+	/// <summary>How long a process may take to exit once its output is over.</summary>
+	private static readonly TimeSpan ExitGrace = TimeSpan.FromSeconds(5);
 
 	private readonly IChatStore _store;
 	private readonly IMirrorStore _mirror;
@@ -60,7 +70,7 @@ public sealed class ChatService : IDisposable
 	/// <summary>The connection is gone: it gets no more pushes (its runs go on).</summary>
 	public void Unsubscribe(string connectionId) => _subscribers.TryRemove(connectionId, out _);
 
-	/// <summary><c>chat.history</c>: one page of stored events after <paramref name="afterSeq"/>.</summary>
+	/// <summary><c>chat.history</c>: one page of stored events after <paramref name="afterSeq"/>, at most <see cref="ChatLimits.MaxEventBytes"/> serialized.</summary>
 	public ChatEventsPayload History(string? sessionId, long afterSeq)
 	{
 		if (sessionId is null || _store.SessionRepo(sessionId) is null)
@@ -68,13 +78,13 @@ public sealed class ChatService : IDisposable
 			throw new EnvelopeException(ErrorCodes.NotFound, "Unknown chat session.");
 		}
 
-		var (events, final) = _store.Read(sessionId, Math.Max(0, afterSeq), ChatLimits.MaxEventBytes - PageReserveBytes);
+		var (events, final) = _store.Read(sessionId, Math.Max(0, afterSeq), StoredEventBytes);
 		return new ChatEventsPayload(sessionId, events, final);
 	}
 
 	/// <summary>
-	/// <c>chat.send</c>: starts a run (a new session without <c>sessionId</c>) and returns at once; the sender is subscribed to the repo.
-	/// The first events may reach a client before this reply does.
+	/// <c>chat.send</c>: stores and pushes the <c>prompt</c>, starts a run (a new session without <c>sessionId</c>) and returns at once;
+	/// the sender is subscribed to the repo. The first events may reach a client before this reply does.
 	/// </summary>
 	public ChatStartedPayload Send(ChatSendPayload payload, EnvelopeContext sender)
 	{
@@ -107,9 +117,10 @@ public sealed class ChatService : IDisposable
 
 		try
 		{
-			run.SessionId = sessionId ?? _store.CreateSession(repo, Title(text)).Id;
-			run.ClaudeId = _store.GetClaudeSession(run.SessionId);
+			// Everything that can fail is read before a new session is created, so that a failure leaves no empty session.
 			var settings = _projects.GetSettings(repo);
+			run.ClaudeId = sessionId is null ? null : _store.GetClaudeSession(sessionId);
+			run.SessionId = sessionId ?? _store.CreateSession(repo, Title(text)).Id;
 
 			// Task 7: the approval endpoint (ApprovalUrl, ApprovalToken) goes here; without it `ask` only accepts edits.
 			var agentRun = new AgentRun(
@@ -119,6 +130,9 @@ public sealed class ChatService : IDisposable
 				settings.AgentPermissionsOrDefault,
 				string.IsNullOrWhiteSpace(settings.AgentModel) ? null : settings.AgentModel,
 				settings.AgentAllowedTools);
+
+			// Stored before the run starts: its seq precedes the run's events.
+			Store(run, [.. Parts(run, new ChatEvent(run.SessionId, run.Id, 0, ChatEventKinds.Prompt, Text: text))]);
 			run.Task = Task.Run(() => ExecuteAsync(run, agentRun));
 		}
 		catch
@@ -180,7 +194,11 @@ public sealed class ChatService : IDisposable
 
 	/// <summary>A failed <c>result</c> whose error is capped like a summary.</summary>
 	private static ChatEvent Failed(Run run, string error) =>
-		new(run.SessionId!, run.Id, 0, ChatEventKinds.Result, Ok: false, Error: ChatEventSplitter.Split(new ChatEvent(string.Empty, string.Empty, 0, ChatEventKinds.Result, Summary: error))[0].Summary);
+		new(run.SessionId!, run.Id, 0, ChatEventKinds.Result, Ok: false, Error: ChatEventSplitter.Truncate(error));
+
+	/// <summary>The event with the run's ids, split so that each part still fits a page once stored (the widest seq is assumed).</summary>
+	private static IEnumerable<ChatEvent> Parts(Run run, ChatEvent e) =>
+		ChatEventSplitter.Split(e with { SessionId = run.SessionId!, RunId = run.Id, Seq = long.MaxValue }, StoredEventBytes).Select(p => p with { Seq = 0 });
 
 	private void Subscribe(string repo, EnvelopeContext context)
 	{
@@ -200,7 +218,12 @@ public sealed class ChatService : IDisposable
 	{
 		foreach (var subscriber in _subscribers.Values.Where(s => string.Equals(s.Repo, repo, StringComparison.OrdinalIgnoreCase)))
 		{
-			subscriber.Enqueue(envelope);
+			// Too far behind: drop just this subscription and the connection; the client reconnects and catches up with chat.history.
+			if (!subscriber.TryEnqueue(envelope) && _subscribers.TryRemove(new KeyValuePair<string, Subscriber>(subscriber.ConnectionId, subscriber)))
+			{
+				_logger.LogWarning("Chat: connection {ConnectionId} fell {Count} pushes behind; dropping it", subscriber.ConnectionId, MaxPendingPushes);
+				subscriber.Abort();
+			}
 		}
 	}
 
@@ -216,45 +239,46 @@ public sealed class ChatService : IDisposable
 	{
 		ChatEvent? result = null;
 		IAgentProcess? process = null;
-		using (var idle = new CancellationTokenSource(_runner.IdleTimeout, _time))
+		CancellationTokenSource? idle = null;
+		try
 		{
+			idle = new CancellationTokenSource(_runner.IdleTimeout, _time);
+			Push(run.Repo, Envelope.Create(MessageTypes.ChatSessions, Sessions(run.Repo)));
 			try
 			{
-				Push(run.Repo, Envelope.Create(MessageTypes.ChatSessions, Sessions(run.Repo)));
-				try
-				{
-					process = await _runner.StartAsync(agentRun, run.Token);
-				}
-				catch (Exception ex) when (ex is FileNotFoundException or InvalidOperationException or Win32Exception)
-				{
-					// Could not start: the runner's message says what to do (e.g. set Agent:Command).
-					result = Failed(run, ex.Message);
-				}
+				process = await _runner.StartAsync(agentRun, run.Token);
+			}
+			catch (Exception ex) when (ex is FileNotFoundException or InvalidOperationException or Win32Exception)
+			{
+				// Could not start: the runner's message says what to do (e.g. set Agent:Command).
+				result = Failed(run, ex.Message);
+			}
 
-				if (process is not null)
-				{
-					result = await ReadAsync(run, process, idle);
-				}
-			}
-			catch (OperationCanceledException) when (run.Token.IsCancellationRequested)
+			if (process is not null)
 			{
-				result = Failed(run, run.CancelRequested ? "Cancelled." : "The server stopped.");
-			}
-			catch (Exception ex)
-			{
-				_logger.LogError(ex, "Chat run {RunId} in {Repo} failed", run.Id, run.Repo);
-				result = Failed(run, "The run failed; see the server log.");
-			}
-			finally
-			{
-				process?.Dispose();
+				result = await ReadAsync(run, process, idle);
 			}
 		}
-
-		Finish(run, result);
+		catch (OperationCanceledException) when (run.Token.IsCancellationRequested)
+		{
+			result = Failed(run, run.CancelRequested ? "Cancelled." : "The server stopped.");
+		}
+		catch (Exception ex)
+		{
+			_logger.LogError(ex, "Chat run {RunId} in {Repo} failed", run.Id, run.Repo);
+			result = Failed(run, "The run failed; see the server log.");
+		}
+		finally
+		{
+			// The process never outlives its run; killing also closes the run's job, which ends children it left in the background.
+			process?.Kill();
+			process?.Dispose();
+			idle?.Dispose();
+			Finish(run, result);
+		}
 	}
 
-	/// <summary>Reads the process's output until it ends or is killed (cancel, idle timeout, shutdown); returns the run's <c>result</c>.</summary>
+	/// <summary>Reads the process's output until its <c>result</c> line, its end or a kill (cancel, idle timeout, shutdown); returns the run's <c>result</c>.</summary>
 	private async Task<ChatEvent> ReadAsync(Run run, IAgentProcess process, CancellationTokenSource idle)
 	{
 		var parser = new StreamJsonParser(_parserLogger);
@@ -268,11 +292,17 @@ public sealed class ChatService : IDisposable
 					await foreach (var line in process.Lines.WithCancellation(stop.Token))
 					{
 						idle.CancelAfter(_runner.IdleTimeout);
-						result = Handle(run, parser.Feed(line)) ?? result;
+						result = Handle(run, parser.Feed(line));
 						if (parser.ClaudeSessionId is { } claudeId && claudeId != run.ClaudeId)
 						{
 							_store.SetClaudeSession(run.SessionId!, claudeId);
 							run.ClaudeId = claudeId;
+						}
+
+						if (result is not null)
+						{
+							// The answer is complete; anything Claude prints after its result line is ignored.
+							break;
 						}
 					}
 				}
@@ -285,6 +315,7 @@ public sealed class ChatService : IDisposable
 
 		if (result is not null)
 		{
+			await ExitedAsync(process);
 			return result;
 		}
 
@@ -298,34 +329,43 @@ public sealed class ChatService : IDisposable
 			return Failed(run, string.Create(CultureInfo.InvariantCulture, $"Claude sent no output for {_runner.IdleTimeout.TotalMinutes:0.##} minutes, so the run was stopped (Agent:IdleTimeout)."));
 		}
 
-		var code = await process.Exited;
-		return Failed(run, process.Stderr is { Length: > 0 } stderr ? stderr : $"Claude exited with code {code} without a result.");
+		var code = await ExitedAsync(process);
+		return Failed(run, process.Stderr is { Length: > 0 } stderr ? stderr : code is null ? "Claude's output ended but it did not exit." : $"Claude exited with code {code} without a result.");
 	}
 
-	/// <summary>Stores and pushes one line's events in order (deltas pushed only); returns its <c>result</c>, held back until the process has ended.</summary>
+	/// <summary>The exit code; null when the process did not exit within <see cref="ExitGrace"/> (it is killed then; e.g. a child still holds a pipe).</summary>
+	private async Task<int?> ExitedAsync(IAgentProcess process)
+	{
+		try
+		{
+			return await process.Exited.WaitAsync(ExitGrace, _time);
+		}
+		catch (TimeoutException)
+		{
+			process.Kill();
+			return null;
+		}
+	}
+
+	/// <summary>Stores and pushes one line's events in order (deltas pushed only); returns its <c>result</c>, which <see cref="Finish"/> stores.</summary>
 	private ChatEvent? Handle(Run run, IReadOnlyList<ChatEvent> parsed)
 	{
 		ChatEvent? result = null;
 		var batch = new List<ChatEvent>();
-		foreach (var raw in parsed)
+		foreach (var e in parsed.SelectMany(raw => Parts(run, raw)))
 		{
-			// Split with the ids filled and the widest seq, so that the stored event still fits the limit.
-			foreach (var part in ChatEventSplitter.Split(raw with { SessionId = run.SessionId!, RunId = run.Id, Seq = long.MaxValue }))
+			switch (e.Kind)
 			{
-				var e = part with { Seq = 0 };
-				switch (e.Kind)
-				{
-					case ChatEventKinds.Result:
-						result = e;
-						break;
-					case ChatEventKinds.Text:
-						Store(run, batch);
-						Push(run.Repo, Envelope.Create(MessageTypes.ChatEvent, e));
-						break;
-					default:
-						batch.Add(e);
-						break;
-				}
+				case ChatEventKinds.Result:
+					result = e;
+					break;
+				case ChatEventKinds.Text:
+					Store(run, batch);
+					Push(run.Repo, Envelope.Create(MessageTypes.ChatEvent, e));
+					break;
+				default:
+					batch.Add(e);
+					break;
 			}
 		}
 
@@ -342,7 +382,7 @@ public sealed class ChatService : IDisposable
 		}
 	}
 
-	/// <summary>Stores the result, frees the repo for the next run, then tells the subscribers (so a send right after the result is not busy).</summary>
+	/// <summary>Stores the result, frees the repo for the next run, then tells the subscribers (so a send right after the result is not busy). Never throws.</summary>
 	private void Finish(Run run, ChatEvent? result)
 	{
 		var final = (result ?? Failed(run, "The run failed; see the server log.")) with { SessionId = run.SessionId!, RunId = run.Id, Seq = 0 };
@@ -357,14 +397,14 @@ public sealed class ChatService : IDisposable
 
 		_runs.TryRemove(new KeyValuePair<string, Run>(run.Repo, run));
 		run.Dispose();
-		PushEvents(run.Repo, [final]);
 		try
 		{
+			PushEvents(run.Repo, [final]);
 			Push(run.Repo, Envelope.Create(MessageTypes.ChatSessions, Sessions(run.Repo)));
 		}
 		catch (Exception ex)
 		{
-			_logger.LogError(ex, "Chat run {RunId}: listing the sessions failed", run.Id);
+			_logger.LogError(ex, "Chat run {RunId}: pushing the end of the run failed", run.Id);
 		}
 	}
 
@@ -404,24 +444,36 @@ public sealed class ChatService : IDisposable
 	}
 
 	/// <summary>
-	/// A subscribed connection. Its pushes are chained, so they arrive in order while the run never waits for a slow connection; a failed
-	/// send is logged and skipped (a gone connection is harmless).
-	/// ponytail: the chain is unbounded for a live but stalled connection; add a cap (drop the subscriber, it catches up with chat.history) if that shows up.
+	/// A subscribed connection. Its pushes are chained, so they arrive in order while the run never waits for a slow connection;
+	/// at most <see cref="MaxPendingPushes"/> wait. A failed send is logged and skipped (a gone connection is harmless).
 	/// </summary>
 	private sealed class Subscriber(string repo, EnvelopeContext context, ILogger logger)
 	{
 		private readonly Lock _lock = new();
 		private Task _tail = Task.CompletedTask;
+		private int _pending;
 
 		public string Repo => repo;
 
-		public void Enqueue(Envelope envelope)
+		public string ConnectionId => context.ConnectionId;
+
+		/// <returns>False when <see cref="MaxPendingPushes"/> are already waiting (nothing is queued).</returns>
+		public bool TryEnqueue(Envelope envelope)
 		{
 			lock (_lock)
 			{
+				if (_pending >= MaxPendingPushes)
+				{
+					return false;
+				}
+
+				_pending++;
 				_tail = SendAfterAsync(_tail, envelope);
+				return true;
 			}
 		}
+
+		public void Abort() => context.Abort();
 
 		private async Task SendAfterAsync(Task previous, Envelope envelope)
 		{
@@ -433,6 +485,13 @@ public sealed class ChatService : IDisposable
 			catch (Exception ex)
 			{
 				logger.LogDebug(ex, "Chat push to {ConnectionId} failed", context.ConnectionId);
+			}
+			finally
+			{
+				lock (_lock)
+				{
+					_pending--;
+				}
 			}
 		}
 	}

@@ -3,6 +3,9 @@ namespace AiChromeProxy.Domain.Chat;
 /// <summary>Values of <see cref="ChatEvent.Kind"/>.</summary>
 public static class ChatEventKinds
 {
+	/// <summary>The user's message (<c>text</c>), stored first in its run.</summary>
+	public const string Prompt = "prompt";
+
 	/// <summary>A streaming text delta (<c>text</c>); not stored.</summary>
 	public const string Text = "text";
 

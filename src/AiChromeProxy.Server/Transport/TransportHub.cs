@@ -19,10 +19,12 @@ public sealed class TransportHub(EnvelopeRouter router, SyncSessions syncSession
 	{
 		var request = envelope ?? new Envelope(string.Empty, default);
 		var connectionId = Context.ConnectionId;
+		var caller = Context;
 		var context = new EnvelopeContext(
 			connectionId,
 			Context.GetHttpContext()?.Items[CloudflareAccessMiddleware.EmailItem] as string,
-			(e, ct) => hub.Clients.Client(connectionId).SendAsync(ReceiveMethod, e, ct));
+			(e, ct) => hub.Clients.Client(connectionId).SendAsync(ReceiveMethod, e, ct),
+			caller.Abort);
 
 		Envelope? reply;
 		try
