@@ -138,9 +138,43 @@ public sealed class TransportHubTests : IAsyncDisposable
 				await Task.Delay(300, ct);
 				Assert.Equal(TransportState.Connected, transport.State);
 
+				// Past exp but inside the validator's clock skew: still accepted, so not aborted.
 				clock.Advance(TimeSpan.FromSeconds(3));
+				await Task.Delay(300, ct);
+				Assert.Equal(TransportState.Connected, transport.State);
+
+				clock.Advance(CloudflareAccessTokenValidator.ClockSkew);
 				await WaitForAsync(() => transport.State != TransportState.Connected, ct);
 				Assert.NotEqual(TransportState.Connected, transport.State);
+			}
+		}
+	}
+
+	[Fact]
+	public async Task TokenExpiry_AfterDisconnect_NothingHappens_AndFarFutureExpiryIsAccepted()
+	{
+		var ct = TestContext.Current.CancellationToken;
+		var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+		using (var factory = Create(s =>
+		{
+			s.RemoveAll<TimeProvider>();
+			s.AddSingleton<TimeProvider>(clock);
+		}))
+		{
+			await using (var first = new SignalRTransport(Connection(_issuer.Token(expires: DateTime.UtcNow.AddSeconds(3)), factory)))
+			{
+				await first.ConnectAsync(ct);
+			}
+
+			// 10 years: beyond the largest timer due time (the token must already be valid).
+			await using (var second = new SignalRTransport(Connection(_issuer.Token(expires: DateTime.UtcNow.AddYears(10), notBefore: DateTime.UtcNow.AddMinutes(-1)), factory)))
+			{
+				await second.ConnectAsync(ct);
+
+				clock.Advance(TimeSpan.FromMinutes(10));
+				await Task.Delay(300, ct);
+
+				Assert.Equal(TransportState.Connected, second.State);
 			}
 		}
 	}

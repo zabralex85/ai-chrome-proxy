@@ -1,6 +1,7 @@
 using AiChromeProxy.Application.Sync;
 using AiChromeProxy.Application.Transport;
 using AiChromeProxy.Domain;
+using AiChromeProxy.Infrastructure.Security;
 using AiChromeProxy.Server.Security;
 using Microsoft.AspNetCore.SignalR;
 
@@ -10,6 +11,7 @@ public sealed class TransportHub(EnvelopeRouter router, SyncSessions syncSession
 {
 	public const string Path = "/hub";
 	public const string ReceiveMethod = "Receive";
+	private const uint MaxTimerMilliseconds = uint.MaxValue - 1;
 	private const string ExpiryTimerKey = "aicp.expiry-timer";
 
 	public async Task Send(Envelope? envelope)
@@ -45,8 +47,9 @@ public sealed class TransportHub(EnvelopeRouter router, SyncSessions syncSession
 		if (Context.GetHttpContext()?.Items[CloudflareAccessMiddleware.ExpiryItem] is DateTimeOffset expiry)
 		{
 			var context = Context;
-			var left = expiry - time.GetUtcNow();
-			context.Items[ExpiryTimerKey] = time.CreateTimer(_ => context.Abort(), null, left > TimeSpan.Zero ? left : TimeSpan.Zero, Timeout.InfiniteTimeSpan);
+			// exp plus the validator's skew: a token accepted inside the skew window must not be aborted in a reconnect loop.
+			var left = expiry + CloudflareAccessTokenValidator.ClockSkew - time.GetUtcNow();
+			context.Items[ExpiryTimerKey] = time.CreateTimer(_ => context.Abort(), null, left > TimeSpan.Zero ? TimeSpan.FromMilliseconds(Math.Min(left.TotalMilliseconds, MaxTimerMilliseconds)) : TimeSpan.Zero, Timeout.InfiniteTimeSpan);
 		}
 
 		return base.OnConnectedAsync();

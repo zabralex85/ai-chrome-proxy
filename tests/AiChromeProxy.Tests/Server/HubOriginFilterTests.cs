@@ -18,12 +18,13 @@ public sealed class HubOriginFilterTests
 
 	[Theory]
 	[InlineData("https://code.example.com", HttpStatusCode.OK)]
-	[InlineData(null, HttpStatusCode.Forbidden)]
+	[InlineData(null, HttpStatusCode.OK)]
+	[InlineData("null", HttpStatusCode.Forbidden)]
 	[InlineData("https://evil.example.com", HttpStatusCode.Forbidden)]
 	[InlineData("http://code.example.com", HttpStatusCode.Forbidden)]
 	[InlineData("https://code.example.com.evil.example.com", HttpStatusCode.Forbidden)]
 	[InlineData("http://localhost:5197", HttpStatusCode.Forbidden)]
-	public async Task Production_Negotiate_OnlyPublicOrigin(string? origin, HttpStatusCode expected)
+	public async Task Production_Negotiate_OnlyPublicOriginOrNone(string? origin, HttpStatusCode expected)
 	{
 		using (var factory = Production())
 		{
@@ -36,7 +37,8 @@ public sealed class HubOriginFilterTests
 	[InlineData("http://127.0.0.1:5197", HttpStatusCode.OK)]
 	[InlineData("https://evil.example.com", HttpStatusCode.Forbidden)]
 	[InlineData("http://localhost.evil.example.com:5197", HttpStatusCode.Forbidden)]
-	[InlineData(null, HttpStatusCode.Forbidden)]
+	[InlineData(null, HttpStatusCode.OK)]
+	[InlineData("null", HttpStatusCode.Forbidden)]
 	public async Task Development_Negotiate_AllowsLoopbackOrigins(string? origin, HttpStatusCode expected)
 	{
 		using (var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>

@@ -1,15 +1,15 @@
 using AiChromeProxy.Infrastructure.Hosting;
+using AiChromeProxy.Server.Transport;
 using Microsoft.Extensions.Options;
-using Microsoft.Net.Http.Headers;
 
 namespace AiChromeProxy.Server.Security;
 
-/// <summary>Refuses cross-site WebSocket requests to the hub: only the tunnel's own origin (plus loopback in Development) is accepted.</summary>
+/// <summary>Refuses cross-site requests to the hub: a request that names an Origin is accepted only for the tunnel's own origin (plus loopback in Development) is accepted.</summary>
 public sealed class HubOriginFilter(RequestDelegate next, IOptions<ServerOptions> options, IHostEnvironment environment)
 {
 	public async Task InvokeAsync(HttpContext context)
 	{
-		if (context.Request.Path.StartsWithSegments(Transport.TransportHub.Path) && !IsAllowed(context.Request.Headers.Origin.ToString()))
+		if (context.Request.Path.StartsWithSegments(TransportHub.Path) && context.Request.Headers.Origin.ToString() is { Length: > 0 } origin && !IsAllowed(origin))
 		{
 			context.Response.StatusCode = StatusCodes.Status403Forbidden;
 			return;
