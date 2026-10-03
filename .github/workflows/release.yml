@@ -14,6 +14,9 @@ jobs:
     env:
       # Keep in step with the Velopack package version in src/AiChromeProxy.Tray.
       VPK_VERSION: 1.2.161
+      # cloudflared bundled as server\cloudflared.exe. To update: bump both, from the release's published checksum.
+      CLOUDFLARED_VERSION: 2026.9.3
+      CLOUDFLARED_SHA256: f096265ec2fcbe9bb6e2d64268db167ced3fcbb83d894bdb9e2fcdb26f2ea7e2
       # Passed through the environment, never interpolated into a script: a tag name is attacker-chosen text.
       TAG: ${{ github.ref_name }}
     steps:
@@ -45,6 +48,15 @@ jobs:
 
       - name: Publish Server into server\ (self-contained, win-x64)
         run: dotnet publish src/AiChromeProxy.Server -c Release -r win-x64 --self-contained -p:Version=$env:VERSION -o publish/server
+
+      - name: Download cloudflared into server\ (pinned, SHA256-verified)
+        shell: pwsh
+        run: |
+          $out = 'publish/server/cloudflared.exe'
+          Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/download/$env:CLOUDFLARED_VERSION/cloudflared-windows-amd64.exe" -OutFile $out
+          $hash = (Get-FileHash $out -Algorithm SHA256).Hash
+          if ($hash -ne $env:CLOUDFLARED_SHA256) { Remove-Item $out; throw "cloudflared $env:CLOUDFLARED_VERSION SHA256 mismatch: expected $env:CLOUDFLARED_SHA256, got $hash" }
+          Copy-Item THIRD-PARTY-NOTICES.md publish/THIRD-PARTY-NOTICES.md
 
       - name: Install vpk
         run: dotnet tool install -g vpk --version $env:VPK_VERSION
