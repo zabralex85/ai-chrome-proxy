@@ -134,6 +134,34 @@ public sealed class ServiceSetupSecurityTests : IDisposable
 	}
 
 	[Fact]
+	public void PrepareDataDirectory_ForeignOwnedEntry_Refused_LogsNotCreated()
+	{
+		var dataDir = new DataDirectory(Path.Combine(_temp, "foreign-entry"));
+		Directory.CreateDirectory(dataDir.Root);
+		File.WriteAllText(dataDir.SettingsFile, "{}");
+
+		var ex = Assert.Throws<InvalidOperationException>(
+			() => ServiceSetup.PrepareDataDirectory(dataDir, Current, Current, path => path == dataDir.SettingsFile ? Other : Current));
+
+		Assert.Equal($"{dataDir.SettingsFile} was created by another user; delete it and retry.", ex.Message);
+		Assert.False(Directory.Exists(dataDir.Logs));
+	}
+
+	[Fact]
+	public void PrepareDataDirectory_ForeignOwnedRoot_Refused_DaclUntouched()
+	{
+		var dataDir = new DataDirectory(Path.Combine(_temp, "foreign-root"));
+		Directory.CreateDirectory(dataDir.Root);
+		var before = RawDacl.Sddl(dataDir.Root);
+
+		var ex = Assert.Throws<InvalidOperationException>(() => ServiceSetup.PrepareDataDirectory(dataDir, Current, Current, _ => Other));
+
+		Assert.Equal($"{dataDir.Root} was created by another user; delete it and retry.", ex.Message);
+		Assert.Equal(before, RawDacl.Sddl(dataDir.Root));
+		Assert.False(Directory.Exists(dataDir.Logs));
+	}
+
+	[Fact]
 	public void PrepareDataDirectory_ControlUserOwnedFolder_Allowed()
 	{
 		var dataDir = new DataDirectory(Path.Combine(_temp, "mine"));
@@ -210,6 +238,106 @@ public sealed class ServiceSetupSecurityTests : IDisposable
 		Assert.DoesNotContain(inherited, a => a.SecurityIdentifier.IsWellKnown(WellKnownSidType.BuiltinUsersSid)
 			|| a.SecurityIdentifier.IsWellKnown(WellKnownSidType.AuthenticatedUserSid)
 			|| a.SecurityIdentifier.IsWellKnown(WellKnownSidType.WorldSid));
+	}
+
+	[Fact]
+	public void PrepareSettingsDirectory_ForeignOwnedEntry_Refused()
+	{
+		var dataDir = new DataDirectory(Path.Combine(_temp, "settings-entry"));
+		Directory.CreateDirectory(dataDir.Root);
+		File.WriteAllText(dataDir.SettingsFile, "{}");
+
+		var ex = Assert.Throws<InvalidOperationException>(
+			() => ServiceSetup.PrepareSettingsDirectory(dataDir, Current, path => path == dataDir.SettingsFile ? Other : Current));
+
+		Assert.Equal($"{dataDir.SettingsFile} was created by another user; delete it and retry.", ex.Message);
+	}
+
+	[Fact]
+	public void PrepareSettingsDirectory_ForeignOwnedRoot_Refused_DaclUntouched()
+	{
+		var dataDir = new DataDirectory(Path.Combine(_temp, "settings-root"));
+		Directory.CreateDirectory(dataDir.Root);
+		var before = RawDacl.Sddl(dataDir.Root);
+
+		var ex = Assert.Throws<InvalidOperationException>(() => ServiceSetup.PrepareSettingsDirectory(dataDir, Current, _ => Other));
+
+		Assert.Equal($"{dataDir.Root} was created by another user; delete it and retry.", ex.Message);
+		Assert.Equal(before, RawDacl.Sddl(dataDir.Root));
+	}
+
+	[Fact]
+	public void PrepareSettingsDirectory_AdminOwnedUnprotectedRoot_Refused()
+	{
+		var dataDir = new DataDirectory(Path.Combine(_temp, "settings-unprotected"));
+		Directory.CreateDirectory(dataDir.Root);
+
+		var ex = Assert.Throws<InvalidOperationException>(() => ServiceSetup.PrepareSettingsDirectory(dataDir, Current, OwnedByAdministrators(dataDir.Root)));
+
+		Assert.Equal($"{dataDir.Root} is not protected; run Install service, or delete the folder, and retry.", ex.Message);
+	}
+
+	[Fact]
+	public void PrepareSettingsDirectory_ElevatedTray_AdminOwnedUnprotectedRoot_Protected()
+	{
+		// An elevated process (UAC off, built-in Administrator, CI) owns what it creates as Administrators, so that folder is its own.
+		var dataDir = new DataDirectory(Path.Combine(_temp, "settings-elevated"));
+		Directory.CreateDirectory(dataDir.Root);
+		var administrators = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+
+		ServiceSetup.PrepareSettingsDirectory(dataDir, Current, OwnedByAdministrators(dataDir.Root), tokenOwner: administrators);
+
+		Assert.Equal(ServiceSetup.DataDirectoryDacl(Current), RawDacl.Sddl(dataDir.Root));
+	}
+
+	[Fact]
+	public void PrepareSettingsDirectory_AdminOwnedProtectedRoot_LeftAsItIs()
+	{
+		var dataDir = new DataDirectory(Path.Combine(_temp, "settings-installed"));
+
+		// As an install leaves it; Authenticated Users stands in for the service account so the DACL differs from the user's own.
+		var account = new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null);
+		ServiceSetup.PrepareDataDirectory(dataDir, account, Current);
+
+		ServiceSetup.PrepareSettingsDirectory(dataDir, Current, OwnedByAdministrators(dataDir.Root));
+
+		Assert.Equal(ServiceSetup.DataDirectoryDacl(account), RawDacl.Sddl(dataDir.Root));
+	}
+
+	[Fact]
+	public void PrepareSettingsDirectory_RootIsJunction_Refused()
+	{
+		var target = Directory.CreateDirectory(Path.Combine(_temp, "settings-target")).FullName;
+		var root = Path.Combine(_temp, "settings-link");
+		Junction(root, target);
+		try
+		{
+			// Whoever owns the link itself.
+			Assert.Throws<InvalidOperationException>(() => ServiceSetup.PrepareSettingsDirectory(new DataDirectory(root), Current, _ => Current));
+			Assert.Throws<InvalidOperationException>(() => ServiceSetup.PrepareSettingsDirectory(new DataDirectory(root), Current, OwnedByAdministrators(root)));
+			Assert.Empty(Directory.GetFileSystemEntries(target));
+		}
+		finally
+		{
+			Directory.Delete(root);
+		}
+	}
+
+	[Fact]
+	public void SettingsFileDacl_Protected_NotInherited_SystemAdminsFull_UserModify()
+	{
+		var descriptor = new RawSecurityDescriptor(ServiceSetup.SettingsFileDacl(Other));
+		var aces = descriptor.DiscretionaryAcl!.Cast<CommonAce>().ToList();
+
+		Assert.True(descriptor.ControlFlags.HasFlag(ControlFlags.DiscretionaryAclProtected));
+		Assert.All(aces, a => Assert.Equal(AceFlags.None, a.AceFlags));
+		Assert.Equal(
+			[
+				(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), (int)FileSystemRights.FullControl),
+				(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), (int)FileSystemRights.FullControl),
+				(Other, (int)(FileSystemRights.Modify | FileSystemRights.Synchronize)),
+			],
+			aces.Select(a => (a.SecurityIdentifier, a.AccessMask)));
 	}
 
 	[Fact]
@@ -316,13 +444,17 @@ public sealed class ServiceSetupSecurityTests : IDisposable
 		Assert.Equal(1, AdminCommand.ExitCodeFor(new Win32Exception(0)));
 	}
 
-	private static SecurityIdentifier? OwnerOf(string path) =>
-		new DirectoryInfo(path).GetAccessControl().GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
-
-	private static void Junction(string link, string target)
+	internal static void Junction(string link, string target)
 	{
 		using var process = Process.Start(new ProcessStartInfo("cmd.exe", $"/c mklink /J \"{link}\" \"{target}\"") { CreateNoWindow = true, RedirectStandardOutput = true })!;
 		process.WaitForExit();
 		Assert.Equal(0, process.ExitCode);
 	}
+
+	/// <summary>The root owned by Administrators (as after an elevated install), everything else by the current user.</summary>
+	private static Func<string, SecurityIdentifier?> OwnedByAdministrators(string root) =>
+		path => path == root ? new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null) : Current;
+
+	private static SecurityIdentifier? OwnerOf(string path) =>
+		new DirectoryInfo(path).GetAccessControl().GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
 }

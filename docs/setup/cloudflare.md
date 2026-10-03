@@ -2,6 +2,8 @@
 
 The Server listens on `127.0.0.1` only. The only way in from outside is a Cloudflare Tunnel, and every request must carry a valid Cloudflare Access token — the Server checks it itself and answers `401` otherwise.
 
+**Default on the Windows host: the tray's wizard.** **Set up remote access…** does sections 1–4 below with one Cloudflare API token — tunnel, DNS, Access application and the Server settings — and the Server runs the bundled `cloudflared` itself: see [windows-host.md → Remote access](../windows-host.md#remote-access). The manual steps below stay as the alternative (dashboard, or running from source). Do not mix the two on one machine: with the manual path leave `Tunnel:Token` empty (the Server then starts no `cloudflared`); with the wizard, do not install the `cloudflared` service.
+
 ## 1. Install cloudflared (home server, Windows)
 
 ```powershell

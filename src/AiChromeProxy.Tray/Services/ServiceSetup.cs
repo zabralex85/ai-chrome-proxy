@@ -67,23 +67,27 @@ public static class ServiceSetup
 	/// As above, refusing a root or <c>logs</c> that is a link, and a root or <c>logs</c> (or an entry in them) created by an untrusted user:
 	/// <c>%ProgramData%</c> lets standard users pre-create folders and files.
 	/// </summary>
-	public static void PrepareDataDirectory(DataDirectory dataDir, SecurityIdentifier account, SecurityIdentifier controlUser)
+	public static void PrepareDataDirectory(DataDirectory dataDir, SecurityIdentifier account, SecurityIdentifier controlUser) =>
+		PrepareDataDirectory(dataDir, account, controlUser, DataDirectoryGuard.OwnerOf);
+
+	/// <summary>As above, reading owners through <paramref name="ownerOf"/> (the real one is <see cref="DataDirectoryGuard.OwnerOf"/>; tests simulate a foreign owner without admin rights).</summary>
+	public static void PrepareDataDirectory(DataDirectory dataDir, SecurityIdentifier account, SecurityIdentifier controlUser, Func<string, SecurityIdentifier?> ownerOf)
 	{
 		var dacl = DataDirectoryDacl(account);
 
 		// Root first: nothing is created inside it before it was checked. The handle stays open until the DACL is written.
 		using var rootGuard = DataDirectoryGuard.Acquire(dataDir.Root);
-		EnsureDirectorySafe(dataDir.Root, account, controlUser);
+		EnsureDirectorySafe(dataDir.Root, account, controlUser, ownerOf);
 		WriteDacl(rootGuard, dacl);
 
 		// Checked after the DACL: from now on only SYSTEM, Administrators and the account can add entries, so the check cannot be raced.
-		EnsureEntriesTrusted(dataDir.Root, account, controlUser);
+		EnsureEntriesTrusted(dataDir.Root, account, controlUser, ownerOf);
 
 		// A new logs inherits the set; an existing one (it may carry the inherited %ProgramData% ACEs) gets it written. Its files are left as they are.
 		using var logsGuard = DataDirectoryGuard.Acquire(dataDir.Logs);
-		EnsureDirectorySafe(dataDir.Logs, account, controlUser);
+		EnsureDirectorySafe(dataDir.Logs, account, controlUser, ownerOf);
 		WriteDacl(logsGuard, dacl);
-		EnsureEntriesTrusted(dataDir.Logs, account, controlUser);
+		EnsureEntriesTrusted(dataDir.Logs, account, controlUser, ownerOf);
 
 		// The held handles share WRITE, so either could in theory be turned into a junction in place meanwhile: re-check.
 		foreach (var path in new[] { dataDir.Root, dataDir.Logs })
@@ -96,6 +100,42 @@ public static class ServiceSetup
 	}
 
 	/// <summary>
+	/// Before the tray (not elevated) writes the settings file, which holds the tunnel token, possibly before any install: a missing
+	/// <c>&lt;DataDir&gt;</c> is created with the <see cref="DataDirectoryDacl"/> of <paramref name="user"/>, one the user owns gets it as
+	/// install writes it, and one owned by Administrators or SYSTEM (an install made it) must already be protected. Links and untrusted owners are refused.
+	/// </summary>
+	/// <param name="tokenOwner">The owner this process gives what it creates (<see cref="System.Security.Principal.WindowsIdentity.Owner"/>): the user, or Administrators when elevated; a folder it owns is treated as the user's own.</param>
+	public static void PrepareSettingsDirectory(DataDirectory dataDir, SecurityIdentifier user, Func<string, SecurityIdentifier?> ownerOf, SecurityIdentifier? tokenOwner = null)
+	{
+		if (!Directory.Exists(dataDir.Root))
+		{
+			// Created protected: inheriting the %ProgramData% ACEs, even briefly, would let other users read or add files.
+			var security = new DirectorySecurity();
+			security.SetSecurityDescriptorSddlForm(DataDirectoryDacl(user), AccessControlSections.Access);
+			Directory.CreateDirectory(Path.GetDirectoryName(dataDir.Root)!);
+			security.CreateDirectory(dataDir.Root);
+		}
+
+		var owner = ownerOf(dataDir.Root);
+		if (owner == user || (owner is not null && owner == tokenOwner))
+		{
+			PrepareDataDirectory(dataDir, user, user, ownerOf);
+			return;
+		}
+
+		// Not ours: the user cannot change its DACL.
+		EnsureDataDirectorySafe(dataDir, user, user, ownerOf);
+		if (!new DirectoryInfo(dataDir.Root).GetAccessControl(AccessControlSections.Access).AreAccessRulesProtected)
+		{
+			throw new InvalidOperationException($"{dataDir.Root} is not protected; run Install service, or delete the folder, and retry.");
+		}
+	}
+
+	/// <summary>The settings file's own protected DACL, set when it is created: SYSTEM and Administrators Full Control, <paramref name="user"/> Modify.</summary>
+	public static string SettingsFileDacl(SecurityIdentifier user) =>
+		new RawSecurityDescriptor($"D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1301bf;;;{user.Value})").GetSddlForm(AccessControlSections.Access);
+
+	/// <summary>
 	/// The protected DACL (no ACEs inherited from <c>%ProgramData%</c>) of the root and <c>logs</c>, as normalized SDDL: SYSTEM and Administrators
 	/// Full Control, the service account Modify, all inherited by new children; nothing for Users, Authenticated Users or Everyone.
 	/// </summary>
@@ -103,14 +143,18 @@ public static class ServiceSetup
 		new RawSecurityDescriptor($"D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;{account.Value})").GetSddlForm(AccessControlSections.Access);
 
 	/// <summary>Throws when <c>&lt;DataDir&gt;</c> or its <c>logs</c> already exists as a link, or it or an entry in it has an untrusted owner (see <see cref="IsTrustedOwner"/>).</summary>
-	public static void EnsureDataDirectorySafe(DataDirectory dataDir, SecurityIdentifier account, SecurityIdentifier controlUser)
+	public static void EnsureDataDirectorySafe(DataDirectory dataDir, SecurityIdentifier account, SecurityIdentifier controlUser) =>
+		EnsureDataDirectorySafe(dataDir, account, controlUser, DataDirectoryGuard.OwnerOf);
+
+	/// <summary>As above, reading owners through <paramref name="ownerOf"/>.</summary>
+	public static void EnsureDataDirectorySafe(DataDirectory dataDir, SecurityIdentifier account, SecurityIdentifier controlUser, Func<string, SecurityIdentifier?> ownerOf)
 	{
 		foreach (var path in new[] { dataDir.Root, dataDir.Logs })
 		{
-			EnsureDirectorySafe(path, account, controlUser);
+			EnsureDirectorySafe(path, account, controlUser, ownerOf);
 			if (Directory.Exists(path))
 			{
-				EnsureEntriesTrusted(path, account, controlUser);
+				EnsureEntriesTrusted(path, account, controlUser, ownerOf);
 			}
 		}
 	}
@@ -158,7 +202,7 @@ public static class ServiceSetup
 		waitStopped();
 	}
 
-	private static void EnsureDirectorySafe(string path, SecurityIdentifier account, SecurityIdentifier controlUser)
+	private static void EnsureDirectorySafe(string path, SecurityIdentifier account, SecurityIdentifier controlUser, Func<string, SecurityIdentifier?> ownerOf)
 	{
 		var info = new DirectoryInfo(path);
 		if (!info.Exists)
@@ -171,15 +215,11 @@ public static class ServiceSetup
 			throw new InvalidOperationException($"{path} is a link; delete it and retry.");
 		}
 
-		var owner = info.GetAccessControl().GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
-		if (!IsTrustedOwner(owner, account, controlUser))
-		{
-			throw new InvalidOperationException($"{path} was created by another user; delete it and retry.");
-		}
+		EnsureOwnersTrusted([path], ownerOf, account, controlUser);
 	}
 
-	private static void EnsureEntriesTrusted(string directory, SecurityIdentifier account, SecurityIdentifier controlUser) =>
-		EnsureOwnersTrusted(Directory.EnumerateFileSystemEntries(directory), DataDirectoryGuard.OwnerOf, account, controlUser);
+	private static void EnsureEntriesTrusted(string directory, SecurityIdentifier account, SecurityIdentifier controlUser, Func<string, SecurityIdentifier?> ownerOf) =>
+		EnsureOwnersTrusted(Directory.EnumerateFileSystemEntries(directory), ownerOf, account, controlUser);
 
 	/// <summary>Writes the DACL only when the stored one differs in any way (protected flag, ACE, rights, inheritance or propagation flags).</summary>
 	private static void WriteDacl(DataDirectoryGuard guard, string dacl)

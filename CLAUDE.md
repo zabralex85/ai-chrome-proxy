@@ -12,8 +12,8 @@ Open source (Apache-2.0). Everything in the repo is in English. No personal path
 - Minimal clean architecture (dependencies point inward; enforced by `tests/AiChromeProxy.Tests/Architecture`):
   - `src/AiChromeProxy.Domain` — wire contract (`Envelope`, `MessageTypes`), BCL only.
   - `src/AiChromeProxy.Application` → Domain — envelope routing and handlers; `AddApplication()`.
-  - `src/AiChromeProxy.Infrastructure` → Application, Domain — Cloudflare Access options and token validator; `AddInfrastructure(IConfiguration)`.
-  - `src/AiChromeProxy.Server` — ASP.NET Core host and composition root (hosts Client, one SignalR hub routing `Envelope` by `Type`, Access middleware).
+  - `src/AiChromeProxy.Infrastructure` → Application, Domain — Cloudflare Access options and token validator; hosting options (`ServerOptions`, `TunnelOptions`, `DataDirectory`); Cloudflare API client and `RemoteAccessProvisioner` (`Cloudflare/`); `AddInfrastructure(IConfiguration)`.
+  - `src/AiChromeProxy.Server` — ASP.NET Core host and composition root (hosts Client, one SignalR hub routing `Envelope` by `Type`, Access middleware, `CloudflaredSupervisor` running `cloudflared` when `Tunnel:Token` is set).
   - `src/AiChromeProxy.Client` — Blazor WebAssembly → Domain only.
   - `src/AiChromeProxy.Tray` — Windows tray app (Avalonia, `net10.0-windows`, CommunityToolkit.Mvvm, Velopack) → Domain, Infrastructure only: service status/control (`IServiceControl`), elevated `--admin install|uninstall`, settings, logs, updates. See [docs/windows-host.md](docs/windows-host.md).
 - Tests: `tests/AiChromeProxy.Tests` (xunit v3, CI; `net10.0-windows` because it covers the tray), `tests/AiChromeProxy.E2E` (Reqnroll + Playwright), `tests/load` (k6), `benchmarks/AiChromeProxy.Benchmarks` (BenchmarkDotNet) — see [docs/testing.md](docs/testing.md).

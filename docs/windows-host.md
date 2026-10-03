@@ -2,7 +2,7 @@
 
 One `Setup.exe` installs everything on a Windows home server. The Server then runs as a Windows service that starts after power-on **without anyone logging in**, under your own account (so `claude` sees your `~/.claude`). A tray app shows the status, starts and stops the service, edits the settings, shows the logs and installs updates.
 
-Before exposing the Server, set up the tunnel and Access: [setup/cloudflare.md](setup/cloudflare.md).
+Remote access (Cloudflare Tunnel + Cloudflare Access) is set up by the tray: [Remote access](#remote-access). The manual dashboard path stays in [setup/cloudflare.md](setup/cloudflare.md).
 
 ## Where things live
 
@@ -10,18 +10,19 @@ Before exposing the Server, set up the tunnel and Access: [setup/cloudflare.md](
 |---|---|
 | Tray app (and `Update.exe`) | `%LocalAppData%\AiChromeProxy\` (per-user Velopack install; the app itself is in `current\`) |
 | Server (the service binary) | `%LocalAppData%\AiChromeProxy\current\server\AiChromeProxy.Server.exe` |
+| `cloudflared` (bundled, pinned version) | `%LocalAppData%\AiChromeProxy\current\server\cloudflared.exe`, started by the Server |
 | Settings | `%ProgramData%\AiChromeProxy\appsettings.json` |
 | Logs | `%ProgramData%\AiChromeProxy\logs\server-YYYYMMDD.clef` (one JSON event per line, daily, 14 files kept) |
 
 `AICP_DATA_DIR` overrides `%ProgramData%\AiChromeProxy` for tests and local runs only (a relative value is made absolute); **Install service…** ignores it and always uses `%ProgramData%\AiChromeProxy`. The settings file is read only by the service or when `AICP_DATA_DIR` is set; environment variables still override it.
 
-> **Remove leftover environment variables before relying on the tray's Settings.** If you ran the Server from source, User-scope `CloudflareAccess__*`, `Server__*`, `Serilog__*`, `ASPNETCORE_ENVIRONMENT` or `DOTNET_ENVIRONMENT` variables may also reach the service and silently win over `appsettings.json`; a leftover `AICP_DATA_DIR` moves the service to an unprotected data folder. The **Settings…** window shows a warning line naming any of them it sees; delete them (System Properties → Environment Variables, or `[Environment]::SetEnvironmentVariable("<name>", $null, "User")`) and restart the service.
+> **Remove leftover environment variables before relying on the tray's Settings.** If you ran the Server from source, User-scope `CloudflareAccess__*`, `Server__*`, `Serilog__*`, `Tunnel__*`, `ASPNETCORE_ENVIRONMENT` or `DOTNET_ENVIRONMENT` variables may also reach the service and silently win over `appsettings.json`; a leftover `AICP_DATA_DIR` moves the service to an unprotected data folder. The **Settings…** window shows a warning line naming any of them it sees; delete them (System Properties → Environment Variables, or `[Environment]::SetEnvironmentVariable("<name>", $null, "User")`) and restart the service.
 
 ## Install
 
 1. Download `AiChromeProxy-win-Setup.exe` from the project's GitHub Releases and run it. The installer is not code-signed, so SmartScreen warns on first run: **More info → Run anyway**. No admin rights and no .NET install are needed.
 2. The tray icon appears (and a Start menu / desktop shortcut **AI Chrome Proxy**).
-3. **Settings…** — enter the Cloudflare Access team domain, the application audience (AUD tag), the public host name of the tunnel and the local port (default `5180`). The form checks the values with the same rules the Server uses at startup. Optionally tick **Start the tray with Windows**.
+3. **Set up remote access…** opens by itself on the first start (no public host configured yet): see [Remote access](#remote-access). It writes the team domain, the application audience, the public host name and the tunnel token. **Settings…** shows the same values (except the tunnel token) for manual edits and the local port (default `5180`), checked with the rules the Server uses at startup. Optionally tick **Start the tray with Windows** there.
 4. **Install service…** — Windows asks for administrator approval (UAC), then a dialog shows the account the service runs as and asks for its **Windows password**. The Account field is read-only: the service runs as the signed-in tray user, because the Server binary lives in that user's profile; any other account is refused. (With over-the-shoulder UAC, where an administrator approves for a standard user, that standard user is the account.)
    - use the account password, not the Windows Hello PIN: a PIN does not work for services, so a Microsoft-account or PIN-only user needs the account password (for a Microsoft account, its Microsoft account password);
    - an account without a password cannot run a service — set one first;
@@ -33,6 +34,38 @@ If you change your Windows password later, the service can no longer log on: run
 
 Install refuses a data folder, or its `logs` subfolder, that is a link/junction, and refuses when the folder, `logs` or any file or folder directly inside them (for example `appsettings.json` or `appsettings.json.tmp`) is owned by anyone other than SYSTEM, Administrators, TrustedInstaller or your account (`%ProgramData%` lets standard users pre-create folders and files). Fix: delete what the message names and retry.
 
+## Remote access
+
+**Set up remote access…** publishes the Server as `https://<subdomain>.<your domain>` through a Cloudflare Tunnel, behind Cloudflare Access, without the Zero Trust dashboard. Requirements: a domain (zone) on Cloudflare, and Zero Trust enabled once on the account (https://one.dash.cloudflare.com, free plan — the wizard stops with that hint if it is not).
+
+1. **Create an API token** — the **Create token…** button opens https://dash.cloudflare.com/profile/api-tokens. *Create Custom Token* with:
+   - Account — **Cloudflare Tunnel: Edit**
+   - Account — **Access: Apps and Policies: Edit**
+   - Account — **Access: Organizations, Identity Providers, and Groups: Read**
+   - Zone — **DNS: Edit**
+   - Zone — **Zone: Read**
+
+   Only a **user** API token (My Profile → API Tokens) works: the wizard checks it with `user/tokens/verify`, which does not accept account-owned tokens. Under *Zone Resources* include only the one zone you publish on, and set a *TTL* (expiry) of a day or so. The token is used only by the wizard window: it is never saved, never logged and is sent only to `api.cloudflare.com`. It is forgotten when setup succeeds or the window closes (closing also cancels a setup in progress; nothing is saved then). Delete it in the dashboard after setup and create a new one for a re-run.
+2. **Continue** checks the token and lists your zones. Pick the zone, a subdomain (default `code`) and the email addresses allowed in (comma or one per line); the resulting address is shown as you type.
+3. **Set up** creates or reuses, one line per step:
+   - the Zero Trust team domain (read, not created);
+   - the tunnel `ai-chrome-proxy-<computer name>` (remotely managed) and its token;
+   - the tunnel route `<subdomain>.<zone>` → `http://127.0.0.1:<port>` (everything else answers 404);
+   - a proxied DNS `CNAME` `<subdomain>.<zone>` → `<tunnel id>.cfargotunnel.com`;
+   - the Access policy `AI Chrome Proxy — <host>` (allow the listed emails; sign-in by one-time PIN sent to the email);
+   - the Access application `AI Chrome Proxy` for `<host>` (24 h session).
+
+   Then it saves `CloudflareAccess:TeamDomain`, `CloudflareAccess:Audience`, `Server:PublicHost` and `Tunnel:Token` into `%ProgramData%\AiChromeProxy\appsettings.json` (other keys are kept). The tunnel token is a secret, protected from the first save — also when the wizard runs before **Install service…**: the tray creates the data folder with the protected DACL described under [Install](#install) (or writes it on a folder you own), and creates the file itself with its own protected DACL (SYSTEM and Administrators Full Control, your account Modify), so no other local user can read it, even when an older `appsettings.json` was readable. A data folder that is a link, contains anything owned by another user, or is owned by Administrators without a protected DACL is refused: run **Install service…** (it re-protects the folder), or delete the folder, and retry. **Settings…** saves the same way and never shows the token.
+4. **Install service…** (no service yet; the service it starts already uses the new settings) or **Restart service** (running) applies it; **Open** opens `https://<host>/`.
+
+The DNS name is checked before anything is created. A name that already has a record other than a `CNAME` to this tunnel — including a `CNAME` left from a deleted tunnel — is refused with `<host> already has a DNS record; choose another subdomain or delete it.`; the account is left unchanged and the wizard never overwrites a foreign record. Delete that record in the dashboard (your zone → DNS) or choose another subdomain.
+
+Re-running the wizard converges instead of duplicating: the same tunnel, record, policy and application are found by name (the application by its domain) and updated, for example to change the allowed emails. If an Access application for the same domain already exists (for example one created by hand), the wizard updates it to its own settings: name, policy and 24 h session. A re-run with a **different** subdomain creates a new record, policy and application and leaves the old ones in place (the old host then answers 404 from the tunnel): delete them as in **Removing remote access** below.
+
+The tunnel runs **inside the service**: the Server starts the bundled `cloudflared` (`tunnel --no-autoupdate run`, token passed in its environment, never on the command line) when `Tunnel:Token` is set, restarts it if it exits (1 s, 2 s, 4 s … up to 60 s), and stops it with the service. The Server does not start the tunnel while the Cloudflare Access check is disabled (Development): a Server without Access must not be reachable from the internet. On Windows `cloudflared` is tied to the Server by a job object, so even a crashed Server leaves no `cloudflared` behind. Its output appears in **Logs…** as `cloudflared: …` lines. No separate `cloudflared` service is needed — if you installed one with the manual guide, remove it (elevated): `cloudflared service uninstall`. `Tunnel:CloudflaredPath` in `appsettings.json` points the Server at another `cloudflared` binary; without the bundled one it falls back to `cloudflared` on `PATH` (development: `winget install Cloudflare.cloudflared`).
+
+**Removing remote access** (the tray does not delete Cloudflare resources): in the Cloudflare dashboard delete the Access application `AI Chrome Proxy` and the policy `AI Chrome Proxy — <host>` (Zero Trust → Access), the tunnel `ai-chrome-proxy-<computer name>` (Zero Trust → Networks → Tunnels) and the `CNAME` record (your zone → DNS); then remove the `Tunnel` section from `appsettings.json` and restart the service.
+
 ## Tray menu
 
 | Item | What it does |
@@ -40,7 +73,8 @@ Install refuses a data folder, or its `logs` subfolder, that is a link/junction,
 | Service: running / stopped / starting… / stopping… / not installed | Status from the Service Control Manager, refreshed every 2 s. A second, greyed line shows the last error, if any. |
 | Start / Stop / Restart | Controls the service; no UAC needed after install. |
 | Install service… / Uninstall service | The only actions that need administrator approval. |
-| Settings… | Edits `appsettings.json` (saved atomically: temp file, then replace). After **Save**, **Restart service** applies the change. |
+| Set up remote access… | The Cloudflare Tunnel + Access wizard ([Remote access](#remote-access)). Opens by itself at tray start while no public host is configured (neither in `appsettings.json` nor as a `Server__PublicHost` environment variable). |
+| Settings… | Edits `appsettings.json` (saved atomically: temp file, then replace; protected as in [Remote access](#remote-access)). After **Save**, **Restart service** applies the change. |
 | Logs… | The log viewer (below). |
 | Open UI | Opens `https://<public host>/` (through the tunnel and Access); without a public host, `http://127.0.0.1:<port>/`. Local requests carry no Access token, so with Access on the loopback address answers `401`. |
 | Update to vX | Shown only when a newer release exists (below). |
@@ -74,7 +108,7 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-Tag format: `vMAJOR.MINOR.PATCH`, optionally with a `-suffix` (for example `v0.1.0-rc1`). `.github/workflows/release.yml` (tag `v*`, `windows-latest`) restores, builds, runs the xunit gate, publishes the tray and the Server self-contained for `win-x64`, packs them with Velopack (`vpk pack`) and uploads `AiChromeProxy-win-Setup.exe`, the portable zip and the update packages to a published (not draft) GitHub Release titled `AI Chrome Proxy vX` (the tag). A tag that does not match `vMAJOR.MINOR.PATCH[-suffix]` fails the workflow; a `-suffix` tag is published as a GitHub pre-release, which installed trays never offer. Installed trays update from the releases of the repository the release was built in.
+Tag format: `vMAJOR.MINOR.PATCH`, optionally with a `-suffix` (for example `v0.1.0-rc1`). `.github/workflows/release.yml` (tag `v*`, `windows-latest`) restores, builds, runs the xunit gate, publishes the tray and the Server self-contained for `win-x64`, packs them with Velopack (`vpk pack`) and uploads `AiChromeProxy-win-Setup.exe`, the portable zip and the update packages to a published (not draft) GitHub Release titled `AI Chrome Proxy vX` (the tag). A tag that does not match `vMAJOR.MINOR.PATCH[-suffix]` fails the workflow; a `-suffix` tag is published as a GitHub pre-release, which installed trays never offer. Installed trays update from the releases of the repository the release was built in. Before packing, the workflow downloads cloudflared `CLOUDFLARED_VERSION` into `server\` and fails unless its SHA256 equals `CLOUDFLARED_SHA256` (both pinned in the workflow's `env`; bump them together); it also copies `THIRD-PARTY-NOTICES.md` and `licenses\` (the cloudflared Apache-2.0 license text) into the package.
 
 Package layout, to reproduce locally (vpk as a local tool, not global):
 
@@ -82,6 +116,8 @@ Package layout, to reproduce locally (vpk as a local tool, not global):
 dotnet tool install vpk --version 1.2.161 --tool-path .tools
 dotnet publish src/AiChromeProxy.Tray -c Release -r win-x64 --self-contained -p:Version=0.1.0 -p:UpdateRepository=https://github.com/<owner>/<repo> -o publish
 dotnet publish src/AiChromeProxy.Server -c Release -r win-x64 --self-contained -p:Version=0.1.0 -o publish/server
+Invoke-WebRequest https://github.com/cloudflare/cloudflared/releases/download/2026.9.3/cloudflared-windows-amd64.exe -OutFile publish/server/cloudflared.exe
+(Get-FileHash publish/server/cloudflared.exe -Algorithm SHA256).Hash   # must equal the CLOUDFLARED_SHA256 in release.yml
 .\.tools\vpk.exe pack --packId AiChromeProxy --packVersion 0.1.0 --runtime win-x64 --packDir publish --mainExe AiChromeProxy.Tray.exe --packTitle "AI Chrome Proxy" --icon src/AiChromeProxy.Tray/Assets/tray.ico --outputDir releases
 ```
 
@@ -112,3 +148,16 @@ Also check once:
 16. Update with the service *running* → after the update it runs the new version. Update with the service *stopped* beforehand → after the update it is still stopped. Uninstall from Apps & features → the service and the autostart entry are removed.
 17. **Update to vX** appears only on a `Setup.exe`-installed copy, never under `dotnet run`.
 18. With a User-scope `Server__PublicHost` variable set, **Settings…** shows the environment-variable warning naming it; without it, no warning.
+
+Remote access (on the home server, with a real zone):
+
+19. Fresh zone (Zero Trust enabled, nothing created yet): the wizard runs all steps, **Install service…** / **Restart service**, then from another machine `https://<host>/` asks for the email PIN and the UI loads.
+20. Re-run the wizard with another email → the policy now lists only that email; the dashboard shows one tunnel, one `CNAME`, one policy, one application (no duplicates).
+21. A subdomain that already has a foreign DNS record (e.g. an `A` record, or a `CNAME` left from a deleted tunnel) → refused with the "already has a DNS record" message; the record is unchanged and no tunnel was created.
+22. An Access application for the same domain created by hand → the wizard updates it (name `AI Chrome Proxy`, the wizard's policy, 24 h session) instead of creating a second one.
+23. Account without Zero Trust → the wizard stops with "Enable Zero Trust once at https://one.dash.cloudflare.com (free plan), then retry."
+24. Reboot and do **not** log in → the tunnel is up (`https://<host>/` reachable).
+25. Kill the Server process (`taskkill /F /IM AiChromeProxy.Server.exe`, elevated) → no `cloudflared.exe` is left running (`tasklist | findstr cloudflared`); the service restarts it.
+26. **Logs…** shows `cloudflared: …` lines.
+27. After the first real tunnel run, search the Server log files for the tunnel token and the API token: `rg -F "<token>" "$env:ProgramData\AiChromeProxy\logs"` → no match.
+28. `server\cloudflared.exe` in the installed copy has the pinned SHA256 (`Get-FileHash`).

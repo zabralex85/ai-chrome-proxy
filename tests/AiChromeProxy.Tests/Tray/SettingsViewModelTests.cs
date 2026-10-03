@@ -34,11 +34,12 @@ public sealed class SettingsViewModelTests : IDisposable
 			["ASPNETCORE_URLS"] = "http://+:80",
 			["ServerName"] = "x",
 			["Serilog__MinimumLevel"] = "Debug",
-			["AICP_DATA_DIR"] = @"D:icp",
+			["AICP_DATA_DIR"] = @"D:\aicp",
+			["TUNNEL__TOKEN"] = "secret",
 		};
 
 		Assert.Equal(
-			["AICP_DATA_DIR", "ASPNETCORE_ENVIRONMENT", "cloudflareaccess__Audience", "DOTNET_ENVIRONMENT", "Serilog__MinimumLevel", "Server__PublicHost"],
+			["AICP_DATA_DIR", "ASPNETCORE_ENVIRONMENT", "cloudflareaccess__Audience", "DOTNET_ENVIRONMENT", "Serilog__MinimumLevel", "Server__PublicHost", "TUNNEL__TOKEN"],
 			SettingsViewModel.OverridingVariables(environment));
 		Assert.Empty(SettingsViewModel.OverridingVariables(new Dictionary<string, string> { ["PATH"] = "x" }));
 	}
@@ -56,6 +57,31 @@ public sealed class SettingsViewModelTests : IDisposable
 		Assert.Equal("6000", vm.Port);
 		Assert.Equal("code.example.com", vm.PublicHost);
 		Assert.True(vm.StartWithWindows);
+	}
+
+	[Fact]
+	public void RootNotAnObject_ErrorShown_Defaults()
+	{
+		WriteFile("[]");
+
+		var vm = Create();
+
+		Assert.StartsWith($"Could not read {_dataDir.SettingsFile}: ", Assert.Single(vm.Errors), StringComparison.Ordinal);
+		Assert.Equal("5180", vm.Port);
+		Assert.Equal(string.Empty, vm.PublicHost);
+	}
+
+	[Fact]
+	public void SectionsOfTheWrongShape_ReadAsText_OrDefaults()
+	{
+		WriteFile("""{ "CloudflareAccess": "x", "Server": { "PublicHost": 5, "Port": "6000" } }""");
+
+		var vm = Create();
+
+		Assert.Empty(vm.Errors);
+		Assert.Equal(string.Empty, vm.TeamDomain);
+		Assert.Equal("5", vm.PublicHost);
+		Assert.Equal("6000", vm.Port);
 	}
 
 	[Fact]
@@ -99,7 +125,7 @@ public sealed class SettingsViewModelTests : IDisposable
 	[Fact]
 	public void Save_Valid_WritesExpectedJson_KeepsOtherKeys_SetsAutoStart()
 	{
-		WriteFile("""{ "Serilog": { "MinimumLevel": { "Default": "Debug" } }, "Server": { "Port": 5180, "Extra": true } }""");
+		WriteFile("""{ "Serilog": { "MinimumLevel": { "Default": "Debug" } }, "Server": { "Port": 5180, "Extra": true }, "Tunnel": { "Token": "secret" } }""");
 		var vm = Valid(Create());
 		vm.Port = " 6001 ";
 		vm.StartWithWindows = true;
@@ -111,6 +137,7 @@ public sealed class SettingsViewModelTests : IDisposable
 			{
 			  "Serilog": { "MinimumLevel": { "Default": "Debug" } },
 			  "Server": { "Port": 6001, "Extra": true, "PublicHost": "code.example.com" },
+			  "Tunnel": { "Token": "secret" },
 			  "CloudflareAccess": { "TeamDomain": "team.cloudflareaccess.com", "Audience": "aud" }
 			}
 			""");
@@ -184,6 +211,11 @@ public sealed class SettingsViewModelTests : IDisposable
 	[Theory]
 	[InlineData("""{ "Server": { "Port": 6000 } }""", "http://127.0.0.1:6000/")]
 	[InlineData("{ broken", "http://127.0.0.1:5180/")]
+	[InlineData("[]", "http://127.0.0.1:5180/")]
+	[InlineData("""{ "Server": "x" }""", "http://127.0.0.1:5180/")]
+	[InlineData("""{ "Server": { "Port": "x y" } }""", "http://127.0.0.1:5180/")]
+	[InlineData("""{ "Server": { "Port": true } }""", "http://127.0.0.1:5180/")]
+	[InlineData("""{ "Server": { "Port": 70000 } }""", "http://127.0.0.1:5180/")]
 	public void UiAddress_NoPublicHost_Loopback(string json, string expected)
 	{
 		WriteFile(json);
