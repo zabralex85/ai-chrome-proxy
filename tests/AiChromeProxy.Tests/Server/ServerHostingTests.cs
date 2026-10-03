@@ -1,5 +1,6 @@
 using System.Net;
 using AiChromeProxy.Infrastructure.Security;
+using AiChromeProxy.Server.Hosting;
 using AiChromeProxy.Server.Security;
 using AiChromeProxy.Tests.Infrastructure;
 using Microsoft.AspNetCore.Hosting;
@@ -20,6 +21,7 @@ public sealed class ServerHostingTests : IAsyncDisposable
 	public ServerHostingTests()
 	{
 		_factory = Factory(b => b
+			.UseSetting("Tunnel:Token", string.Empty)
 			.UseSetting("Server:PublicHost", PublicHost)
 			.UseSetting("CloudflareAccess:TeamDomain", TestAccessIssuer.TeamDomain)
 			.UseSetting("CloudflareAccess:Audience", TestAccessIssuer.Audience)
@@ -43,6 +45,12 @@ public sealed class ServerHostingTests : IAsyncDisposable
 	public async Task KnownHost_WithToken_200(string host)
 	{
 		Assert.Equal(HttpStatusCode.OK, await GetAsync(host, _issuer.Token()));
+	}
+
+	[Fact]
+	public void CloudflaredSupervisor_Registered()
+	{
+		Assert.Single(_factory.Services.GetServices<IHostedService>().OfType<CloudflaredSupervisor>());
 	}
 
 	[Fact]

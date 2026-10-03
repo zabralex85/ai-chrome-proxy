@@ -34,6 +34,12 @@ builder.Services.Configure<HostFilteringOptions>(o => o.AllowedHosts = [.. serve
 
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.Configure<TunnelOptions>(builder.Configuration.GetSection(TunnelOptions.Section));
+builder.Services.AddHostedService(sp => new CloudflaredSupervisor(
+	sp.GetRequiredService<IOptions<TunnelOptions>>().Value,
+	sp.GetRequiredService<ILogger<CloudflaredSupervisor>>(),
+	sp.GetRequiredService<TimeProvider>(),
+	CloudflaredProcess.Start));
 builder.Services.AddSignalR();
 
 var app = builder.Build();
