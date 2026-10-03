@@ -18,22 +18,23 @@ public interface IMirrorStore
 	IReadOnlyList<string> ListFiles(string repo);
 
 	/// <summary>
-	/// Creates the temporary file <c>&lt;path&gt;.aicp-tmp</c> the upload is assembled in, creating parent folders; an existing entry at that
+	/// Creates the temporary file <c>&lt;path&gt;.&lt;tag&gt;.aicp-tmp</c> the upload is assembled in (<paramref name="tag"/>: the session's,
+	/// <c>SyncPath.TempTagLength</c> characters, so that sessions never share a temporary file), creating parent folders; an existing entry at that
 	/// name (a leftover, or a link) is removed first, never written through.
 	/// </summary>
-	Stream CreateTemp(string repo, string path);
+	Stream CreateTemp(string repo, string path, string tag);
 
 	/// <summary>Replaces the mirror file with its completed temporary file.</summary>
-	void Commit(string repo, string path);
+	void Commit(string repo, string path, string tag);
 
 	/// <summary>Deletes the temporary file, if any.</summary>
-	void DiscardTemp(string repo, string path);
+	void DiscardTemp(string repo, string path, string tag);
 
 	/// <summary>
 	/// Deletes leftover <c>.aicp-tmp</c> files in the repo folder (links and junctions are not entered), except the temporary file of
-	/// <paramref name="keep"/> and those still open by another upload.
+	/// <paramref name="keep"/> with <paramref name="tag"/> and those still open by another upload.
 	/// </summary>
-	void DeleteStaleTemps(string repo, string? keep);
+	void DeleteStaleTemps(string repo, string? keep, string tag);
 
 	/// <summary>Deletes a regular file (never a link's target) and the folders this leaves empty, up to the repo folder.</summary>
 	void Delete(string repo, string path);

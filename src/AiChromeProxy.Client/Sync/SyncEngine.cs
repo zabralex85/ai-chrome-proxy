@@ -671,9 +671,11 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 			}
 			catch (Exception ex) when (ex is RequestFailedException or IOException or JSException)
 			{
-				// The same size and hash waits FailureBackoff before it is tried again; the same failure is logged once.
+				// The same size and hash waits FailureBackoff before it is tried again, except after an internal server error (transient,
+				// retried on the next pass); the same failure is logged once.
 				var repeated = _failures.TryGetValue(entry.Path, out var earlier) && earlier.Entry == entry && earlier.Error == ex.Message;
-				_failures[entry.Path] = (entry, ex.Message, time.GetUtcNow() + FailureBackoff);
+				var backoff = ex is RequestFailedException { Code: ErrorCodes.Internal } ? TimeSpan.Zero : FailureBackoff;
+				_failures[entry.Path] = (entry, ex.Message, time.GetUtcNow() + backoff);
 				SetFileState(entry.Path, FileSyncState.Error, ex.Message);
 				if (!repeated)
 				{

@@ -12,8 +12,11 @@ public static class SyncPath
 {
 	public const int MaxLength = 260;
 
-	/// <summary>255 (NTFS name limit) minus <see cref="TempSuffix"/>, so the server's temporary file name always fits.</summary>
-	public const int MaxSegmentLength = 246;
+	/// <summary>Characters of the per-session tag in the server's temporary file names, <c>&lt;name&gt;.&lt;tag&gt;.aicp-tmp</c>.</summary>
+	public const int TempTagLength = 8;
+
+	/// <summary>255 (NTFS name limit) minus <c>.&lt;tag&gt;</c> and <see cref="TempSuffix"/>, so the server's temporary file name always fits.</summary>
+	public const int MaxSegmentLength = 237;
 
 	/// <summary>Suffix of the server's temporary upload files; reserved so a synced file can never collide with one.</summary>
 	public const string TempSuffix = ".aicp-tmp";

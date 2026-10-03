@@ -115,12 +115,12 @@ public sealed class SyncPathTests
 	}
 
 	[Fact]
-	public void SegmentLongerThan246_Invalid_SoTheTempFileNameFits()
+	public void SegmentLongerThan237_Invalid_SoTheTempFileNameFits()
 	{
-		Assert.Equal(SyncPath.MaxSegmentLength, 255 - SyncPath.TempSuffix.Length);
-		Assert.True(SyncPath.IsValid(new string('a', 246)));
-		Assert.False(SyncPath.IsValid(new string('a', 247)));
-		Assert.False(SyncPath.IsValid("dir/" + new string('a', 247)));
+		Assert.Equal(SyncPath.MaxSegmentLength, 255 - ".".Length - SyncPath.TempTagLength - SyncPath.TempSuffix.Length);
+		Assert.True(SyncPath.IsValid(new string('a', 237)));
+		Assert.False(SyncPath.IsValid(new string('a', 238)));
+		Assert.False(SyncPath.IsValid("dir/" + new string('a', 238)));
 	}
 
 	[Theory]

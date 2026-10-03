@@ -119,10 +119,10 @@ public sealed class SyncHubTests : IAsyncDisposable
 
 			// A request after the chunk: once it is answered, the chunk (same connection, in order) has been written.
 			await transport.RequestAsync(Envelope.Create(MessageTypes.Ping, new { }), Timeout, ct);
-			Assert.True(File.Exists(Path.Combine(_mirror, "r", "a.bin.aicp-tmp")));
+			Assert.Single(Directory.GetFiles(Path.Combine(_mirror, "r"), "a.bin.*.aicp-tmp"));
 		}
 
-		await WaitUntilAsync(() => !File.Exists(Path.Combine(_mirror, "r", "a.bin.aicp-tmp")), ct);
+		await WaitUntilAsync(() => Directory.GetFiles(Path.Combine(_mirror, "r"), "*.aicp-tmp").Length == 0, ct);
 	}
 
 	public async ValueTask DisposeAsync()

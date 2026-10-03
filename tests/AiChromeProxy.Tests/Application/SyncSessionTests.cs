@@ -136,7 +136,7 @@ public sealed class SyncSessionTests : IDisposable
 		await NeedAsync(Manifest(true, Entry("a.txt", "abcd")));
 
 		Assert.False(File.Exists(Path.Combine(_repoRoot, "src", "old.cs.aicp-tmp")));
-		Assert.True(File.Exists(Path.Combine(_repoRoot, "a.txt.aicp-tmp")));
+		Assert.Single(Directory.GetFiles(_repoRoot, "a.txt.*.aicp-tmp"));
 		Assert.Equal(MessageTypes.SyncStored, (await _session.HandleAsync(Chunk("a.txt", 2, "cd"u8.ToArray(), last: true), Ct))!.Type);
 		Assert.Equal("abcd", File.ReadAllText(Path.Combine(_repoRoot, "a.txt")));
 	}
@@ -193,7 +193,7 @@ public sealed class SyncSessionTests : IDisposable
 		Assert.Equal(MessageTypes.SyncStored, replies[2]!.Type);
 		Assert.Equal(new SyncStoredPayload(Repo, "src/big.bin"), Read<SyncStoredPayload>(replies[2]!));
 		Assert.Equal(content, File.ReadAllBytes(Path.Combine(_repoRoot, "src", "big.bin")));
-		Assert.False(File.Exists(Path.Combine(_repoRoot, "src", "big.bin.aicp-tmp")));
+		Assert.Empty(Directory.GetFiles(Path.Combine(_repoRoot, "src"), "*.aicp-tmp"));
 		Assert.Contains(_logger.Messages, m => m.StartsWith($"Sync repo: stored 1 files, {content.Length} bytes in ", StringComparison.Ordinal));
 	}
 
@@ -230,7 +230,7 @@ public sealed class SyncSessionTests : IDisposable
 
 		await AssertError(ErrorCodes.BadRequest, Chunk("a.txt", 3, "d"u8.ToArray(), last: true));
 
-		Assert.False(File.Exists(Path.Combine(_repoRoot, "a.txt.aicp-tmp")));
+		Assert.Empty(Directory.GetFiles(_repoRoot, "*.aicp-tmp"));
 		await AssertError(ErrorCodes.BadRequest, Chunk("a.txt", 2, "cd"u8.ToArray(), last: true));
 	}
 
@@ -244,7 +244,7 @@ public sealed class SyncSessionTests : IDisposable
 		await AssertError(ErrorCodes.BadRequest, Chunk("a.txt", 0, "bad"u8.ToArray(), last: true));
 
 		Assert.Equal("old", File.ReadAllText(Path.Combine(_repoRoot, "a.txt")));
-		Assert.False(File.Exists(Path.Combine(_repoRoot, "a.txt.aicp-tmp")));
+		Assert.Empty(Directory.GetFiles(_repoRoot, "*.aicp-tmp"));
 	}
 
 	[Fact]
@@ -273,7 +273,7 @@ public sealed class SyncSessionTests : IDisposable
 
 		await AssertError(ErrorCodes.TooLarge, Chunk("a.txt", 0, "abc"u8.ToArray(), last: false));
 
-		Assert.False(File.Exists(Path.Combine(_repoRoot, "a.txt.aicp-tmp")));
+		Assert.Empty(Directory.GetFiles(_repoRoot, "*.aicp-tmp"));
 	}
 
 	[Fact]
@@ -353,15 +353,35 @@ public sealed class SyncSessionTests : IDisposable
 		await OpenAsync();
 		await NeedAsync(Manifest(true, Entry("a.txt", "abcd")));
 		await _session.HandleAsync(Chunk("a.txt", 0, "ab"u8.ToArray(), last: false), Ct);
-		Assert.True(File.Exists(Path.Combine(_repoRoot, "a.txt.aicp-tmp")));
+		Assert.Single(Directory.GetFiles(_repoRoot, "a.txt.*.aicp-tmp"));
 
 		await OpenAsync();
-		Assert.False(File.Exists(Path.Combine(_repoRoot, "a.txt.aicp-tmp")));
+		Assert.Empty(Directory.GetFiles(_repoRoot, "*.aicp-tmp"));
 
 		await NeedAsync(Manifest(true, Entry("a.txt", "abcd")));
 		await _session.HandleAsync(Chunk("a.txt", 0, "ab"u8.ToArray(), last: false), Ct);
 		_session.Dispose();
-		Assert.False(File.Exists(Path.Combine(_repoRoot, "a.txt.aicp-tmp")));
+		Assert.Empty(Directory.GetFiles(_repoRoot, "*.aicp-tmp"));
+	}
+
+	[Fact]
+	public async Task NewSession_UploadsWhileTheOldOneStillHoldsItsTemp()
+	{
+		// A reconnect: the old connection's session is not closed yet and keeps its half-written temp file open.
+		await OpenAsync();
+		await NeedAsync(Manifest(true, Entry("a.txt", "abcd")));
+		await _session.HandleAsync(Chunk("a.txt", 0, "ab"u8.ToArray(), last: false), Ct);
+		using (var session = new SyncSession(new FileSystemMirrorStore(Options.Create(new MirrorOptions { Root = _root })), _logger, TimeProvider.System))
+		{
+			await session.HandleAsync(Envelope.Create(MessageTypes.SyncOpen, new SyncOpenPayload(Repo)), Ct);
+			await session.HandleAsync(Manifest(true, Entry("a.txt", "abcd")), Ct);
+
+			var reply = await session.HandleAsync(Chunk("a.txt", 0, "abcd"u8.ToArray(), last: true), Ct);
+
+			Assert.Equal(MessageTypes.SyncStored, reply!.Type);
+		}
+
+		Assert.Equal("abcd", File.ReadAllText(Path.Combine(_repoRoot, "a.txt")));
 	}
 
 	[Fact]
@@ -600,19 +620,19 @@ public sealed class SyncSessionTests : IDisposable
 
 		public IReadOnlyList<string> ListFiles(string repo) => [];
 
-		public Stream CreateTemp(string repo, string path)
+		public Stream CreateTemp(string repo, string path, string tag)
 		{
 			BeforeCreateTemp?.Invoke();
 			return Temp = new MemoryStream();
 		}
 
-		public void Commit(string repo, string path)
+		public void Commit(string repo, string path, string tag)
 		{
 		}
 
-		public void DiscardTemp(string repo, string path) => Discarded.Add(path);
+		public void DiscardTemp(string repo, string path, string tag) => Discarded.Add(path);
 
-		public void DeleteStaleTemps(string repo, string? keep)
+		public void DeleteStaleTemps(string repo, string? keep, string tag)
 		{
 		}
 

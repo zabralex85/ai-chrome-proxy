@@ -21,6 +21,7 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 	private readonly HashSet<string> _keep = new(StringComparer.OrdinalIgnoreCase);
 	private readonly Dictionary<string, ManifestEntry> _expected = new(StringComparer.Ordinal);
 	private readonly SemaphoreSlim _gate = new(1, 1);
+	private readonly string _tag = Guid.NewGuid().ToString("N")[..SyncPath.TempTagLength];
 	private volatile bool _disposed;
 	private string? _repo;
 	private Upload? _upload;
@@ -167,7 +168,7 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 				}
 
 				stale.ForEach(p => store.Delete(repo, p));
-				store.DeleteStaleTemps(repo, _upload?.Entry.Path);
+				store.DeleteStaleTemps(repo, _upload?.Entry.Path, _tag);
 				logger.LogInformation(
 					"Sync {Repo}: manifest of {Files} files, {Need} to upload, {Deleted} deleted",
 					repo,
@@ -286,7 +287,7 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 		if (payload.Offset == 0)
 		{
 			DiscardUpload();
-			_upload = new Upload(entry, store.CreateTemp(repo, entry.Path));
+			_upload = new Upload(entry, store.CreateTemp(repo, entry.Path, _tag));
 		}
 		else if (_upload is null || _upload.Entry.Path != entry.Path || _upload.Received != payload.Offset)
 		{
@@ -314,7 +315,7 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 			throw BadRequest($"'{entry.Path}' arrived with a different size or hash than in its manifest; it is requested again on the next scan.");
 		}
 
-		store.Commit(repo, entry.Path);
+		store.Commit(repo, entry.Path, _tag);
 		upload.Dispose();
 		_upload = null;
 		_expected.Remove(entry.Path);
@@ -384,7 +385,7 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 		}
 
 		_upload.Dispose();
-		store.DiscardTemp(_repo!, _upload.Entry.Path);
+		store.DiscardTemp(_repo!, _upload.Entry.Path, _tag);
 		_upload = null;
 	}
 

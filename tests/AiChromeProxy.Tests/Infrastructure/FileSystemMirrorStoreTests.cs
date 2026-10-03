@@ -13,6 +13,7 @@ namespace AiChromeProxy.Tests.Infrastructure;
 public sealed class FileSystemMirrorStoreTests : IDisposable
 {
 	private const string Repo = "repo";
+	private const string Tag = "0123abcd";
 
 	private readonly string _temp = Path.Combine(TempRootCleanup.Root, Guid.NewGuid().ToString("N"));
 	private readonly List<string> _links = [];
@@ -39,18 +40,18 @@ public sealed class FileSystemMirrorStoreTests : IDisposable
 	public async Task CreateTemp_Commit_FileInPlace_TempGone_HashMatches()
 	{
 		var content = Encoding.UTF8.GetBytes("hello");
-		using (var stream = _store.CreateTemp(Repo, "src/a.txt"))
+		using (var stream = _store.CreateTemp(Repo, "src/a.txt", Tag))
 		{
 			await stream.WriteAsync(content, TestContext.Current.CancellationToken);
 		}
 
-		Assert.True(File.Exists(Path.Combine(_repoRoot, "src", "a.txt.aicp-tmp")));
+		Assert.True(File.Exists(Path.Combine(_repoRoot, "src", "a.txt.0123abcd.aicp-tmp")));
 		Assert.False(File.Exists(Path.Combine(_repoRoot, "src", "a.txt")));
 
-		_store.Commit(Repo, "src/a.txt");
+		_store.Commit(Repo, "src/a.txt", Tag);
 
 		Assert.Equal(content, File.ReadAllBytes(Path.Combine(_repoRoot, "src", "a.txt")));
-		Assert.False(File.Exists(Path.Combine(_repoRoot, "src", "a.txt.aicp-tmp")));
+		Assert.False(File.Exists(Path.Combine(_repoRoot, "src", "a.txt.0123abcd.aicp-tmp")));
 		Assert.Equal(Sha(content), await _store.GetHashAsync(Repo, "src/a.txt", TestContext.Current.CancellationToken));
 	}
 
@@ -58,15 +59,15 @@ public sealed class FileSystemMirrorStoreTests : IDisposable
 	public void DiscardTemp_RemovesTemp_KeepsExistingFile()
 	{
 		File.WriteAllText(Path.Combine(_repoRoot, "a.txt"), "old");
-		using (var stream = _store.CreateTemp(Repo, "a.txt"))
+		using (var stream = _store.CreateTemp(Repo, "a.txt", Tag))
 		{
 			stream.WriteByte(1);
 		}
 
-		_store.DiscardTemp(Repo, "a.txt");
-		_store.DiscardTemp(Repo, "never-created.txt");
+		_store.DiscardTemp(Repo, "a.txt", Tag);
+		_store.DiscardTemp(Repo, "never-created.txt", Tag);
 
-		Assert.False(File.Exists(Path.Combine(_repoRoot, "a.txt.aicp-tmp")));
+		Assert.False(File.Exists(Path.Combine(_repoRoot, "a.txt.0123abcd.aicp-tmp")));
 		Assert.Equal("old", File.ReadAllText(Path.Combine(_repoRoot, "a.txt")));
 	}
 
@@ -75,15 +76,34 @@ public sealed class FileSystemMirrorStoreTests : IDisposable
 	{
 		var outside = Path.Combine(_temp, "outside.txt");
 		File.WriteAllText(outside, "secret");
-		HardLink(Path.Combine(_repoRoot, "a.txt.aicp-tmp"), outside);
+		HardLink(Path.Combine(_repoRoot, "a.txt.0123abcd.aicp-tmp"), outside);
 
-		using (var stream = _store.CreateTemp(Repo, "a.txt"))
+		using (var stream = _store.CreateTemp(Repo, "a.txt", Tag))
 		{
 			await stream.WriteAsync("upload"u8.ToArray(), TestContext.Current.CancellationToken);
 		}
 
 		Assert.Equal("secret", File.ReadAllText(outside));
-		Assert.Equal("upload", File.ReadAllText(Path.Combine(_repoRoot, "a.txt.aicp-tmp")));
+		Assert.Equal("upload", File.ReadAllText(Path.Combine(_repoRoot, "a.txt.0123abcd.aicp-tmp")));
+	}
+
+	[Fact]
+	public async Task CreateTemp_SamePathFromAnotherSession_WhileTheOldTempIsOpen_Works()
+	{
+		// After a reconnect the old session may still hold its temp file until the dead connection is noticed.
+		var ct = TestContext.Current.CancellationToken;
+		using (var old = _store.CreateTemp(Repo, "a.txt", "aaaaaaaa"))
+		{
+			using (var stream = _store.CreateTemp(Repo, "a.txt", "bbbbbbbb"))
+			{
+				await stream.WriteAsync("new"u8.ToArray(), ct);
+			}
+
+			_store.Commit(Repo, "a.txt", "bbbbbbbb");
+		}
+
+		Assert.Equal("new", File.ReadAllText(Path.Combine(_repoRoot, "a.txt")));
+		Assert.True(File.Exists(Path.Combine(_repoRoot, "a.txt.aaaaaaaa.aicp-tmp")));
 	}
 
 	[Fact]
@@ -119,7 +139,7 @@ public sealed class FileSystemMirrorStoreTests : IDisposable
 		}
 
 		Assert.Equal(ErrorCodes.BadRequest, Assert.Throws<EnvelopeException>(() => _store.Delete(Repo, "f/secret.txt")).Code);
-		Assert.Equal(ErrorCodes.BadRequest, Assert.Throws<EnvelopeException>(() => _store.CreateTemp(Repo, "f/new.txt")).Code);
+		Assert.Equal(ErrorCodes.BadRequest, Assert.Throws<EnvelopeException>(() => _store.CreateTemp(Repo, "f/new.txt", Tag)).Code);
 		Assert.True(File.Exists(Path.Combine(outside, "secret.txt")));
 		Assert.False(File.Exists(Path.Combine(outside, "new.txt.aicp-tmp")));
 	}
@@ -135,22 +155,24 @@ public sealed class FileSystemMirrorStoreTests : IDisposable
 		File.WriteAllText(Path.Combine(_repoRoot, "a.txt"), "a");
 		File.WriteAllText(Path.Combine(_repoRoot, "a.txt.aicp-tmp"), "stale");
 		File.WriteAllText(Path.Combine(_repoRoot, "src", "b.cs.aicp-tmp"), "stale");
-		File.WriteAllText(Path.Combine(_repoRoot, "kept.txt.aicp-tmp"), "uploading");
+		File.WriteAllText(Path.Combine(_repoRoot, "kept.txt.0123abcd.aicp-tmp"), "uploading");
+		File.WriteAllText(Path.Combine(_repoRoot, "kept.txt.ffffffff.aicp-tmp"), "stale");
 		var open = Path.Combine(_repoRoot, "open.txt.aicp-tmp");
 
 		using (new FileStream(open, FileMode.Create, FileAccess.Write, FileShare.None))
 		{
-			_store.DeleteStaleTemps(Repo, "kept.txt");
+			_store.DeleteStaleTemps(Repo, "kept.txt", Tag);
 		}
 
 		Assert.False(File.Exists(Path.Combine(_repoRoot, "a.txt.aicp-tmp")));
 		Assert.False(File.Exists(Path.Combine(_repoRoot, "src", "b.cs.aicp-tmp")));
 		Assert.True(File.Exists(Path.Combine(_repoRoot, "a.txt")));
-		Assert.True(File.Exists(Path.Combine(_repoRoot, "kept.txt.aicp-tmp")));
+		Assert.True(File.Exists(Path.Combine(_repoRoot, "kept.txt.0123abcd.aicp-tmp")));
+		Assert.False(File.Exists(Path.Combine(_repoRoot, "kept.txt.ffffffff.aicp-tmp")));
 		Assert.True(File.Exists(open));
 		Assert.True(File.Exists(Path.Combine(outside, "x.aicp-tmp")));
 
-		_store.DeleteStaleTemps("not-synced-yet", null);
+		_store.DeleteStaleTemps("not-synced-yet", null, Tag);
 	}
 
 	[Fact]
@@ -241,7 +263,7 @@ public sealed class FileSystemMirrorStoreTests : IDisposable
 		Junction(Path.Combine(_repoRoot, "link"), outside);
 
 		var delete = Assert.Throws<EnvelopeException>(() => _store.Delete(Repo, "link/secret.txt"));
-		var write = Assert.Throws<EnvelopeException>(() => _store.CreateTemp(Repo, "link/new.txt"));
+		var write = Assert.Throws<EnvelopeException>(() => _store.CreateTemp(Repo, "link/new.txt", Tag));
 
 		Assert.Equal(ErrorCodes.BadRequest, delete.Code);
 		Assert.Equal(ErrorCodes.BadRequest, write.Code);
@@ -283,7 +305,7 @@ public sealed class FileSystemMirrorStoreTests : IDisposable
 		var hooks = Path.Combine(_repoRoot, ".git", "hooks");
 		Directory.CreateDirectory(hooks);
 
-		var write = Assert.Throws<EnvelopeException>(() => _store.CreateTemp(Repo, "GIT~1/hooks/x"));
+		var write = Assert.Throws<EnvelopeException>(() => _store.CreateTemp(Repo, "GIT~1/hooks/x", Tag));
 		var delete = Assert.Throws<EnvelopeException>(() => _store.Delete(Repo, "GIT~1/hooks/x"));
 
 		Assert.Equal(ErrorCodes.BadRequest, write.Code);

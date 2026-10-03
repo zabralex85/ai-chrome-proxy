@@ -80,27 +80,27 @@ public sealed class FileSystemMirrorStore(IOptions<MirrorOptions> options) : IMi
 			.ToList();
 	}
 
-	public Stream CreateTemp(string repo, string path)
+	public Stream CreateTemp(string repo, string path, string tag)
 	{
 		var full = Resolve(repo, path);
 		Directory.CreateDirectory(Path.GetDirectoryName(full)!);
 
 		// A hard link or file link left at the temp name would be written through: remove the entry (never its target), then create anew.
-		var temp = full + SyncPath.TempSuffix;
+		var temp = Temp(full, tag);
 		File.Delete(temp);
 		return new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None);
 	}
 
-	public void Commit(string repo, string path)
+	public void Commit(string repo, string path, string tag)
 	{
 		var full = Resolve(repo, path);
-		File.Move(full + SyncPath.TempSuffix, full, overwrite: true);
+		File.Move(Temp(full, tag), full, overwrite: true);
 		_hashes.TryRemove(Key(repo, path), out _);
 	}
 
-	public void DiscardTemp(string repo, string path) => File.Delete(Resolve(repo, path) + SyncPath.TempSuffix);
+	public void DiscardTemp(string repo, string path, string tag) => File.Delete(Temp(Resolve(repo, path), tag));
 
-	public void DeleteStaleTemps(string repo, string? keep)
+	public void DeleteStaleTemps(string repo, string? keep, string tag)
 	{
 		var repoRoot = RepoRoot(repo);
 		if (!Directory.Exists(repoRoot) || IsLink(repoRoot))
@@ -108,7 +108,7 @@ public sealed class FileSystemMirrorStore(IOptions<MirrorOptions> options) : IMi
 			return;
 		}
 
-		var kept = keep is null ? null : Resolve(repo, keep) + SyncPath.TempSuffix;
+		var kept = keep is null ? null : Temp(Resolve(repo, keep), tag);
 		foreach (var temp in Directory.EnumerateFiles(repoRoot, "*" + SyncPath.TempSuffix, Recursive))
 		{
 			if (string.Equals(temp, kept, StringComparison.OrdinalIgnoreCase))
@@ -147,6 +147,9 @@ public sealed class FileSystemMirrorStore(IOptions<MirrorOptions> options) : IMi
 	}
 
 	private static string Key(string repo, string path) => repo + "/" + path;
+
+	/// <summary><c>&lt;path&gt;.&lt;tag&gt;.aicp-tmp</c>: one per session, so a new session never collides with the open temp file of an old one.</summary>
+	private static string Temp(string full, string tag) => full + "." + tag + SyncPath.TempSuffix;
 
 	private static bool IsLink(string path) => File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint);
 

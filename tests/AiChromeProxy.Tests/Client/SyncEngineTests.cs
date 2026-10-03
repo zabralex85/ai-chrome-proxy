@@ -774,6 +774,24 @@ public sealed class SyncEngineTests : IDisposable
 	}
 
 	[Fact]
+	public async Task UploadFailsWithInternalError_NotBackedOff_RetriedNextPass()
+	{
+		_folder.Write("a.txt", "a");
+		await OpenAsync();
+		var refusals = 0;
+		RefuseWhen(e => e.Type == MessageTypes.SyncChunk && refusals++ == 0, ErrorCodes.Internal, "The file is in use.");
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(FileSyncState.Error, _engine.FileAt("a.txt")!.State);
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal("a", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
+		Assert.Equal(FileSyncState.Synced, _engine.FileAt("a.txt")!.State);
+	}
+
+	[Fact]
 	public async Task PersistentUploadFailure_BackedOffFiveMinutes_LoggedOnce()
 	{
 		var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 3, 12, 0, 0, TimeSpan.Zero));
