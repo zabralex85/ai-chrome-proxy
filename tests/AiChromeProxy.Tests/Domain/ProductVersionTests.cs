@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json;
 using AiChromeProxy.Domain;
 
@@ -8,7 +9,15 @@ public sealed class ProductVersionTests
 	[Fact]
 	public void Of_InformationalVersionWithoutBuildMetadata()
 	{
-		Assert.Equal("1.0.0", ProductVersion.Of(typeof(ProductVersionTests).Assembly));
+		// The release build stamps -p:Version (e.g. 0.3.2), local builds 1.0.0: compare with the attribute, not a literal.
+		var assembly = typeof(ProductVersionTests).Assembly;
+		var informational = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion;
+
+		var version = ProductVersion.Of(assembly);
+
+		Assert.Equal(informational.Split('+')[0], version);
+		Assert.DoesNotContain('+', version);
+		Assert.NotEmpty(version);
 	}
 
 	[Theory]

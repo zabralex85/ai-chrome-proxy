@@ -28,7 +28,7 @@ jobs:
         run: dotnet restore
 
       - name: Build (StyleCop errors fail the build)
-        run: dotnet build -c Release --no-restore
+        run: dotnet build -c Release --no-restore -p:Version=0.0.0-ci  # stamped like a release: no test may assume 1.0.0
 
       - name: Test + coverage gate (line >= 85%)
         run: dotnet test --project tests/AiChromeProxy.Tests -c Release --no-build --coverlet --coverlet-threshold 85 --coverlet-threshold-type line --coverlet-threshold-stat Total
