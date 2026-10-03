@@ -46,8 +46,8 @@ public static class Format
 		};
 	}
 
-	/// <summary>The sync status box text, e.g. "Synced 1 234 files · Rescan in 7 s" or "Uploading 12/80".</summary>
-	public static string SyncStatus(FolderStatus folder, SyncPhase phase, int synced, int uploadDone, int uploadTotal, TimeSpan? untilNextScan)
+	/// <summary>The sync status box text (a live region), e.g. "Synced 1 234 files" or "Uploading 12/80".</summary>
+	public static string SyncStatus(FolderStatus folder, SyncPhase phase, int synced, int uploadDone, int uploadTotal)
 	{
 		if (folder == FolderStatus.None)
 		{
@@ -64,11 +64,16 @@ public static class Format
 			SyncPhase.Scanning => "Scanning…",
 			SyncPhase.Uploading => $"Uploading {uploadDone}/{uploadTotal}",
 			SyncPhase.Failed => "Sync failed",
-			SyncPhase.Synced when untilNextScan is { } wait => $"Synced {Count(synced)} files · Rescan in {Math.Max(0, (int)Math.Ceiling(wait.TotalSeconds))} s",
 			SyncPhase.Synced => $"Synced {Count(synced)} files",
 			_ => "Waiting for the server…",
 		};
 	}
+
+	/// <summary>The countdown after "Synced …": " · Rescan in 7 s" while synced and waiting, otherwise null. Kept out of the live region (it changes every second).</summary>
+	public static string? Rescan(FolderStatus folder, SyncPhase phase, TimeSpan? untilNextScan) =>
+		folder == FolderStatus.Ready && phase == SyncPhase.Synced && untilNextScan is { } wait
+			? $" · Rescan in {Math.Max(0, (int)Math.Ceiling(wait.TotalSeconds))} s"
+			: null;
 
 	/// <summary>What the collapsed file tree hides that needs the user: "Access needed", "3 errors", or null when nothing does.</summary>
 	public static string? Attention(FolderStatus folder, int errors) => folder == FolderStatus.NeedsPermission

@@ -5,9 +5,9 @@
     var errors = Engine.ErrorCount;
 }
 <footer class="status-box" data-testid="sync-status">
-    <span class="status-line status-@Tone" role="status">
+    <span class="status-line status-@Tone">
         <Icon Name="@IconName" Class="@(Engine.Phase is SyncPhase.Scanning or SyncPhase.Uploading ? "spin" : null)" />
-        <span class="status-text" data-testid="status-sync">@SyncText</span>
+        <span class="status-text"><span role="status" data-testid="status-sync">@SyncText</span><span data-testid="status-rescan">@Format.Rescan(Engine.Folder, Engine.Phase, Engine.NextScan - DateTimeOffset.UtcNow)</span></span>
     </span>
     <button type="button" class="error-count @(errors > 0 ? "has-errors" : null)" data-testid="status-errors"
             title="Show the errors" aria-label="@($"{errors} errors, show the list")" @onclick="OnShowErrors">
@@ -28,10 +28,8 @@
         Engine.Folder,
         Engine.Phase,
         Engine.SyncedCount,
-
         Engine.UploadDone,
-        Engine.UploadTotal,
-        Engine.NextScan - DateTimeOffset.UtcNow);
+        Engine.UploadTotal);
 
     private string IconName => Engine.Folder switch
     {

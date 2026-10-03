@@ -127,15 +127,19 @@ public sealed class ShellTests
 	[InlineData(FolderStatus.Ready, SyncPhase.Failed, "Sync failed")]
 	public void SyncStatus_ByState(FolderStatus folder, SyncPhase phase, string expected)
 	{
-		Assert.Equal(expected, Format.SyncStatus(folder, phase, 1234, 12, 80, null));
+		Assert.Equal(expected, Format.SyncStatus(folder, phase, 1234, 12, 80));
 	}
 
 	[Fact]
-	public void SyncStatus_Synced_WithCountdown()
+	public void SyncStatus_Synced_CountdownSeparate()
 	{
-		Assert.Equal("Synced 1 234 files", Format.SyncStatus(FolderStatus.Ready, SyncPhase.Synced, 1234, 0, 0, null));
-		Assert.Equal("Synced 1 234 files · Rescan in 7 s", Format.SyncStatus(FolderStatus.Ready, SyncPhase.Synced, 1234, 0, 0, TimeSpan.FromSeconds(6.2)));
-		Assert.Equal("Synced 3 files · Rescan in 0 s", Format.SyncStatus(FolderStatus.Ready, SyncPhase.Synced, 3, 0, 0, TimeSpan.FromSeconds(-1)));
+		// The status is a live region: the countdown that changes every second is rendered outside it.
+		Assert.Equal("Synced 1 234 files", Format.SyncStatus(FolderStatus.Ready, SyncPhase.Synced, 1234, 0, 0));
+		Assert.Equal(" · Rescan in 7 s", Format.Rescan(FolderStatus.Ready, SyncPhase.Synced, TimeSpan.FromSeconds(6.2)));
+		Assert.Equal(" · Rescan in 0 s", Format.Rescan(FolderStatus.Ready, SyncPhase.Synced, TimeSpan.FromSeconds(-1)));
+		Assert.Null(Format.Rescan(FolderStatus.Ready, SyncPhase.Synced, null));
+		Assert.Null(Format.Rescan(FolderStatus.Ready, SyncPhase.Uploading, TimeSpan.FromSeconds(5)));
+		Assert.Null(Format.Rescan(FolderStatus.NeedsPermission, SyncPhase.Synced, TimeSpan.FromSeconds(5)));
 	}
 
 	[Theory]
