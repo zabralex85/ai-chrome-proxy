@@ -53,13 +53,15 @@ public static class AdminCommand
 	{
 		try
 		{
-			using var process = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, Arguments(command, CurrentUser))
+			using (var process = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, Arguments(command, CurrentUser))
 			{
 				UseShellExecute = true,
 				Verb = "runas",
-			});
-			await process!.WaitForExitAsync();
-			return process.ExitCode;
+			}))
+			{
+				await process!.WaitForExitAsync();
+				return process.ExitCode;
+			}
 		}
 		catch (Win32Exception ex) when (ex.NativeErrorCode == Cancelled)
 		{

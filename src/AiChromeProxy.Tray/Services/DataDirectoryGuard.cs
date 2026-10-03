@@ -54,8 +54,10 @@ public sealed partial class DataDirectoryGuard : IDisposable
 	/// <summary>Owner of the file or folder itself: a link is opened, not followed.</summary>
 	public static SecurityIdentifier? OwnerOf(string path)
 	{
-		using var handle = Open(path, ReadControl, ShareAll);
-		return ReadSecurity(handle, OwnerSecurityInformation, path).Owner;
+		using (var handle = Open(path, ReadControl, ShareAll))
+		{
+			return ReadSecurity(handle, OwnerSecurityInformation, path).Owner;
+		}
 	}
 
 	public void Dispose() => _handle.Dispose();

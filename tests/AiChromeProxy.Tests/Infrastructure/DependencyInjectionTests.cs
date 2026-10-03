@@ -13,17 +13,19 @@ public sealed class DependencyInjectionTests
 	[Fact]
 	public void AddInfrastructure_AloneIsSelfSufficient()
 	{
-		using var provider = new ServiceCollection().AddInfrastructure(Config()).BuildServiceProvider(Strict);
-
-		Assert.NotNull(provider.GetRequiredService<CloudflareAccessTokenValidator>());
+		using (var provider = new ServiceCollection().AddInfrastructure(Config()).BuildServiceProvider(Strict))
+		{
+			Assert.NotNull(provider.GetRequiredService<CloudflareAccessTokenValidator>());
+		}
 	}
 
 	[Fact]
 	public void AddApplication_ThenAddInfrastructure_BuildsWithValidation()
 	{
-		using var provider = new ServiceCollection().AddApplication().AddInfrastructure(Config()).BuildServiceProvider(Strict);
-
-		Assert.NotNull(provider.GetRequiredService<CloudflareAccessTokenValidator>());
+		using (var provider = new ServiceCollection().AddApplication().AddInfrastructure(Config()).BuildServiceProvider(Strict))
+		{
+			Assert.NotNull(provider.GetRequiredService<CloudflareAccessTokenValidator>());
+		}
 	}
 
 	private static IConfiguration Config() => new ConfigurationBuilder()

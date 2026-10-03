@@ -56,18 +56,20 @@ public sealed class WindowsSmokeTests : IDisposable
 					installVm.InstallCommand.Execute(null);
 					Assert.True(SpinUntil(() => closed), "install window closes once installed");
 
-					using var http = new HttpClient(new FakeCloudflareHandler()
+					using (var http = new HttpClient(new FakeCloudflareHandler()
 						.On("GET", "user/tokens/verify", """{"status":"active"}""")
-						.On("GET", "zones?status=active&page=1&per_page=50", """[{"id":"z1","name":"example.com","account":{"id":"a1","name":"Jane"}}]""", totalPages: 1));
-					var wizardVm = new RemoteAccessViewModel(_dataDir, http, new FakeServiceControl(), _ => Task.FromResult<int?>(0), "HOMEPC") { ApiToken = "api-token" };
-					var wizard = new RemoteAccessWindow { DataContext = wizardVm };
-					wizard.Show();
-					Assert.Contains(TextBoxes(wizard), t => t.PasswordChar == '●' && t.Text == "api-token");
-					wizardVm.ContinueCommand.Execute(null);
-					Assert.True(SpinUntil(() => wizardVm.IsDetailsStage), "wizard moves to the details stage");
-					Assert.Equal(1, wizard.GetLogicalDescendants().OfType<ComboBox>().Single().ItemCount);
-					Assert.Contains(TextBoxes(wizard), t => t.Text == "code");
-					wizard.Close();
+						.On("GET", "zones?status=active&page=1&per_page=50", """[{"id":"z1","name":"example.com","account":{"id":"a1","name":"Jane"}}]""", totalPages: 1)))
+					{
+						var wizardVm = new RemoteAccessViewModel(_dataDir, http, new FakeServiceControl(), _ => Task.FromResult<int?>(0), "HOMEPC") { ApiToken = "api-token" };
+						var wizard = new RemoteAccessWindow { DataContext = wizardVm };
+						wizard.Show();
+						Assert.Contains(TextBoxes(wizard), t => t.PasswordChar == '●' && t.Text == "api-token");
+						wizardVm.ContinueCommand.Execute(null);
+						Assert.True(SpinUntil(() => wizardVm.IsDetailsStage), "wizard moves to the details stage");
+						Assert.Equal(1, wizard.GetLogicalDescendants().OfType<ComboBox>().Single().ItemCount);
+						Assert.Contains(TextBoxes(wizard), t => t.Text == "code");
+						wizard.Close();
+					}
 				},
 				TestContext.Current.CancellationToken);
 		}

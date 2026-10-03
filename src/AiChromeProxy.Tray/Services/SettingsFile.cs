@@ -79,43 +79,45 @@ public static class SettingsFile
 		var settings = LoadOrEmpty(dataDir);
 		change(settings);
 
-		using var identity = WindowsIdentity.GetCurrent();
-		var user = identity.User!;
-		try
+		using (var identity = WindowsIdentity.GetCurrent())
 		{
-			ServiceSetup.PrepareSettingsDirectory(dataDir, user, DataDirectoryGuard.OwnerOf, identity.Owner);
-		}
-		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
-		{
-			throw CannotWrite(dataDir, ex);
-		}
-
-		var tmpPath = dataDir.SettingsFile + ".tmp";
-		try
-		{
-			// The DACL of an existing file would be kept: start from a new one.
-			File.Delete(tmpPath);
-			var security = new FileSecurity();
-			security.SetSecurityDescriptorSddlForm(ServiceSetup.SettingsFileDacl(user), AccessControlSections.Access);
-			using (var writer = new StreamWriter(new FileInfo(tmpPath).Create(FileMode.CreateNew, FileSystemRights.Write, FileShare.None, 4096, FileOptions.None, security)))
-			{
-				writer.Write(settings.ToJsonString(Indented));
-			}
-
-			File.Move(tmpPath, dataDir.SettingsFile, overwrite: true);
-		}
-		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-		{
+			var user = identity.User!;
 			try
 			{
-				File.Delete(tmpPath);
+				ServiceSetup.PrepareSettingsDirectory(dataDir, user, DataDirectoryGuard.OwnerOf, identity.Owner);
 			}
-			catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException)
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
 			{
-				// Best effort; the original failure is what the user needs to see.
+				throw CannotWrite(dataDir, ex);
 			}
 
-			throw CannotWrite(dataDir, ex);
+			var tmpPath = dataDir.SettingsFile + ".tmp";
+			try
+			{
+				// The DACL of an existing file would be kept: start from a new one.
+				File.Delete(tmpPath);
+				var security = new FileSecurity();
+				security.SetSecurityDescriptorSddlForm(ServiceSetup.SettingsFileDacl(user), AccessControlSections.Access);
+				using (var writer = new StreamWriter(new FileInfo(tmpPath).Create(FileMode.CreateNew, FileSystemRights.Write, FileShare.None, 4096, FileOptions.None, security)))
+				{
+					writer.Write(settings.ToJsonString(Indented));
+				}
+
+				File.Move(tmpPath, dataDir.SettingsFile, overwrite: true);
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+			{
+				try
+				{
+					File.Delete(tmpPath);
+				}
+				catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException)
+				{
+					// Best effort; the original failure is what the user needs to see.
+				}
+
+				throw CannotWrite(dataDir, ex);
+			}
 		}
 	}
 

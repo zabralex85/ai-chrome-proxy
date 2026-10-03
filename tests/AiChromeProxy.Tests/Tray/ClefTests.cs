@@ -100,18 +100,20 @@ public sealed class ClefTests : IDisposable
 	public void Tail_WhileServerSerilogSinkHoldsTheFile_SharedRead()
 	{
 		var dataDir = new DataDirectory(_dir);
-		using var provider = new ServiceCollection().AddServerLogging(new ConfigurationBuilder().Build(), dataDir).BuildServiceProvider();
-		var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("Test");
-		logger.LogWarning("first {N}", 1);
-		var tail = new ClefTail(Assert.Single(Directory.GetFiles(dataDir.Logs)));
+		using (var provider = new ServiceCollection().AddServerLogging(new ConfigurationBuilder().Build(), dataDir).BuildServiceProvider())
+		{
+			var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("Test");
+			logger.LogWarning("first {N}", 1);
+			var tail = new ClefTail(Assert.Single(Directory.GetFiles(dataDir.Logs)));
 
-		var first = Assert.Single(tail.ReadNew());
-		logger.LogError(new InvalidOperationException("bad"), "second {N}", 2);
-		var second = Assert.Single(tail.ReadNew());
+			var first = Assert.Single(tail.ReadNew());
+			logger.LogError(new InvalidOperationException("bad"), "second {N}", 2);
+			var second = Assert.Single(tail.ReadNew());
 
-		Assert.Equal((ClefLevel.Warning, "first 1"), (first.Level, first.Message));
-		Assert.Equal((ClefLevel.Error, "second 2"), (second.Level, second.Message));
-		Assert.Contains("InvalidOperationException: bad", second.Exception);
+			Assert.Equal((ClefLevel.Warning, "first 1"), (first.Level, first.Message));
+			Assert.Equal((ClefLevel.Error, "second 2"), (second.Level, second.Message));
+			Assert.Contains("InvalidOperationException: bad", second.Exception);
+		}
 	}
 
 	public void Dispose() => Directory.Delete(_dir, recursive: true);

@@ -15,20 +15,22 @@ public sealed class WindowsServiceControl(string serviceName = WindowsServiceCon
 
 	public ServiceState GetState()
 	{
-		using var service = new ServiceController(serviceName);
-		try
+		using (var service = new ServiceController(serviceName))
 		{
-			return service.Status switch
+			try
 			{
-				ServiceControllerStatus.Running => ServiceState.Running,
-				ServiceControllerStatus.StartPending or ServiceControllerStatus.ContinuePending => ServiceState.Starting,
-				ServiceControllerStatus.StopPending or ServiceControllerStatus.PausePending => ServiceState.Stopping,
-				_ => ServiceState.Stopped,
-			};
-		}
-		catch (InvalidOperationException ex) when (ex.InnerException is Win32Exception { NativeErrorCode: ErrorServiceDoesNotExist })
-		{
-			return ServiceState.NotInstalled;
+				return service.Status switch
+				{
+					ServiceControllerStatus.Running => ServiceState.Running,
+					ServiceControllerStatus.StartPending or ServiceControllerStatus.ContinuePending => ServiceState.Starting,
+					ServiceControllerStatus.StopPending or ServiceControllerStatus.PausePending => ServiceState.Stopping,
+					_ => ServiceState.Stopped,
+				};
+			}
+			catch (InvalidOperationException ex) when (ex.InnerException is Win32Exception { NativeErrorCode: ErrorServiceDoesNotExist })
+			{
+				return ServiceState.NotInstalled;
+			}
 		}
 	}
 
@@ -37,13 +39,15 @@ public sealed class WindowsServiceControl(string serviceName = WindowsServiceCon
 	public Task StartAsync(CancellationToken ct) => Task.Run(
 		() =>
 		{
-			using var service = new ServiceController(serviceName);
-			if (service.Status == ServiceControllerStatus.Stopped)
+			using (var service = new ServiceController(serviceName))
 			{
-				service.Start();
-			}
+				if (service.Status == ServiceControllerStatus.Stopped)
+				{
+					service.Start();
+				}
 
-			service.WaitForStatus(ServiceControllerStatus.Running, Timeout);
+				service.WaitForStatus(ServiceControllerStatus.Running, Timeout);
+			}
 		},
 		ct);
 
@@ -51,14 +55,16 @@ public sealed class WindowsServiceControl(string serviceName = WindowsServiceCon
 	public Task StopAsync(CancellationToken ct) => Task.Run(
 		() =>
 		{
-			using var service = new ServiceController(serviceName);
-			if (service.Status is ServiceControllerStatus.Running or ServiceControllerStatus.StartPending)
+			using (var service = new ServiceController(serviceName))
 			{
-				// Stop() would enumerate dependent services first, which needs SERVICE_ENUMERATE_DEPENDENTS; there are none.
-				service.Stop(stopDependentServices: false);
-			}
+				if (service.Status is ServiceControllerStatus.Running or ServiceControllerStatus.StartPending)
+				{
+					// Stop() would enumerate dependent services first, which needs SERVICE_ENUMERATE_DEPENDENTS; there are none.
+					service.Stop(stopDependentServices: false);
+				}
 
-			service.WaitForStatus(ServiceControllerStatus.Stopped, Timeout);
+				service.WaitForStatus(ServiceControllerStatus.Stopped, Timeout);
+			}
 		},
 		ct);
 

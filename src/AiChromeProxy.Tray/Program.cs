@@ -27,8 +27,10 @@ internal static class Program
 		}
 
 		// One tray per user session (Start with Windows plus a manual launch must not show two icons).
-		using var single = new Mutex(initiallyOwned: true, @"Local\AiChromeProxy.Tray", out var isFirst);
-		return isFirst ? BuildAvaloniaApp().StartWithClassicDesktopLifetime(args, ShutdownMode.OnExplicitShutdown) : 0;
+		using (var single = new Mutex(initiallyOwned: true, @"Local\AiChromeProxy.Tray", out var isFirst))
+		{
+			return isFirst ? BuildAvaloniaApp().StartWithClassicDesktopLifetime(args, ShutdownMode.OnExplicitShutdown) : 0;
+		}
 	}
 
 	/// <summary>Also used by the Avalonia previewer.</summary>

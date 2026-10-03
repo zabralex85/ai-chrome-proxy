@@ -219,22 +219,23 @@ public sealed class CloudflareAccessMiddlewareTests
 		var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 		var handler = new GatedHandler(_issuer.Jwks(), gate.Task, entered);
 		var (validator, _) = Build(handler, TimeProvider.System, enabled: true);
-		using var cts = new CancellationTokenSource();
-
-		var first = validator.ValidateAsync(_issuer.Token(), cts.Token);
-		await entered.Task;
-		await cts.CancelAsync();
-		gate.SetResult();
-		try
+		using (var cts = new CancellationTokenSource())
 		{
-			await first;
-		}
-		catch (OperationCanceledException)
-		{
-		}
+			var first = validator.ValidateAsync(_issuer.Token(), cts.Token);
+			await entered.Task;
+			await cts.CancelAsync();
+			gate.SetResult();
+			try
+			{
+				await first;
+			}
+			catch (OperationCanceledException)
+			{
+			}
 
-		Assert.True(await validator.ValidateAsync(_issuer.Token(), TestContext.Current.CancellationToken));
-		Assert.Equal(1, handler.Requests);
+			Assert.True(await validator.ValidateAsync(_issuer.Token(), TestContext.Current.CancellationToken));
+			Assert.Equal(1, handler.Requests);
+		}
 	}
 
 	[Fact]

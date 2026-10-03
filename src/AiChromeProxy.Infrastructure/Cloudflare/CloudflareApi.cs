@@ -81,42 +81,46 @@ public sealed class CloudflareApi(HttpClient http, string apiToken, Func<TimeSpa
 		var json = body is null ? null : JsonSerializer.Serialize(body, Json);
 		for (var attempt = 1; ; attempt++)
 		{
-			using var request = new HttpRequestMessage(method, BaseUrl + path);
-			request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiToken);
-			if (json is not null)
+			using (var request = new HttpRequestMessage(method, BaseUrl + path))
 			{
-				request.Content = new StringContent(json, Encoding.UTF8, "application/json");
-			}
+				request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiToken);
+				if (json is not null)
+				{
+					request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+				}
 
-			using var response = await http.SendAsync(request, ct);
-			if (response.StatusCode == HttpStatusCode.TooManyRequests && attempt == 1)
-			{
-				var wait = response.Headers.RetryAfter?.Delta ?? MaxRetryAfter;
-				await _delay(wait < MaxRetryAfter ? wait : MaxRetryAfter, ct);
-				continue;
-			}
+				using (var response = await http.SendAsync(request, ct))
+				{
+					if (response.StatusCode == HttpStatusCode.TooManyRequests && attempt == 1)
+					{
+						var wait = response.Headers.RetryAfter?.Delta ?? MaxRetryAfter;
+						await _delay(wait < MaxRetryAfter ? wait : MaxRetryAfter, ct);
+						continue;
+					}
 
-			Envelope<T>? envelope;
-			try
-			{
-				envelope = await response.Content.ReadFromJsonAsync<Envelope<T>>(Json, ct);
-			}
-			catch (JsonException) when (!response.IsSuccessStatusCode)
-			{
-				// Not an API envelope (e.g. an HTML error page from a proxy): report the status.
-				envelope = null;
-			}
-			catch (JsonException ex)
-			{
-				throw new CloudflareApiException($"Cloudflare API returned an unreadable response on {method} {PathOnly(path)}: {ex.Message}", 0, response.StatusCode);
-			}
+					Envelope<T>? envelope;
+					try
+					{
+						envelope = await response.Content.ReadFromJsonAsync<Envelope<T>>(Json, ct);
+					}
+					catch (JsonException) when (!response.IsSuccessStatusCode)
+					{
+						// Not an API envelope (e.g. an HTML error page from a proxy): report the status.
+						envelope = null;
+					}
+					catch (JsonException ex)
+					{
+						throw new CloudflareApiException($"Cloudflare API returned an unreadable response on {method} {PathOnly(path)}: {ex.Message}", 0, response.StatusCode);
+					}
 
-			if (!response.IsSuccessStatusCode || envelope is not { Success: true })
-			{
-				throw Error(method, path, response.StatusCode, envelope?.Errors?.FirstOrDefault());
-			}
+					if (!response.IsSuccessStatusCode || envelope is not { Success: true })
+					{
+						throw Error(method, path, response.StatusCode, envelope?.Errors?.FirstOrDefault());
+					}
 
-			return envelope;
+					return envelope;
+				}
+			}
 		}
 	}
 

@@ -33,6 +33,7 @@ Sub-projects in order: skeleton+transport → Windows host → sync → Claude c
 - Search with ripgrep (`rg`), not `find` / `git grep` / `Select-String` — the primary dev environment is Windows.
 - Style — `.editorconfig` + `StyleCop.ruleset` + `stylecop.json` (tabs, CRLF, no `this.` prefix, private fields `_camelCase`). StyleCop is applied to all projects via `Directory.Build.props`; rules with `Action="Error"` fail the build.
 - Interfaces prefixed with `I`; async methods suffixed `Async`, returning `Task`/`Task<T>`.
+- Disposables use the block form `using (...) { }` / `await using (...) { }` — never `using var` declarations (enforced by `Architecture/UsingStatementStyleTests`).
 - Logging — `ILogger<T>` via DI; the Server writes through Serilog (console + CLEF files in `<DataDir>\logs` when a data directory is in use).
 - Windows interop that needs elevation or changes the machine (SCM, LSA, registry, Velopack) sits behind a seam (`IServiceControl`, `IAutoStart`, `IUpdateSource`) or in a thin `[ExcludeFromCodeCoverage]` class; the decisions it applies stay in tested code (`ServiceSetup`). Tests never install services, grant rights or write the registry.
 - Pure logic (SyncEngine, manifest diff, hash-guard, path normalization, stream-json parser) has no browser/IO dependencies and is covered by xUnit.
