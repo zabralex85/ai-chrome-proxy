@@ -87,7 +87,8 @@ public sealed class MemoryChatStore : IChatStore
 		{
 			var page = new List<ChatEvent>();
 			var total = 0;
-			foreach (var e in Find(sessionId).Events.Where(e => e.Seq > afterSeq))
+			var session = _sessions.FirstOrDefault(s => s.Id == sessionId);
+			foreach (var e in (session?.Events ?? []).Where(e => e.Seq > afterSeq))
 			{
 				var size = JsonSerializer.SerializeToUtf8Bytes(e, JsonSerializerOptions.Web).Length;
 				if (page.Count > 0 && total + size > maxBytes)
@@ -111,7 +112,7 @@ public sealed class MemoryChatStore : IChatStore
 		}
 	}
 
-	private Session Find(string id) => _sessions.First(s => s.Id == id);
+	private Session Find(string id) => _sessions.FirstOrDefault(s => s.Id == id) ?? throw new KeyNotFoundException($"Unknown chat session '{id}'.");
 
 	private sealed class Session(string id, string repo, string title, DateTimeOffset updated)
 	{

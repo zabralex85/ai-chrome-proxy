@@ -60,7 +60,7 @@ public sealed class SqliteChatStore : IChatStore
 		{
 			using (var command = Command(connection, "UPDATE chat_session SET claude_session_id = $claude WHERE id = $id", ("$id", id), ("$claude", claudeId)))
 			{
-				command.ExecuteNonQuery();
+				RequireRow(command.ExecuteNonQuery(), id);
 			}
 		}
 	}
@@ -87,6 +87,7 @@ public sealed class SqliteChatStore : IChatStore
 		{
 			using (var transaction = connection.BeginTransaction())
 			{
+				Touch(connection, transaction, sessionId); // throws for an unknown session before anything is inserted
 				foreach (var e in events)
 				{
 					// One statement picks the number and inserts, so concurrent writers cannot take the same seq.
@@ -98,7 +99,6 @@ public sealed class SqliteChatStore : IChatStore
 					}
 				}
 
-				Touch(connection, transaction, sessionId);
 				transaction.Commit();
 			}
 		}
@@ -149,12 +149,20 @@ public sealed class SqliteChatStore : IChatStore
 		return command;
 	}
 
+	private static void RequireRow(int affected, string id)
+	{
+		if (affected == 0)
+		{
+			throw new KeyNotFoundException($"Unknown chat session '{id}'.");
+		}
+	}
+
 	private void Touch(SqliteConnection connection, SqliteTransaction? transaction, string id)
 	{
 		using (var command = Command(connection, "UPDATE chat_session SET updated = $now WHERE id = $id", ("$id", id), ("$now", _time.GetUtcNow().ToUnixTimeMilliseconds())))
 		{
 			command.Transaction = transaction;
-			command.ExecuteNonQuery();
+			RequireRow(command.ExecuteNonQuery(), id);
 		}
 	}
 

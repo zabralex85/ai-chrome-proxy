@@ -2,7 +2,11 @@ using AiChromeProxy.Domain.Chat;
 
 namespace AiChromeProxy.Application.Chat;
 
-/// <summary>Chat sessions and their stored events (everything except streaming <c>text</c> deltas), kept across restarts.</summary>
+/// <summary>
+/// Chat sessions and their stored events (everything except streaming <c>text</c> deltas), kept across restarts.
+/// Unknown session ids: <see cref="SetClaudeSession"/>, <see cref="Touch"/> and <see cref="Append"/> throw <see cref="KeyNotFoundException"/>;
+/// <see cref="Read"/> returns an empty final page; <see cref="GetClaudeSession"/> and <see cref="SessionRepo"/> return null.
+/// </summary>
 public interface IChatStore
 {
 	/// <summary>Creates a session in the repo; <c>Updated</c> is now, <c>Running</c> false.</summary>

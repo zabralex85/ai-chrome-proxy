@@ -16,6 +16,8 @@ public sealed class SqliteChatStoreTests : IDisposable
 	private readonly string _path = Path.Combine(TempRootCleanup.Root, Guid.NewGuid().ToString("N"), "aicp.db");
 	private readonly StepClock _clock = new();
 
+	public static TheoryData<bool> Stores => [false, true];
+
 	public void Dispose()
 	{
 		SqliteConnection.ClearAllPools();
@@ -184,6 +186,54 @@ public sealed class SqliteChatStoreTests : IDisposable
 		Assert.Equal([1L], tiny.Events.Select(e => e.Seq));
 		Assert.False(tiny.Final);
 		Assert.Equal(stored, chat.Read(s.Id, 0, int.MaxValue).Events);
+	}
+
+	[Fact]
+	public void Read_PageExactlyTwoEvents_ReturnsBoth_SeqCrossesTen()
+	{
+		var chat = Chat();
+		var s = chat.CreateSession("r", "t");
+		var stored = chat.Append(s.Id, Enumerable.Range(0, 11).Select(i => Message(s.Id, "same")).ToList());
+		var size = (long)JsonSerializer.SerializeToUtf8Bytes(stored[8], JsonSerializerOptions.Web).Length; // seq 9
+		var next = JsonSerializer.SerializeToUtf8Bytes(stored[9], JsonSerializerOptions.Web).Length; // seq 10, one digit longer
+
+		var page = chat.Read(s.Id, 8, (int)(size + next));
+
+		Assert.Equal([9L, 10L], page.Events.Select(e => e.Seq));
+		Assert.False(page.Final);
+		Assert.Equal([9L], chat.Read(s.Id, 8, (int)(size + next) - 1).Events.Select(e => e.Seq));
+		Assert.Equal(11L, stored[^1].Seq);
+	}
+
+	[Theory]
+	[MemberData(nameof(Stores))]
+	public void UnknownSession_SameContractInBothStores(bool memory)
+	{
+		IChatStore chat = memory ? new MemoryChatStore(_clock) : Chat();
+
+		Assert.Throws<KeyNotFoundException>(() => chat.Append("nope", [Message("nope", "a")]));
+		Assert.Throws<KeyNotFoundException>(() => chat.SetClaudeSession("nope", "c"));
+		Assert.Throws<KeyNotFoundException>(() => chat.Touch("nope"));
+		Assert.Equal((Array.Empty<ChatEvent>(), true), (chat.Read("nope", 0, 1000).Events.ToArray(), chat.Read("nope", 0, 1000).Final));
+		Assert.Null(chat.SessionRepo("nope"));
+		Assert.Null(chat.GetClaudeSession("nope"));
+	}
+
+	[Fact]
+	public void Append_UnknownSession_LeavesNoOrphanRows()
+	{
+		var chat = Chat();
+		Assert.Throws<KeyNotFoundException>(() => chat.Append("nope", [Message("nope", "a")]));
+
+		using (var connection = new SqliteConnection($"Data Source={_path}"))
+		{
+			connection.Open();
+			using (var command = connection.CreateCommand())
+			{
+				command.CommandText = "SELECT COUNT(*) FROM chat_event";
+				Assert.Equal(0L, (long)command.ExecuteScalar()!);
+			}
+		}
 	}
 
 	[Fact]
