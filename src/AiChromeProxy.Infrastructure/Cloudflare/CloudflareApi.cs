@@ -16,6 +16,9 @@ public sealed class CloudflareApi(HttpClient http, string apiToken, Func<TimeSpa
 	public const string BaseUrl = "https://api.cloudflare.com/client/v4/";
 	public const int PageSize = 50;
 
+	/// <summary>Stops a list that never ends (a server ignoring <c>page</c>): 1000 pages of 50 is far beyond any account this tool configures.</summary>
+	public const int MaxPages = 1000;
+
 	/// <summary>Longest <c>Retry-After</c> honoured; also the wait when the header is missing.</summary>
 	public static readonly TimeSpan MaxRetryAfter = TimeSpan.FromSeconds(60);
 
@@ -58,7 +61,7 @@ public sealed class CloudflareApi(HttpClient http, string apiToken, Func<TimeSpa
 			var envelope = await SendEnvelopeAsync<List<T>>(HttpMethod.Get, $"{path}{separator}page={page}&per_page={PageSize}", null, ct);
 			var result = envelope.Result ?? [];
 			items.AddRange(result);
-			if (envelope.ResultInfo?.TotalPages is { } totalPages ? page >= totalPages : result.Count < PageSize)
+			if ((envelope.ResultInfo?.TotalPages is { } totalPages ? page >= totalPages : result.Count < PageSize) || page >= MaxPages)
 			{
 				return items;
 			}

@@ -95,6 +95,21 @@ public sealed class CloudflareApiTests : IDisposable
 	}
 
 	[Fact]
+	public async Task List_FullPagesForever_StopsAtMaxPages()
+	{
+		// A server ignoring page: every page full and no total_pages.
+		var full = "[" + string.Join(',', Enumerable.Range(1, CloudflareApi.PageSize).Select(i => $$"""{"id":"t{{i}}"}""")) + "]";
+		for (var page = 1; page <= CloudflareApi.MaxPages + 1; page++)
+		{
+			_handler.OnResponse("GET", $"accounts/a1/cfd_tunnel?page={page}&per_page=50", () => FakeCloudflareHandler.Json(HttpStatusCode.OK, $$$"""{"success":true,"errors":[],"result":{{{full}}},"result_info":{"per_page":50,"count":50}}"""));
+		}
+
+		await _api.ListAsync<Item>("accounts/a1/cfd_tunnel", TestContext.Current.CancellationToken);
+
+		Assert.Equal(CloudflareApi.MaxPages, _handler.Requests.Count);
+	}
+
+	[Fact]
 	public async Task Send_BodyAsSnakeCaseJson()
 	{
 		_handler.On("POST", "accounts/a1/cfd_tunnel", """{"id":"t1","name":"n"}""");
