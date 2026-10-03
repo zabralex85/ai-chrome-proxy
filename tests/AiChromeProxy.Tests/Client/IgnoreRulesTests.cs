@@ -110,4 +110,75 @@ public sealed class IgnoreRulesTests
 
 		Assert.All(IgnoreRules.BuiltInDirectories, d => Assert.True(rules.IsIgnored(d + "/x")));
 	}
+
+	[Fact]
+	public void Create_StripsBom()
+	{
+		Assert.True(IgnoreRules.Create((char)0xFEFF + "*.log").IsIgnored("a.log"));
+	}
+
+	[Fact]
+	public void Gitignore_TrailingSpaceIsTrimmed()
+	{
+		Assert.True(IgnoreRules.Create("foo ").IsIgnored("foo"));
+	}
+
+	[Fact]
+	public void IsIgnored_AcceptsBackslashes()
+	{
+		Assert.True(IgnoreRules.Create("build/\n").IsIgnored("src\\build\\out.js"));
+		Assert.True(IgnoreRules.Create(null).IsIgnored("a\\b\\.ENV"));
+	}
+
+	[Fact]
+	public void BuiltIn_DeepCaseInsensitive()
+	{
+		Assert.True(IgnoreRules.Create(null).IsIgnored("a/b/.ENV"));
+	}
+
+	[Fact]
+	public void Gitignore_NegationCannotReincludeEnvStar()
+	{
+		Assert.True(IgnoreRules.Create("!.env.*\n").IsIgnored("x/.env.production"));
+	}
+
+	[Fact]
+	public void Gitignore_PathologicalPatternsAreLinear()
+	{
+		var rules = IgnoreRules.Create("*a*a*a*a*a*b\na/**/**/**/**/b\n");
+		var name = new string('a', 200);
+		var deep = "a/" + string.Join('/', Enumerable.Repeat("x", 100)) + "/c";
+
+		var watch = System.Diagnostics.Stopwatch.StartNew();
+		var first = rules.IsIgnored(name);
+		var second = rules.IsIgnored(deep);
+		watch.Stop();
+
+		Assert.False(first);
+		Assert.False(second);
+		Assert.True(watch.Elapsed < TimeSpan.FromSeconds(1), $"took {watch.Elapsed}");
+		Assert.True(rules.IsIgnored("a/q/b"));
+	}
+
+	[Fact]
+	public void IsIgnored_ManyPathsStayFast()
+	{
+		var patterns = new List<string>();
+		for (var i = 0; i < 20; i++)
+		{
+			patterns.Add($"*.ext{i}");
+			patterns.Add($"/gen{i}/");
+		}
+
+		patterns.AddRange(["docs/**/*.tmp", "src/*/cache", "**/out?/", "!keep.ext1", "a*b*c.log", "*.min.*", "?x.dat", "dist/**", "/vendor/*.js", "build-*/"]);
+		var rules = IgnoreRules.Create(string.Join('\n', patterns));
+		var paths = Enumerable.Range(0, 20_000).Select(i => $"src/m{i % 50}/n{i % 7}/p{i % 13}/q{i % 5}/file{i}.cs").ToList();
+
+		var watch = System.Diagnostics.Stopwatch.StartNew();
+		var ignored = paths.Count(rules.IsIgnored);
+		watch.Stop();
+
+		Assert.Equal(0, ignored);
+		Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), $"took {watch.Elapsed}");
+	}
 }

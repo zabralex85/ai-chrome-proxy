@@ -5,7 +5,8 @@ namespace AiChromeProxy.Client.Sync;
 
 /// <summary>
 /// Which files never leave the machine: the built-in excludes (secrets, VCS and build folders) plus the root <c>.gitignore</c>
-/// (common subset: <c>#</c> comments, blank lines, <c>*</c>, <c>**</c>, <c>?</c>, trailing <c>/</c>, leading <c>/</c>, <c>!</c>).
+/// (common subset: <c>#</c> comments, blank lines, <c>*</c>, <c>**</c>, <c>?</c>, trailing <c>/</c>, leading <c>/</c>, <c>!</c>;
+/// <c>[...]</c> classes and backslash escapes are not supported).
 /// Matching ignores case (the source machine is usually Windows). A <c>.gitignore</c> negation cannot re-include a built-in exclude.
 /// </summary>
 public sealed class IgnoreRules
@@ -20,28 +21,47 @@ public sealed class IgnoreRules
 
 	private readonly IReadOnlyList<Rule> _gitignore;
 
+	// Verdict per directory prefix: an excluded directory short-circuits its children. Not thread-safe (one scan, one thread).
+	private readonly Dictionary<string, bool> _directories = new(StringComparer.OrdinalIgnoreCase);
+
 	private IgnoreRules(IReadOnlyList<Rule> gitignore) => _gitignore = gitignore;
 
 	/// <param name="gitignore">Content of the root <c>.gitignore</c>, or null when there is none.</param>
 	public static IgnoreRules Create(string? gitignore) =>
-		new(gitignore is null ? [] : Parse(gitignore.Split('\n')));
+		new(gitignore is null ? [] : Parse(gitignore.TrimStart((char)0xFEFF).Split('\n')));
 
-	/// <param name="path">A file path relative to the picked folder, <c>/</c>-separated.</param>
+	/// <param name="path">A file path relative to the picked folder, <c>/</c>-separated (<c>\</c> is accepted too).</param>
 	/// <returns>True when the file or one of its parent directories is excluded.</returns>
 	public bool IsIgnored(string path)
 	{
-		var segments = path.Split('/');
-		for (var i = 1; i <= segments.Length; i++)
+		if (path.Contains('\\'))
 		{
-			var prefix = string.Join('/', segments, 0, i);
-			var isDirectory = i < segments.Length;
-			if (Matches(BuiltIn, prefix, isDirectory) || Matches(_gitignore, prefix, isDirectory))
+			path = path.Replace('\\', '/');
+		}
+
+		var lookup = _directories.GetAlternateLookup<ReadOnlySpan<char>>();
+		for (var slash = path.IndexOf('/'); slash >= 0; slash = path.IndexOf('/', slash + 1))
+		{
+			if (slash == 0)
+			{
+				continue;
+			}
+
+			var prefix = path.AsSpan(0, slash);
+			if (!lookup.TryGetValue(prefix, out var ignored))
+			{
+				var text = prefix.ToString();
+				ignored = Matches(BuiltIn, text, true) || Matches(_gitignore, text, true);
+				_directories[text] = ignored;
+			}
+
+			if (ignored)
 			{
 				return true;
 			}
 		}
 
-		return false;
+		return Matches(BuiltIn, path, false) || Matches(_gitignore, path, false);
 	}
 
 	/// <summary>Git semantics: the last matching rule decides; a <c>!</c> rule re-includes.</summary>
@@ -50,7 +70,7 @@ public sealed class IgnoreRules
 		var ignored = false;
 		foreach (var rule in rules)
 		{
-			if ((!rule.DirectoryOnly || isDirectory) && rule.Pattern.IsMatch(path))
+			if ((!rule.DirectoryOnly || isDirectory) && rule.IsMatch(path))
 			{
 				ignored = !rule.Negate;
 			}
@@ -87,8 +107,22 @@ public sealed class IgnoreRules
 				continue;
 			}
 
-			var regex = (anchored ? "^" : "^(?:.*/)?") + GlobToRegex(line) + "$";
-			rules.Add(new Rule(new Regex(regex, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant), negate, directoryOnly));
+			if (line.AsSpan().IndexOfAny('*', '?') < 0)
+			{
+				rules.Add(new Rule(null, line, false, anchored, negate, directoryOnly));
+			}
+			else if (!anchored && line[0] == '*' && line.AsSpan(1).IndexOfAny('*', '?') < 0)
+			{
+				// "*.ext": the name ends with the literal.
+				rules.Add(new Rule(null, line[1..], true, false, negate, directoryOnly));
+			}
+			else
+			{
+				// NonBacktracking: linear time whatever the pattern (a .gitignore is untrusted input).
+				var regex = (anchored ? "^" : "^(?:.*/)?") + GlobToRegex(line) + "$";
+				var options = RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking;
+				rules.Add(new Rule(new Regex(regex, options), null, false, anchored, negate, directoryOnly));
+			}
 		}
 
 		return rules;
@@ -96,39 +130,75 @@ public sealed class IgnoreRules
 
 	private static string GlobToRegex(string glob)
 	{
+		while (glob.Contains("**/**/", StringComparison.Ordinal))
+		{
+			glob = glob.Replace("**/**/", "**/", StringComparison.Ordinal);
+		}
+
 		var sb = new StringBuilder();
 		for (var i = 0; i < glob.Length; i++)
 		{
 			var c = glob[i];
-			if (c == '*' && i + 1 < glob.Length && glob[i + 1] == '*' && (i == 0 || glob[i - 1] == '/'))
+			if (c == '*')
 			{
-				if (i + 2 == glob.Length)
+				var end = i;
+				while (end + 1 < glob.Length && glob[end + 1] == '*')
+				{
+					end++;
+				}
+
+				var atStart = i == 0 || glob[i - 1] == '/';
+				if (end > i && atStart && end + 1 == glob.Length)
 				{
 					// Trailing "**": everything below.
 					sb.Append(".*");
-					i++;
-					continue;
 				}
-
-				if (glob[i + 2] == '/')
+				else if (end > i && atStart && glob[end + 1] == '/')
 				{
 					// "**/": zero or more directories.
 					sb.Append("(?:.*/)?");
-					i += 2;
-					continue;
+					end++;
 				}
+				else
+				{
+					// A run of stars collapses to one.
+					sb.Append("[^/]*");
+				}
+
+				i = end;
+				continue;
 			}
 
-			sb.Append(c switch
-			{
-				'*' => "[^/]*",
-				'?' => "[^/]",
-				_ => Regex.Escape(c.ToString()),
-			});
+			sb.Append(c == '?' ? "[^/]" : Regex.Escape(c.ToString()));
 		}
 
 		return sb.ToString();
 	}
 
-	private sealed record Rule(Regex Pattern, bool Negate, bool DirectoryOnly);
+	private sealed record Rule(Regex? Pattern, string? Literal, bool Suffix, bool Anchored, bool Negate, bool DirectoryOnly)
+	{
+		public bool IsMatch(string path)
+		{
+			if (Pattern is not null)
+			{
+				return Pattern.IsMatch(path);
+			}
+
+			var literal = Literal!;
+			if (Suffix)
+			{
+				return path.EndsWith(literal, StringComparison.OrdinalIgnoreCase);
+			}
+
+			if (path.Equals(literal, StringComparison.OrdinalIgnoreCase))
+			{
+				return true;
+			}
+
+			return !Anchored
+				&& path.Length > literal.Length
+				&& path[path.Length - literal.Length - 1] == '/'
+				&& path.EndsWith(literal, StringComparison.OrdinalIgnoreCase);
+		}
+	}
 }
