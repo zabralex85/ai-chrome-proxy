@@ -64,8 +64,7 @@ if (!access.Enabled)
 }
 
 app.UseMiddleware<CloudflareAccessMiddleware>();
-app.UseBlazorFrameworkFiles();
-app.UseStaticFiles();
+app.MapStaticAssets();
 app.MapHub<TransportHub>(TransportHub.Path);
 app.MapFallbackToFile("index.html");
 
