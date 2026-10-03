@@ -21,19 +21,21 @@ public sealed class UpdateOrchestrator(IUpdateSource source, IServiceControl ser
 	/// <summary>Checks now and then every <see cref="CheckInterval"/> until cancelled; results and errors go to <paramref name="report"/>, never thrown.</summary>
 	public async Task RunChecksAsync(TimeProvider time, Action<string?, Exception?> report, CancellationToken ct)
 	{
-		using var timer = new PeriodicTimer(CheckInterval, time);
-		do
+		using (var timer = new PeriodicTimer(CheckInterval, time))
 		{
-			try
+			do
 			{
-				report(await CheckAsync(ct), null);
+				try
+				{
+					report(await CheckAsync(ct), null);
+				}
+				catch (Exception ex) when (ex is not OperationCanceledException)
+				{
+					report(null, ex);
+				}
 			}
-			catch (Exception ex) when (ex is not OperationCanceledException)
-			{
-				report(null, ex);
-			}
+			while (await timer.WaitForNextTickAsync(ct));
 		}
-		while (await timer.WaitForNextTickAsync(ct));
 	}
 
 	public async Task UpdateAsync(CancellationToken ct)

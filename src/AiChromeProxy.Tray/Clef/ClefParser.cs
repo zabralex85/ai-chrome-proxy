@@ -15,20 +15,22 @@ public static class ClefParser
 
 		try
 		{
-			using var json = JsonDocument.Parse(line);
-			var root = json.RootElement;
-			if (root.ValueKind != JsonValueKind.Object
-				|| !root.TryGetProperty("@t", out var t)
-				|| t.ValueKind != JsonValueKind.String
-				|| !t.TryGetDateTimeOffset(out var timestamp))
+			using (var json = JsonDocument.Parse(line))
 			{
-				return null;
+				var root = json.RootElement;
+				if (root.ValueKind != JsonValueKind.Object
+					|| !root.TryGetProperty("@t", out var t)
+					|| t.ValueKind != JsonValueKind.String
+					|| !t.TryGetDateTimeOffset(out var timestamp))
+				{
+					return null;
+				}
+
+				var level = String(root, "@l") is { } name && Enum.TryParse<ClefLevel>(name, ignoreCase: true, out var parsed) ? parsed : ClefLevel.Information;
+
+				// @m: rendered message (RenderedCompactJsonFormatter); @mt: template only (CompactJsonFormatter).
+				return new LogEntry(timestamp, level, String(root, "@m") ?? String(root, "@mt") ?? string.Empty, String(root, "@x"));
 			}
-
-			var level = String(root, "@l") is { } name && Enum.TryParse<ClefLevel>(name, ignoreCase: true, out var parsed) ? parsed : ClefLevel.Information;
-
-			// @m: rendered message (RenderedCompactJsonFormatter); @mt: template only (CompactJsonFormatter).
-			return new LogEntry(timestamp, level, String(root, "@m") ?? String(root, "@mt") ?? string.Empty, String(root, "@x"));
 		}
 		catch (JsonException)
 		{

@@ -42,126 +42,138 @@ public sealed class CloudflaredSupervisorTests
 		var suffix = Guid.NewGuid().ToString("N");
 		string[] inherited = [$"Tunnel__AicpTest{suffix}", $"TUNNEL_AICPTEST{suffix}"];
 		ProcessStartInfo info;
-		using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
-		Task run;
-		try
+		using (var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken))
 		{
-			foreach (var name in inherited)
+			Task run;
+			try
 			{
-				Environment.SetEnvironmentVariable(name, "inherited");
+				foreach (var name in inherited)
+				{
+					Environment.SetEnvironmentVariable(name, "inherited");
+				}
+
+				run = Create().RunAsync(cts.Token);
+				info = Assert.Single(_starts);
+			}
+			finally
+			{
+				foreach (var name in inherited)
+				{
+					Environment.SetEnvironmentVariable(name, null);
+				}
 			}
 
-			run = Create().RunAsync(cts.Token);
-			info = Assert.Single(_starts);
+			Assert.Equal(ConfiguredPath, info.FileName);
+			Assert.Equal(["tunnel", "--no-autoupdate", "run"], info.ArgumentList);
+			Assert.Equal(string.Empty, info.Arguments);
+			Assert.Equal(Token, info.Environment[CloudflaredSupervisor.TokenVariable]);
+			Assert.Equal([CloudflaredSupervisor.TokenVariable], info.Environment.Keys.Where(k => k.StartsWith("TUNNEL_", StringComparison.OrdinalIgnoreCase)));
+			Assert.Contains("PATH", info.Environment.Keys, StringComparer.OrdinalIgnoreCase);
+
+			_output!("INF Registered tunnel connection");
+			Assert.Contains("cloudflared: INF Registered tunnel connection", _logger.Messages);
+			Assert.DoesNotContain(_logger.Messages, m => m.Contains(Token, StringComparison.Ordinal));
+
+			await cts.CancelAsync();
+			await run;
 		}
-		finally
-		{
-			foreach (var name in inherited)
-			{
-				Environment.SetEnvironmentVariable(name, null);
-			}
-		}
-
-		Assert.Equal(ConfiguredPath, info.FileName);
-		Assert.Equal(["tunnel", "--no-autoupdate", "run"], info.ArgumentList);
-		Assert.Equal(string.Empty, info.Arguments);
-		Assert.Equal(Token, info.Environment[CloudflaredSupervisor.TokenVariable]);
-		Assert.Equal([CloudflaredSupervisor.TokenVariable], info.Environment.Keys.Where(k => k.StartsWith("TUNNEL_", StringComparison.OrdinalIgnoreCase)));
-		Assert.Contains("PATH", info.Environment.Keys, StringComparer.OrdinalIgnoreCase);
-
-		_output!("INF Registered tunnel connection");
-		Assert.Contains("cloudflared: INF Registered tunnel connection", _logger.Messages);
-		Assert.DoesNotContain(_logger.Messages, m => m.Contains(Token, StringComparison.Ordinal));
-
-		await cts.CancelAsync();
-		await run;
 	}
 
 	[Fact]
 	public async Task Exits_RestartedWithDoublingBackoff_CappedAt60s()
 	{
-		using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
-		var run = Create().RunAsync(cts.Token);
-
-		foreach (var seconds in new[] { 1, 2, 4, 8, 16, 32, 60, 60 })
+		using (var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken))
 		{
-			await ExitAndExpectRestartAfterAsync(TimeSpan.FromSeconds(seconds));
-		}
+			var run = Create().RunAsync(cts.Token);
 
-		Assert.Contains(_logger.Entries, e => e is (LogLevel.Warning, "cloudflared exited with code 1."));
-		Assert.Equal(
-			["00:00:01", "00:00:02", "00:00:04", "00:00:08", "00:00:16", "00:00:32", "00:01:00", "00:01:00"],
-			_logger.Messages.Where(m => m.StartsWith("Restarting cloudflared in ", StringComparison.Ordinal)).Select(m => m["Restarting cloudflared in ".Length..^1]));
-		Assert.All(_processes.SkipLast(1), p => Assert.True(p.Disposed));
-		await cts.CancelAsync();
-		await run;
+			foreach (var seconds in new[] { 1, 2, 4, 8, 16, 32, 60, 60 })
+			{
+				await ExitAndExpectRestartAfterAsync(TimeSpan.FromSeconds(seconds));
+			}
+
+			Assert.Contains(_logger.Entries, e => e is (LogLevel.Warning, "cloudflared exited with code 1."));
+			Assert.Equal(
+				["00:00:01", "00:00:02", "00:00:04", "00:00:08", "00:00:16", "00:00:32", "00:01:00", "00:01:00"],
+				_logger.Messages.Where(m => m.StartsWith("Restarting cloudflared in ", StringComparison.Ordinal)).Select(m => m["Restarting cloudflared in ".Length..^1]));
+			Assert.All(_processes.SkipLast(1), p => Assert.True(p.Disposed));
+			await cts.CancelAsync();
+			await run;
+		}
 	}
 
 	[Fact]
 	public async Task RunOfFiveMinutes_ResetsBackoff()
 	{
-		using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
-		var run = Create().RunAsync(cts.Token);
-		await ExitAndExpectRestartAfterAsync(TimeSpan.FromSeconds(1));
-		await ExitAndExpectRestartAfterAsync(TimeSpan.FromSeconds(2));
+		using (var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken))
+		{
+			var run = Create().RunAsync(cts.Token);
+			await ExitAndExpectRestartAfterAsync(TimeSpan.FromSeconds(1));
+			await ExitAndExpectRestartAfterAsync(TimeSpan.FromSeconds(2));
 
-		_time.Advance(CloudflaredSupervisor.StableRun);
+			_time.Advance(CloudflaredSupervisor.StableRun);
 
-		await ExitAndExpectRestartAfterAsync(TimeSpan.FromSeconds(1));
-		await ExitAndExpectRestartAfterAsync(TimeSpan.FromSeconds(2));
-		await cts.CancelAsync();
-		await run;
+			await ExitAndExpectRestartAfterAsync(TimeSpan.FromSeconds(1));
+			await ExitAndExpectRestartAfterAsync(TimeSpan.FromSeconds(2));
+			await cts.CancelAsync();
+			await run;
+		}
 	}
 
 	[Fact]
 	public async Task StartFailure_LoggedAsError_RetriedWithBackoff()
 	{
 		FailStart = new Win32Exception(2, "The system cannot find the file specified");
-		using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
-		var run = Create().RunAsync(cts.Token);
+		using (var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken))
+		{
+			var run = Create().RunAsync(cts.Token);
 
-		await WaitUntilAsync(() => _time.Timers == 1);
-		_time.Advance(TimeSpan.FromSeconds(1));
-		await WaitUntilAsync(() => _time.Timers == 2);
-		FailStart = null;
-		_time.Advance(TimeSpan.FromSeconds(2));
-		await WaitUntilAsync(() => _processes.Count == 1);
+			await WaitUntilAsync(() => _time.Timers == 1);
+			_time.Advance(TimeSpan.FromSeconds(1));
+			await WaitUntilAsync(() => _time.Timers == 2);
+			FailStart = null;
+			_time.Advance(TimeSpan.FromSeconds(2));
+			await WaitUntilAsync(() => _processes.Count == 1);
 
-		Assert.Equal(3, _starts.Count);
-		Assert.Equal(2, _logger.Entries.Count(e => e is (LogLevel.Error, $"cloudflared could not be started ({ConfiguredPath}).")));
-		await cts.CancelAsync();
-		await run;
+			Assert.Equal(3, _starts.Count);
+			Assert.Equal(2, _logger.Entries.Count(e => e is (LogLevel.Error, $"cloudflared could not be started ({ConfiguredPath}).")));
+			await cts.CancelAsync();
+			await run;
+		}
 	}
 
 	[Fact]
 	public async Task Shutdown_KillsAndDisposesTheProcess_NoRestart()
 	{
-		using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
-		var run = Create().RunAsync(cts.Token);
+		using (var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken))
+		{
+			var run = Create().RunAsync(cts.Token);
 
-		await cts.CancelAsync();
-		await run;
+			await cts.CancelAsync();
+			await run;
 
-		var process = Assert.Single(_processes);
-		Assert.True(process.Killed);
-		Assert.True(process.Disposed);
-		Assert.Single(_starts);
+			var process = Assert.Single(_processes);
+			Assert.True(process.Killed);
+			Assert.True(process.Disposed);
+			Assert.Single(_starts);
+		}
 	}
 
 	[Fact]
 	public async Task Shutdown_DuringBackoff_Returns_NoRestart()
 	{
-		using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
-		var run = Create().RunAsync(cts.Token);
-		_processes.Last().Exit(0);
-		await WaitUntilAsync(() => _time.Timers == 1);
+		using (var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken))
+		{
+			var run = Create().RunAsync(cts.Token);
+			_processes.Last().Exit(0);
+			await WaitUntilAsync(() => _time.Timers == 1);
 
-		await cts.CancelAsync();
-		await run;
+			await cts.CancelAsync();
+			await run;
 
-		Assert.Single(_starts);
-		Assert.False(_processes.Last().Killed);
-		Assert.True(_processes.Last().Disposed);
+			Assert.Single(_starts);
+			Assert.False(_processes.Last().Killed);
+			Assert.True(_processes.Last().Disposed);
+		}
 	}
 
 	[Fact]
@@ -176,32 +188,35 @@ public sealed class CloudflaredSupervisorTests
 	[Fact]
 	public async Task WaitFailure_LoggedAsError_ProcessKilledAndDisposed_RestartedWithBackoff()
 	{
-		using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
-		var run = Create().RunAsync(cts.Token);
-		var failed = _processes.Last();
+		using (var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken))
+		{
+			var run = Create().RunAsync(cts.Token);
+			var failed = _processes.Last();
 
-		failed.Fail(new InvalidOperationException("No process is associated with this object."));
-		await WaitUntilAsync(() => _time.Timers == 1);
-		_time.Advance(TimeSpan.FromSeconds(1));
-		await WaitUntilAsync(() => _processes.Count == 2);
+			failed.Fail(new InvalidOperationException("No process is associated with this object."));
+			await WaitUntilAsync(() => _time.Timers == 1);
+			_time.Advance(TimeSpan.FromSeconds(1));
+			await WaitUntilAsync(() => _processes.Count == 2);
 
-		Assert.True(failed.Killed);
-		Assert.True(failed.Disposed);
-		Assert.Contains(_logger.Entries, e => e is (LogLevel.Error, "Waiting for cloudflared failed; it is stopped and restarted."));
-		await cts.CancelAsync();
-		await run;
+			Assert.True(failed.Killed);
+			Assert.True(failed.Disposed);
+			Assert.Contains(_logger.Entries, e => e is (LogLevel.Error, "Waiting for cloudflared failed; it is stopped and restarted."));
+			await cts.CancelAsync();
+			await run;
+		}
 	}
 
 	[Fact]
 	public async Task HostedService_StartAndStop_KillsTheProcess()
 	{
-		using var supervisor = Create();
+		using (var supervisor = Create())
+		{
+			await supervisor.StartAsync(TestContext.Current.CancellationToken);
+			await WaitUntilAsync(() => _processes.Count == 1);
+			await supervisor.StopAsync(TestContext.Current.CancellationToken);
 
-		await supervisor.StartAsync(TestContext.Current.CancellationToken);
-		await WaitUntilAsync(() => _processes.Count == 1);
-		await supervisor.StopAsync(TestContext.Current.CancellationToken);
-
-		Assert.True(_processes.Last().Killed);
+			Assert.True(_processes.Last().Killed);
+		}
 	}
 
 	[Fact]

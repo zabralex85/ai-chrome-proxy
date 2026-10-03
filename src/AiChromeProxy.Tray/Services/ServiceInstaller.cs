@@ -58,50 +58,62 @@ internal static partial class ServiceInstaller
 		GrantLogonAsService(accountSid);
 		VerifyPassword(account, password);
 
-		using var manager = OpenSCManager(null, null, ScManagerConnect | ScManagerCreateService);
-		ThrowIfInvalid(manager);
-		var binaryPath = ServiceSetup.BinaryPathName(ServiceSetup.ServerExecutable(AppContext.BaseDirectory));
-		using var service = CreateOrReconfigure(manager, serviceName, binaryPath, ServiceSetup.ServiceStartName(account), password);
-		SetFailureActions(service);
-		GrantUserControl(service, controlSid);
-		ServiceSetup.PrepareDataDirectory(dataDir, accountSid, controlSid);
-
-		using var controller = new ServiceController(serviceName);
-		if (controller.Status == ServiceControllerStatus.Stopped)
+		using (var manager = OpenSCManager(null, null, ScManagerConnect | ScManagerCreateService))
 		{
-			controller.Start();
+			ThrowIfInvalid(manager);
+			var binaryPath = ServiceSetup.BinaryPathName(ServiceSetup.ServerExecutable(AppContext.BaseDirectory));
+			using (var service = CreateOrReconfigure(manager, serviceName, binaryPath, ServiceSetup.ServiceStartName(account), password))
+			{
+				SetFailureActions(service);
+				GrantUserControl(service, controlSid);
+				ServiceSetup.PrepareDataDirectory(dataDir, accountSid, controlSid);
+
+				using (var controller = new ServiceController(serviceName))
+				{
+					if (controller.Status == ServiceControllerStatus.Stopped)
+					{
+						controller.Start();
+					}
+				}
+			}
 		}
 	}
 
 	/// <summary>Marks the service for deletion, then stops it (deletion completes once it has stopped); the data directory is kept.</summary>
 	public static void Uninstall(string serviceName)
 	{
-		using var manager = OpenSCManager(null, null, ScManagerConnect);
-		ThrowIfInvalid(manager);
-		using var service = OpenService(manager, serviceName, ServiceStop | ServiceQueryStatus | Delete);
-		if (service.IsInvalid && Marshal.GetLastPInvokeError() == ErrorServiceDoesNotExist)
+		using (var manager = OpenSCManager(null, null, ScManagerConnect))
 		{
-			return;
-		}
+			ThrowIfInvalid(manager);
+			using (var service = OpenService(manager, serviceName, ServiceStop | ServiceQueryStatus | Delete))
+			{
+				if (service.IsInvalid && Marshal.GetLastPInvokeError() == ErrorServiceDoesNotExist)
+				{
+					return;
+				}
 
-		ThrowIfInvalid(service);
-		using var controller = new ServiceController(serviceName);
-		ServiceSetup.RunUninstallSequence(
-			() =>
-			{
-				if (!DeleteService(service) && Marshal.GetLastPInvokeError() != ErrorServiceMarkedForDelete)
+				ThrowIfInvalid(service);
+				using (var controller = new ServiceController(serviceName))
 				{
-					throw new Win32Exception();
+					ServiceSetup.RunUninstallSequence(
+						() =>
+						{
+							if (!DeleteService(service) && Marshal.GetLastPInvokeError() != ErrorServiceMarkedForDelete)
+							{
+								throw new Win32Exception();
+							}
+						},
+						() =>
+						{
+							if (controller.Status is not (ServiceControllerStatus.Stopped or ServiceControllerStatus.StopPending))
+							{
+								controller.Stop(stopDependentServices: false);
+							}
+						},
+						() => controller.WaitForStatus(ServiceControllerStatus.Stopped, StopTimeout));
 				}
-			},
-			() =>
-			{
-				if (controller.Status is not (ServiceControllerStatus.Stopped or ServiceControllerStatus.StopPending))
-				{
-					controller.Stop(stopDependentServices: false);
-				}
-			},
-			() => controller.WaitForStatus(ServiceControllerStatus.Stopped, StopTimeout));
+			}
+		}
 	}
 
 	private static void VerifyPassword(string account, string password)

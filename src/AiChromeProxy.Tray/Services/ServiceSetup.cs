@@ -76,25 +76,29 @@ public static class ServiceSetup
 		var dacl = DataDirectoryDacl(account);
 
 		// Root first: nothing is created inside it before it was checked. The handle stays open until the DACL is written.
-		using var rootGuard = DataDirectoryGuard.Acquire(dataDir.Root);
-		EnsureDirectorySafe(dataDir.Root, account, controlUser, ownerOf);
-		WriteDacl(rootGuard, dacl);
-
-		// Checked after the DACL: from now on only SYSTEM, Administrators and the account can add entries, so the check cannot be raced.
-		EnsureEntriesTrusted(dataDir.Root, account, controlUser, ownerOf);
-
-		// A new logs inherits the set; an existing one (it may carry the inherited %ProgramData% ACEs) gets it written. Its files are left as they are.
-		using var logsGuard = DataDirectoryGuard.Acquire(dataDir.Logs);
-		EnsureDirectorySafe(dataDir.Logs, account, controlUser, ownerOf);
-		WriteDacl(logsGuard, dacl);
-		EnsureEntriesTrusted(dataDir.Logs, account, controlUser, ownerOf);
-
-		// The held handles share WRITE, so either could in theory be turned into a junction in place meanwhile: re-check.
-		foreach (var path in new[] { dataDir.Root, dataDir.Logs })
+		using (var rootGuard = DataDirectoryGuard.Acquire(dataDir.Root))
 		{
-			if (new DirectoryInfo(path).Attributes.HasFlag(FileAttributes.ReparsePoint))
+			EnsureDirectorySafe(dataDir.Root, account, controlUser, ownerOf);
+			WriteDacl(rootGuard, dacl);
+
+			// Checked after the DACL: from now on only SYSTEM, Administrators and the account can add entries, so the check cannot be raced.
+			EnsureEntriesTrusted(dataDir.Root, account, controlUser, ownerOf);
+
+			// A new logs inherits the set; an existing one (it may carry the inherited %ProgramData% ACEs) gets it written. Its files are left as they are.
+			using (var logsGuard = DataDirectoryGuard.Acquire(dataDir.Logs))
 			{
-				throw new InvalidOperationException($"{path} is a link; delete it and retry.");
+				EnsureDirectorySafe(dataDir.Logs, account, controlUser, ownerOf);
+				WriteDacl(logsGuard, dacl);
+				EnsureEntriesTrusted(dataDir.Logs, account, controlUser, ownerOf);
+
+				// The held handles share WRITE, so either could in theory be turned into a junction in place meanwhile: re-check.
+				foreach (var path in new[] { dataDir.Root, dataDir.Logs })
+				{
+					if (new DirectoryInfo(path).Attributes.HasFlag(FileAttributes.ReparsePoint))
+					{
+						throw new InvalidOperationException($"{path} is a link; delete it and retry.");
+					}
+				}
 			}
 		}
 	}

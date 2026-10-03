@@ -389,9 +389,10 @@ public sealed class RemoteAccessViewModelTests : IDisposable
 	public void NeedsSetup_UnreadableFile_False()
 	{
 		WriteSettings("{}");
-		using var locked = File.Open(_dataDir.SettingsFile, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-
-		Assert.False(NeedsSetup(_dataDir));
+		using (var locked = File.Open(_dataDir.SettingsFile, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+		{
+			Assert.False(NeedsSetup(_dataDir));
+		}
 	}
 
 	[Fact]

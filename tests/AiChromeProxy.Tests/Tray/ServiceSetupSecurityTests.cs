@@ -446,9 +446,11 @@ public sealed class ServiceSetupSecurityTests : IDisposable
 
 	internal static void Junction(string link, string target)
 	{
-		using var process = Process.Start(new ProcessStartInfo("cmd.exe", $"/c mklink /J \"{link}\" \"{target}\"") { CreateNoWindow = true, RedirectStandardOutput = true })!;
-		process.WaitForExit();
-		Assert.Equal(0, process.ExitCode);
+		using (var process = Process.Start(new ProcessStartInfo("cmd.exe", $"/c mklink /J \"{link}\" \"{target}\"") { CreateNoWindow = true, RedirectStandardOutput = true })!)
+		{
+			process.WaitForExit();
+			Assert.Equal(0, process.ExitCode);
+		}
 	}
 
 	/// <summary>The root owned by Administrators (as after an elevated install), everything else by the current user.</summary>

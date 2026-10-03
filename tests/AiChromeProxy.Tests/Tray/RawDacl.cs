@@ -17,12 +17,14 @@ internal static class RawDacl
 
 	public static string Sddl(string path)
 	{
-		using var handle = CreateFileW(path, ReadControl, ShareAll, IntPtr.Zero, OpenExisting, BackupSemanticsAndOpenReparsePoint, IntPtr.Zero);
-		Assert.False(handle.IsInvalid);
-		GetKernelObjectSecurity(handle, DaclSecurityInformation, null, 0, out var needed);
-		var buffer = new byte[needed];
-		Assert.True(GetKernelObjectSecurity(handle, DaclSecurityInformation, buffer, needed, out _));
-		return new RawSecurityDescriptor(buffer, 0).GetSddlForm(AccessControlSections.Access);
+		using (var handle = CreateFileW(path, ReadControl, ShareAll, IntPtr.Zero, OpenExisting, BackupSemanticsAndOpenReparsePoint, IntPtr.Zero))
+		{
+			Assert.False(handle.IsInvalid);
+			GetKernelObjectSecurity(handle, DaclSecurityInformation, null, 0, out var needed);
+			var buffer = new byte[needed];
+			Assert.True(GetKernelObjectSecurity(handle, DaclSecurityInformation, buffer, needed, out _));
+			return new RawSecurityDescriptor(buffer, 0).GetSddlForm(AccessControlSections.Access);
+		}
 	}
 
 	[DllImport("kernel32.dll", EntryPoint = "CreateFileW", SetLastError = true, CharSet = CharSet.Unicode)]

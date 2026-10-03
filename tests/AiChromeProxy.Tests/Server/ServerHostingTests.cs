@@ -57,14 +57,15 @@ public sealed class ServerHostingTests : IAsyncDisposable
 	public void Production_WithoutPublicHost_FailsToStart()
 	{
 		// Explicit empty value: the machine running the tests may have a real Server__PublicHost env var set.
-		using var factory = Factory(b => b
+		using (var factory = Factory(b => b
 			.UseSetting("Server:PublicHost", string.Empty)
 			.UseSetting("CloudflareAccess:TeamDomain", TestAccessIssuer.TeamDomain)
-			.UseSetting("CloudflareAccess:Audience", TestAccessIssuer.Audience));
+			.UseSetting("CloudflareAccess:Audience", TestAccessIssuer.Audience)))
+		{
+			var ex = Assert.ThrowsAny<Exception>(() => factory.CreateClient());
 
-		var ex = Assert.ThrowsAny<Exception>(() => factory.CreateClient());
-
-		Assert.Contains("Server:PublicHost must be set", ex.ToString());
+			Assert.Contains("Server:PublicHost must be set", ex.ToString());
+		}
 	}
 
 	[Theory]
@@ -72,15 +73,16 @@ public sealed class ServerHostingTests : IAsyncDisposable
 	[InlineData("CloudflareAccess:TeamDomain", "https://test-team.cloudflareaccess.com/")]
 	public void Production_HostNameNotBare_FailsToStart(string key, string value)
 	{
-		using var factory = Factory(b => b
+		using (var factory = Factory(b => b
 			.UseSetting("Server:PublicHost", PublicHost)
 			.UseSetting("CloudflareAccess:TeamDomain", TestAccessIssuer.TeamDomain)
 			.UseSetting("CloudflareAccess:Audience", TestAccessIssuer.Audience)
-			.UseSetting(key, value));
+			.UseSetting(key, value)))
+		{
+			var ex = Assert.ThrowsAny<Exception>(() => factory.CreateClient());
 
-		var ex = Assert.ThrowsAny<Exception>(() => factory.CreateClient());
-
-		Assert.Contains($"{key} must be a bare host name", ex.ToString());
+			Assert.Contains($"{key} must be a bare host name", ex.ToString());
+		}
 	}
 
 	public async ValueTask DisposeAsync() => await _factory.DisposeAsync();
@@ -95,12 +97,18 @@ public sealed class ServerHostingTests : IAsyncDisposable
 
 	private async Task<HttpStatusCode> GetAsync(string host, string token)
 	{
-		using var client = _factory.CreateClient();
-		using var request = new HttpRequestMessage(HttpMethod.Get, "/css/app.css");
-		request.Headers.Host = host;
-		request.Headers.Add(CloudflareAccessMiddleware.HeaderName, token);
+		using (var client = _factory.CreateClient())
+		{
+			using (var request = new HttpRequestMessage(HttpMethod.Get, "/css/app.css"))
+			{
+				request.Headers.Host = host;
+				request.Headers.Add(CloudflareAccessMiddleware.HeaderName, token);
 
-		using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
-		return response.StatusCode;
+				using (var response = await client.SendAsync(request, TestContext.Current.CancellationToken))
+				{
+					return response.StatusCode;
+				}
+			}
+		}
 	}
 }

@@ -18,20 +18,24 @@ public sealed class RegistryAutoStart : IAutoStart
 	{
 		get
 		{
-			using var key = Registry.CurrentUser.OpenSubKey(RunKey);
-			return key?.GetValue(ValueName) is not null;
+			using (var key = Registry.CurrentUser.OpenSubKey(RunKey))
+			{
+				return key?.GetValue(ValueName) is not null;
+			}
 		}
 
 		set
 		{
-			using var key = Registry.CurrentUser.CreateSubKey(RunKey);
-			if (value)
+			using (var key = Registry.CurrentUser.CreateSubKey(RunKey))
 			{
-				key.SetValue(ValueName, $"\"{Environment.ProcessPath}\"");
-			}
-			else
-			{
-				key.DeleteValue(ValueName, throwOnMissingValue: false);
+				if (value)
+				{
+					key.SetValue(ValueName, $"\"{Environment.ProcessPath}\"");
+				}
+				else
+				{
+					key.DeleteValue(ValueName, throwOnMissingValue: false);
+				}
 			}
 		}
 	}
