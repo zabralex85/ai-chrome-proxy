@@ -1,4 +1,5 @@
 using AiChromeProxy.Application.Sync;
+using AiChromeProxy.Infrastructure.Projects;
 using AiChromeProxy.Infrastructure.Security;
 using AiChromeProxy.Infrastructure.Sync;
 using Microsoft.Extensions.Configuration;
@@ -21,6 +22,8 @@ public static class DependencyInjection
 		services.AddSingleton<CloudflareAccessTokenValidator>();
 		services.Configure<MirrorOptions>(configuration.GetSection(MirrorOptions.Section));
 		services.AddSingleton<IMirrorStore, FileSystemMirrorStore>();
+		services.Configure<ProjectsOptions>(configuration.GetSection(ProjectsOptions.Section));
+		services.AddSingleton<IProjectStore, SqliteProjectStore>();
 		return services;
 	}
 }

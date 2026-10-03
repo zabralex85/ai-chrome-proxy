@@ -20,6 +20,8 @@ public sealed class AppServer : IAsyncDisposable
 			b.UseEnvironment(Environments.Development);
 			b.UseSetting("CloudflareAccess:Enabled", "false");
 			b.UseSetting("Server:Port", "0");
+			b.UseSetting("Mirror:Root", Path.Combine(Path.GetTempPath(), "aicp-e2e", "mirror"));
+			b.UseSetting("Projects:Database", Path.Combine(Path.GetTempPath(), "aicp-e2e", "aicp.db"));
 		});
 		_factory.UseKestrel();
 		_factory.StartServer();

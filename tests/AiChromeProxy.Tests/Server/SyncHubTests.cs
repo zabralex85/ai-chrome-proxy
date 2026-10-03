@@ -37,6 +37,7 @@ public sealed class SyncHubTests : IAsyncDisposable
 			b.UseSetting("CloudflareAccess:TeamDomain", TestAccessIssuer.TeamDomain);
 			b.UseSetting("CloudflareAccess:Audience", TestAccessIssuer.Audience);
 			b.UseSetting("Mirror:Root", _mirror);
+			b.UseSetting("Projects:Database", Path.Combine(_mirror, "aicp.db"));
 			b.ConfigureServices(s => s.AddHttpClient(CloudflareAccessTokenValidator.JwksHttpClient)
 				.ConfigurePrimaryHttpMessageHandler(() => _issuer.Handler()));
 		});
