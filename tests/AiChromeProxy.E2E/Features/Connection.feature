@@ -1,12 +1,12 @@
 Feature: Connection
-	The status page connects to the server hub over SignalR and round-trips a ping.
+	The app shell connects to the server hub over SignalR and shows the connection in the top bar.
 
-Scenario: Status page connects
+Scenario: App connects
 	Given the server is running
 	When I open the app
 	Then the connection state is "Connected"
 
-Scenario: Ping shows a round trip
+Scenario: The ping latency is shown
 	Given the app is connected
-	When I click "Ping"
-	Then I see "Pong in <n> ms" with a server time
+	Then the connection pill's tooltip shows the ping in milliseconds
+	And the connection status box shows the ping in milliseconds
