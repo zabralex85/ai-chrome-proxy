@@ -126,7 +126,7 @@ public sealed class UpdateOrchestratorTests : IDisposable
 	}
 
 	[Fact]
-	public async Task Checks_AtStartAndEvery24Hours_ErrorsReportedNotThrown()
+	public async Task Checks_AtStartAndEveryHour_ErrorsReportedNotThrown()
 	{
 		var time = new FakeTimeProvider();
 		var reports = Channel.CreateUnbounded<(string? Version, Exception? Error)>();
@@ -137,19 +137,19 @@ public sealed class UpdateOrchestratorTests : IDisposable
 			Assert.Equal(("1.2.3", null), await NextAsync(reports));
 			Assert.Equal("1.2.3", _updates.AvailableVersion);
 
-			time.Advance(TimeSpan.FromHours(23));
+			time.Advance(TimeSpan.FromMinutes(59));
 			Assert.False(reports.Reader.TryRead(out _));
 			Assert.Equal(1, _source.Checks);
 
 			_source.FailCheck = new HttpRequestException("rate limited");
-			time.Advance(TimeSpan.FromHours(1));
+			time.Advance(TimeSpan.FromMinutes(1));
 			var failed = await NextAsync(reports);
 			Assert.Null(failed.Version);
 			Assert.IsType<HttpRequestException>(failed.Error);
 
 			_source.FailCheck = null;
 			_source.Available = null;
-			time.Advance(TimeSpan.FromHours(24));
+			time.Advance(TimeSpan.FromHours(1));
 			Assert.Equal((null, null), await NextAsync(reports));
 			Assert.Equal(3, _source.Checks);
 
@@ -177,6 +177,30 @@ public sealed class UpdateOrchestratorTests : IDisposable
 			await cts.CancelAsync();
 			await Assert.ThrowsAnyAsync<OperationCanceledException>(() => checks);
 		}
+	}
+
+	[Fact]
+	public async Task TrayViewModel_CheckForUpdates_FoundShowsUpdateItem_NoneSaysUpToDate_FailureShowsError()
+	{
+		_source.Available = null;
+		var vm = new TrayViewModel(_service, _ => Task.FromResult<int?>(0), _updates);
+		Assert.Equal("Check for updates", vm.CheckUpdatesText);
+
+		await vm.CheckForUpdatesCommand.ExecuteAsync(null);
+		Assert.False(vm.IsUpdateAvailable);
+		Assert.Equal("Up to date — check again", vm.CheckUpdatesText);
+		Assert.Null(vm.Error);
+
+		_source.Available = "1.2.4";
+		await vm.CheckForUpdatesCommand.ExecuteAsync(null);
+		Assert.True(vm.IsUpdateAvailable);
+		Assert.Equal("Update to v1.2.4", vm.UpdateText);
+		Assert.Equal("Check for updates", vm.CheckUpdatesText);
+
+		_source.FailCheck = new HttpRequestException("offline");
+		await vm.CheckForUpdatesCommand.ExecuteAsync(null);
+		Assert.Equal("Update check failed: offline", vm.Error);
+		Assert.True(vm.IsUpdateAvailable);
 	}
 
 	[Fact]

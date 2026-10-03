@@ -16,6 +16,10 @@ public sealed partial class TrayViewModel(
 	Func<string?>? serviceVersion = null,
 	string? appVersion = null) : ObservableObject
 {
+	public const string CheckUpdatesDefault = "Check for updates";
+
+	public const string CheckUpdatesUpToDate = "Up to date — check again";
+
 	public const string MigrationText = "Run Install service… once to move the service out of the app folder (needed to install updates with Setup.exe)";
 
 	[ObservableProperty]
@@ -32,6 +36,10 @@ public sealed partial class TrayViewModel(
 	[ObservableProperty]
 	[NotifyPropertyChangedFor(nameof(ErrorText))]
 	public partial bool NeedsMigration { get; private set; }
+
+	/// <summary>Header of the "Check for updates" menu item: says "up to date" after a manual check found nothing.</summary>
+	[ObservableProperty]
+	public partial string CheckUpdatesText { get; private set; } = CheckUpdatesDefault;
 
 	/// <summary>Newer release found by the last check; null hides the menu item.</summary>
 	[ObservableProperty]
@@ -83,7 +91,7 @@ public sealed partial class TrayViewModel(
 		}
 	}
 
-	/// <summary>Tray start-up: resume a service an interrupted update left stopped, then check for updates now and every 24 h.</summary>
+	/// <summary>Tray start-up: resume a service an interrupted update left stopped, then check for updates now and every hour.</summary>
 	public async Task RunUpdateChecksAsync(TimeProvider time, CancellationToken ct)
 	{
 		await RunAsync(updates.ResumeServiceAfterUpdateAsync);
@@ -102,6 +110,23 @@ public sealed partial class TrayViewModel(
 
 	[RelayCommand(CanExecute = nameof(CanStart))]
 	private Task StartAsync() => RunAsync(service.StartAsync);
+
+	/// <summary>Checks now: a newer release shows "Update to vX"; none changes this item to "up to date"; a failure goes to the error line.</summary>
+	[RelayCommand]
+	private async Task CheckForUpdatesAsync()
+	{
+		Error = null;
+		try
+		{
+			UpdateVersion = await updates.CheckAsync(CancellationToken.None);
+			CheckUpdatesText = UpdateVersion is null ? CheckUpdatesUpToDate : CheckUpdatesDefault;
+		}
+		catch (Exception ex)
+		{
+			CheckUpdatesText = CheckUpdatesDefault;
+			Error = $"Update check failed: {ex.Message}";
+		}
+	}
 
 	[RelayCommand(CanExecute = nameof(CanStop))]
 	private Task StopAsync() => RunAsync(service.StopAsync);

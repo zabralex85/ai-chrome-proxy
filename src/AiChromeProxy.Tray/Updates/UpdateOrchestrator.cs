@@ -3,14 +3,14 @@ using AiChromeProxy.Tray.Services;
 namespace AiChromeProxy.Tray.Updates;
 
 /// <summary>
-/// Check at start and every 24 h; update = download, stop the service (the after-update hook replaces its copy of the Server; a service
+/// Check at start and every hour (and on demand from the menu); update = download, stop the service (the after-update hook replaces its copy of the Server; a service
 /// installed by an older version runs from the folder being replaced), apply and restart the tray.
 /// A failed download leaves everything untouched; a failed stop or apply starts the service again and rethrows that failure.
 /// </summary>
 /// <param name="pendingMarker">File recording "service stopped for an update", so the next tray start resumes it if Update.exe failed out of process.</param>
 public sealed class UpdateOrchestrator(IUpdateSource source, IServiceControl service, string pendingMarker)
 {
-	public static readonly TimeSpan CheckInterval = TimeSpan.FromHours(24);
+	public static readonly TimeSpan CheckInterval = TimeSpan.FromHours(1);
 
 	/// <summary>Per user (the tray and Velopack's hooks run as the same user).</summary>
 	public static string DefaultPendingMarker => Path.Combine(Path.GetTempPath(), "AiChromeProxy.update-pending");
