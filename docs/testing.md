@@ -5,7 +5,7 @@ Four layers. Only the first runs in CI; the others are local tools.
 | Layer | Location | What it covers | Runs |
 |---|---|---|---|
 | Unit + integration + architecture | `tests/AiChromeProxy.Tests` (`Domain/`, `Application/`, `Infrastructure/`, `Server/`, `Tray/`, `Architecture/`) | Envelope contract, routing, handlers, Cloudflare Access validation and middleware, the real Server pipeline over SignalR (in-memory `TestServer`), host filtering and startup validation, data directory config + CLEF logging, tray view models / CLEF parser / update orchestration / service setup (fakes for the SCM, registry and Velopack), the tray windows on Avalonia headless, layer dependency rules (NetArchTest) | CI + local, 85% line-coverage gate |
-| E2E BDD | `tests/AiChromeProxy.E2E` — Reqnroll + Playwright | The real app in a real browser: the status page connects, Ping round-trips | local |
+| E2E BDD | `tests/AiChromeProxy.E2E` — Reqnroll + Playwright | The real app in a real browser: the shell renders and connects (ping latency in the pill and the connection box), theme toggle, left panel collapse, error list. The folder picker cannot be automated: sync is covered by the xunit hub/engine tests and the manual checklist in [sync.md](sync.md) | local |
 | Load | `tests/load` — k6 | Concurrent SignalR connections pinging the hub; ping→pong latency and error rate | local |
 | Micro-benchmarks | `benchmarks/AiChromeProxy.Benchmarks` — BenchmarkDotNet | Hot paths: `Envelope.Create`/serialization, `EnvelopeRouter.RouteAsync`, Access token validation | local |
 
@@ -32,7 +32,7 @@ Architecture rules (`Architecture/LayerDependencyTests.cs`):
 - Client depends on Domain only (not on Application, Infrastructure or Server).
 - Tray depends only on Domain and Infrastructure (not on Application, Server, Client or ASP.NET Core).
 
-Excluded from coverage (`testconfig.json` and `[ExcludeFromCodeCoverage]`): `Program.cs`, `*.razor`, view code-behind `*.axaml.cs` (UI glue; the windows are smoke-tested on Avalonia headless), and the members that change the machine or the network — `ServiceInstaller` (P/Invoke: SCM, LSA, LogonUser), `WindowsServiceControl` start/stop/install/uninstall, `RegistryAutoStart`, `VelopackUpdateSource`, `AdminCommand.RunElevatedAsync` (UAC). These are covered by the manual checklist in [windows-host.md](windows-host.md).
+Excluded from coverage (`testconfig.json` and `[ExcludeFromCodeCoverage]`): `Program.cs`, `*.razor`, view code-behind `*.axaml.cs` (UI glue; the windows are smoke-tested on Avalonia headless), and the members that change the machine or the network — `ServiceInstaller` (P/Invoke: SCM, LSA, LogonUser), `WindowsServiceControl` start/stop/install/uninstall, `RegistryAutoStart`, `VelopackUpdateSource`, `AdminCommand.RunElevatedAsync` (UAC). These are covered by the manual checklist in [windows-host.md](windows-host.md). `JsFolderAccess` (the interop wrapper over `Scripts/fsaccess.ts`) is excluded the same way and covered by the checklist in [sync.md](sync.md); the sync engine itself is tested against the real server-side sync through a loopback transport and an in-memory fake folder.
 
 Tray tests never install services, grant rights, write the registry, show a desktop window or trigger UAC; read-only SCM queries (`EventLog` status, an unknown service) are fine.
 
@@ -40,7 +40,7 @@ Always pass `--project`: a bare `dotnet test` runs every test project in the sol
 
 ## E2E (Reqnroll + Playwright)
 
-`Features/Connection.feature` is bound by `StepDefinitions/ConnectionSteps.cs`. `Hooks/AppServer.cs` starts the real Server once per run via `WebApplicationFactory<Program>` on a Kestrel listener (`127.0.0.1`, random port, `Development`, `CloudflareAccess:Enabled=false`). `Hooks/BrowserHooks.cs` launches one Chromium per run and opens a fresh browser context per scenario. Selectors are `data-testid` attributes in `Home.razor`.
+`Features/Connection.feature` and `Features/Shell.feature` are bound by `StepDefinitions/ConnectionSteps.cs` and `StepDefinitions/ShellSteps.cs`. `Hooks/AppServer.cs` starts the real Server once per run via `WebApplicationFactory<Program>` on a Kestrel listener (`127.0.0.1`, random port, `Development`, `CloudflareAccess:Enabled=false`). `Hooks/BrowserHooks.cs` launches one Chromium per run and opens a fresh browser context per scenario. Selectors are `data-testid` attributes in `Pages/Home.razor` and `Shell/*.razor`.
 
 One-time setup (downloads Chromium to `%LOCALAPPDATA%\ms-playwright`; repeat after a `Microsoft.Playwright` upgrade):
 
