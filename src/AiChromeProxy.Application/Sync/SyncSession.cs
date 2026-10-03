@@ -391,7 +391,8 @@ public sealed partial class SyncSession(IMirrorStore store, IProjectStore projec
 			throw BadRequest($"'{entry.Path}' arrived with a different size or hash than in its manifest; it is requested again on the next scan.");
 		}
 
-		// The server may have changed the file since the upload was decided: never overwrite that (the next pass decides it again).
+		// The server may have changed the file since the upload was decided: do not overwrite that (the next pass decides it again).
+		// ponytail: a write landing between this check and Commit (milliseconds) is still overwritten; lock the target during the move if that ever matters.
 		if (await store.GetHashAsync(repo, entry.Path, ct) is var mirror && mirror != expected.Mirror)
 		{
 			_expected.Remove(entry.Path);
