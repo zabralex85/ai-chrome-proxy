@@ -130,6 +130,20 @@ public sealed class ShellTests
 		Assert.Equal(expected, Format.SyncStatus(folder, phase, 1234, 12, 80));
 	}
 
+	[Theory]
+	[InlineData(FolderStatus.Ready, SyncPhase.Scanning, null)]
+	[InlineData(FolderStatus.Ready, SyncPhase.Uploading, null)]
+	[InlineData(FolderStatus.Ready, SyncPhase.Synced, "Synced 1 234 files")]
+	[InlineData(FolderStatus.Ready, SyncPhase.Failed, "Sync failed")]
+	[InlineData(FolderStatus.Ready, SyncPhase.Idle, "Waiting for the server…")]
+	[InlineData(FolderStatus.None, SyncPhase.Idle, "No folder open")]
+	[InlineData(FolderStatus.NeedsPermission, SyncPhase.Uploading, "Access needed")]
+	public void SyncAnnouncement_StableOutcomesOnly(FolderStatus folder, SyncPhase phase, string? expected)
+	{
+		// The live region keeps its last stable text while a scan or an upload runs, so a screen reader is not interrupted every few seconds.
+		Assert.Equal(expected, Format.SyncAnnouncement(folder, phase, 1234));
+	}
+
 	[Fact]
 	public void SyncStatus_Synced_CountdownSeparate()
 	{
