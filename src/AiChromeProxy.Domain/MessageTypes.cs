@@ -26,4 +26,25 @@ public static class MessageTypes
 
 	/// <summary>Client → server: changes since the last manifest (<c>Sync.SyncDeltaPayload</c>); reply <see cref="SyncNeed"/>.</summary>
 	public const string SyncDelta = "sync.delta";
+
+	/// <summary>Server → client: files changed in the mirror (<c>Sync.SyncRemotePayload</c>).</summary>
+	public const string SyncRemote = "sync.remote";
+
+	/// <summary>Client → server: asks for a mirror file (<c>Sync.SyncFetchPayload</c>); reply <see cref="SyncData"/>.</summary>
+	public const string SyncFetch = "sync.fetch";
+
+	/// <summary>Server → client: part of a mirror file (<c>Sync.SyncDataPayload</c>).</summary>
+	public const string SyncData = "sync.data";
+
+	/// <summary>Client → server: a remote change is applied (<c>Sync.SyncAckPayload</c>); echoed back.</summary>
+	public const string SyncAck = "sync.ack";
+
+	/// <summary>Client → server: asks for the project settings (<c>Sync.ProjectSettingsPayload</c>); reply <see cref="ProjectSettings"/>.</summary>
+	public const string ProjectSettingsGet = "project.settings.get";
+
+	/// <summary>Client → server: saves the project settings (<c>Sync.ProjectSettingsPayload</c>); reply <see cref="ProjectSettings"/>.</summary>
+	public const string ProjectSettingsSet = "project.settings.set";
+
+	/// <summary>Server → client: the project settings (<c>Sync.ProjectSettingsPayload</c>).</summary>
+	public const string ProjectSettings = "project.settings";
 }
