@@ -45,6 +45,9 @@ public sealed class FakeFolder : IFolderAccess
 	/// <summary>Folders (paths without a trailing <c>/</c>) whose listing fails: their files are left out, the prefix is reported as skipped.</summary>
 	public HashSet<string> UnlistedDirectories { get; } = new(StringComparer.Ordinal);
 
+	/// <summary>Folders whose listing stopped part-way: their files are still returned, but the prefix is reported as skipped too.</summary>
+	public HashSet<string> PartlyListedDirectories { get; } = new(StringComparer.Ordinal);
+
 	/// <summary>Path of every <see cref="ReadChunkAsync"/> call, in order.</summary>
 	public List<string> ChunkReads { get; } = [];
 
@@ -87,7 +90,7 @@ public sealed class FakeFolder : IFolderAccess
 			.Where(f => !f.Path.Split('/')[..^1].Any(skip.Contains))
 			.Where(f => !Unreadable.Contains(f.Path) && !unlisted.Any(d => f.Path.StartsWith(d, StringComparison.Ordinal)))
 			.ToList();
-		return new FolderScan(files, Truncated, [.. Unreadable, .. unlisted]);
+		return new FolderScan(files, Truncated, [.. Unreadable, .. unlisted, .. PartlyListedDirectories.Select(d => d + "/")]);
 	}
 
 	public Task<IReadOnlyList<string?>> HashAsync(IReadOnlyList<string> paths)

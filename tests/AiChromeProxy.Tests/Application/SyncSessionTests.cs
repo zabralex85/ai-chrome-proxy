@@ -78,6 +78,7 @@ public sealed class SyncSessionTests : IDisposable
 	[InlineData(MessageTypes.SyncOpen, "{}")]
 	[InlineData(MessageTypes.SyncManifest, "{\"repo\":\"repo\",\"final\":true}")]
 	[InlineData(MessageTypes.SyncManifest, "{\"repo\":\"repo\",\"entries\":[null],\"final\":true}")]
+	[InlineData(MessageTypes.SyncManifest, "{\"repo\":\"repo\",\"entries\":[],\"final\":true,\"keep\":[null]}")]
 	[InlineData(MessageTypes.SyncManifest, "{\"repo\":\"repo\",\"entries\":[{\"path\":\"a.txt\",\"size\":1}],\"final\":true}")]
 	[InlineData(MessageTypes.SyncDelta, "{\"repo\":\"repo\",\"deletes\":[]}")]
 	[InlineData(MessageTypes.SyncDelta, "{\"repo\":\"repo\",\"upserts\":[]}")]
@@ -383,6 +384,85 @@ public sealed class SyncSessionTests : IDisposable
 		Assert.Equal(ErrorCodes.BadRequest, ex.Code);
 		Assert.Equal("An empty folder would delete the whole mirror; refusing.", ex.Message);
 		Assert.True(File.Exists(Path.Combine(_repoRoot, "keep.txt")));
+	}
+
+	[Fact]
+	public async Task FinalPage_KeepsFilesAndFoldersInKeep_AcrossPages_IgnoringCase()
+	{
+		Directory.CreateDirectory(Path.Combine(_repoRoot, "Locked", "sub"));
+		Directory.CreateDirectory(Path.Combine(_repoRoot, "lockedx"));
+		File.WriteAllText(Path.Combine(_repoRoot, "Locked", "sub", "x.txt"), "x");
+		File.WriteAllText(Path.Combine(_repoRoot, "lockedx", "y.txt"), "y");
+		File.WriteAllText(Path.Combine(_repoRoot, "Unreadable.txt"), "u");
+		File.WriteAllText(Path.Combine(_repoRoot, "gone.txt"), "g");
+		File.WriteAllText(Path.Combine(_repoRoot, "a.txt"), "a");
+		await OpenAsync();
+
+		Assert.Empty(await NeedAsync(Envelope.Create(MessageTypes.SyncManifest, new SyncManifestPayload(Repo, [Entry("a.txt", "a")], false, ["unreadable.TXT"]))));
+		Assert.Empty(await NeedAsync(Envelope.Create(MessageTypes.SyncManifest, new SyncManifestPayload(Repo, [], true, ["locked/"]))));
+
+		Assert.True(File.Exists(Path.Combine(_repoRoot, "Locked", "sub", "x.txt")));
+		Assert.True(File.Exists(Path.Combine(_repoRoot, "Unreadable.txt")));
+		Assert.True(File.Exists(Path.Combine(_repoRoot, "a.txt")));
+		Assert.False(File.Exists(Path.Combine(_repoRoot, "gone.txt")));
+		Assert.False(Directory.Exists(Path.Combine(_repoRoot, "lockedx")));
+		Assert.Contains(_logger.Messages, m => m.Contains("Sync repo: manifest of 1 files, 0 to upload, 2 deleted", StringComparison.Ordinal));
+	}
+
+	[Fact]
+	public async Task FinalPage_OnlyKeep_NotAnEmptyFolder_KeptFilesStay_NothingRequested()
+	{
+		File.WriteAllText(Path.Combine(_repoRoot, "big.bin"), "b");
+		File.WriteAllText(Path.Combine(_repoRoot, "gone.txt"), "g");
+		await OpenAsync();
+
+		Assert.Empty(await NeedAsync(Envelope.Create(MessageTypes.SyncManifest, new SyncManifestPayload(Repo, [], true, ["big.bin"]))));
+
+		Assert.True(File.Exists(Path.Combine(_repoRoot, "big.bin")));
+		Assert.False(File.Exists(Path.Combine(_repoRoot, "gone.txt")));
+		await AssertError(ErrorCodes.NotFound, Chunk("big.bin", 0, "b"u8.ToArray(), last: true));
+	}
+
+	[Fact]
+	public async Task NextPass_ForgetsTheKeepOfTheLastOne()
+	{
+		File.WriteAllText(Path.Combine(_repoRoot, "a.txt"), "a");
+		File.WriteAllText(Path.Combine(_repoRoot, "b.txt"), "b");
+		await OpenAsync();
+		await NeedAsync(Envelope.Create(MessageTypes.SyncManifest, new SyncManifestPayload(Repo, [Entry("a.txt", "a")], true, ["b.txt"])));
+
+		await NeedAsync(Manifest(true, Entry("a.txt", "a")));
+
+		Assert.False(File.Exists(Path.Combine(_repoRoot, "b.txt")));
+	}
+
+	[Theory]
+	[InlineData("../outside.txt")]
+	[InlineData("/")]
+	[InlineData("a//")]
+	[InlineData(".git/")]
+	[InlineData("C:/x")]
+	[InlineData("")]
+	public async Task Manifest_InvalidKeep_BadRequest_NothingDeleted(string keep)
+	{
+		File.WriteAllText(Path.Combine(_repoRoot, "gone.txt"), "g");
+		await OpenAsync();
+
+		await AssertError(ErrorCodes.BadRequest, Envelope.Create(MessageTypes.SyncManifest, new SyncManifestPayload(Repo, [Entry("a.txt", "a")], true, [keep])));
+
+		Assert.True(File.Exists(Path.Combine(_repoRoot, "gone.txt")));
+	}
+
+	[Fact]
+	public async Task Manifest_KeepTooLong_TooLarge()
+	{
+		var session = new SyncSession(new FakeStore(), _logger, TimeProvider.System);
+		await session.HandleAsync(Envelope.Create(MessageTypes.SyncOpen, new SyncOpenPayload(Repo)), Ct);
+		var keep = Enumerable.Range(0, SyncLimits.MaxFiles + 1).Select(i => $"f{i}").ToArray();
+
+		var ex = await Assert.ThrowsAsync<EnvelopeException>(() => session.HandleAsync(Envelope.Create(MessageTypes.SyncManifest, new SyncManifestPayload(Repo, [], true, keep)), Ct));
+
+		Assert.Equal(ErrorCodes.TooLarge, ex.Code);
 	}
 
 	[Fact]

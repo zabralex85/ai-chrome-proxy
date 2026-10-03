@@ -6,10 +6,14 @@ namespace AiChromeProxy.Client.Sync;
 /// <summary>Turns a scan into protocol pages: the full manifest, or the delta against what the server already has.</summary>
 public static class ManifestPlanner
 {
-	/// <summary>The full manifest in pages; always at least one page, the last one <c>final</c>.</summary>
-	public static List<SyncManifestPayload> ManifestPages(string repo, IReadOnlyList<ManifestEntry> entries)
+	/// <summary>The full manifest in pages (entries, then the keep list); always at least one page, the last one <c>final</c>.</summary>
+	public static List<SyncManifestPayload> ManifestPages(string repo, IReadOnlyList<ManifestEntry> entries, IReadOnlyList<string>? keep = null)
 	{
-		var pages = Pages(entries, EntrySize).Select(p => new SyncManifestPayload(repo, p, Final: false)).ToList();
+		List<SyncManifestPayload> pages =
+		[
+			.. Pages(entries, EntrySize).Select(p => new SyncManifestPayload(repo, p, Final: false)),
+			.. Pages(keep ?? [], PathSize).Select(p => new SyncManifestPayload(repo, [], Final: false, p)),
+		];
 		if (pages.Count == 0)
 		{
 			pages.Add(new SyncManifestPayload(repo, [], Final: true));

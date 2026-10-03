@@ -35,6 +35,31 @@ public static class SyncPath
 
 	public static bool IsValid(string? path) => GetError(path) is null;
 
+	/// <summary>
+	/// Checks an entry of the <c>keep</c> list of <c>sync.manifest</c>: a file path, or a folder prefix ending in <c>/</c> checked by its segments.
+	/// </summary>
+	/// <returns>Null when acceptable; otherwise why not.</returns>
+	public static string? GetKeepError(string? keep) => GetError(keep is not null && keep.EndsWith('/') ? keep[..^1] : keep);
+
+	/// <summary>Whether <paramref name="keep"/> lists <paramref name="path"/> or a folder prefix (ending in <c>/</c>) of it; the set's comparer decides about case.</summary>
+	public static bool IsKept(string path, IReadOnlySet<string> keep)
+	{
+		if (keep.Contains(path))
+		{
+			return true;
+		}
+
+		for (var slash = path.IndexOf('/'); slash >= 0; slash = path.IndexOf('/', slash + 1))
+		{
+			if (keep.Contains(path[..(slash + 1)]))
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
 	/// <returns>Null when <paramref name="path"/> is acceptable; otherwise why not (safe to show: it quotes nothing but the path).</returns>
 	public static string? GetError(string? path)
 	{

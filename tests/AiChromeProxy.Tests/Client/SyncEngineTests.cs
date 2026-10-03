@@ -451,8 +451,9 @@ public sealed class SyncEngineTests : IDisposable
 		await _engine.SyncOnceAsync(Ct);
 
 		Assert.Equal(SyncPhase.Synced, _engine.Phase);
-		var manifest = _server.Transport.Sent.Last(e => e.Type == MessageTypes.SyncManifest).Payload.Deserialize<SyncManifestPayload>(JsonSerializerOptions.Web)!;
-		Assert.Contains(new ManifestEntry("a.txt", 1, Sha("a")), manifest.Entries);
+		var manifest = LastManifest();
+		Assert.Equal(["a.txt"], manifest.Keep);
+		Assert.DoesNotContain(manifest.Entries, e => e.Path == "a.txt");
 		Assert.Equal("a", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
 		Assert.DoesNotContain("a.txt", _folder.ChunkReads);
 		AssertNoDeltaDeletes();
@@ -480,7 +481,30 @@ public sealed class SyncEngineTests : IDisposable
 	}
 
 	[Fact]
-	public async Task UnreadableUnknownFile_AfterReload_NoFullManifest_NothingDeleted()
+	public async Task PartlyListedFolder_ItsListedFilesSyncOnce_TheRestIsKept()
+	{
+		_folder.Write("ok.txt", "ok");
+		_folder.Write("part/a.txt", "a");
+		_folder.Write("part/gone.txt", "g");
+		await OpenAsync();
+		await _engine.SyncOnceAsync(Ct);
+		_folder.PartlyListedDirectories.Add("part");
+		_folder.Files.Remove("part/gone.txt");
+		_folder.Write("part/a.txt", "a2");
+		await _engine.SyncOnceAsync(Ct);
+		var sent = _server.Transport.Sent.Count;
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(sent, _server.Transport.Sent.Count);
+		Assert.Equal("a2", File.ReadAllText(_server.PathOf(Repo, "part/a.txt")));
+		Assert.Equal(FileSyncState.Synced, _engine.FileAt("part/a.txt")!.State);
+		Assert.True(File.Exists(_server.PathOf(Repo, "part/gone.txt")));
+		AssertNoDeltaDeletes();
+	}
+
+	[Fact]
+	public async Task UnreadableUnknownFile_AfterReload_FullManifestKeepsIt()
 	{
 		_folder.Write("a.txt", "a");
 		_folder.Write("b.txt", "b");
@@ -495,10 +519,114 @@ public sealed class SyncEngineTests : IDisposable
 		await engine.SyncOnceAsync(Ct);
 
 		Assert.Equal(SyncPhase.Synced, engine.Phase);
-		Assert.DoesNotContain(MessageTypes.SyncManifest, SentTypes());
+		var manifest = LastManifest();
+		Assert.Equal(["a.txt"], manifest.Keep);
+		Assert.DoesNotContain(manifest.Entries, e => e.Path == "a.txt");
 		Assert.Equal("a", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
 		Assert.Equal("c", File.ReadAllText(_server.PathOf(Repo, "c.txt")));
-		AssertNoDeltaDeletes();
+		Assert.DoesNotContain("a.txt", _folder.ChunkReads.Skip(2));
+	}
+
+	[Fact]
+	public async Task ReloadPartial_DeletedWhileClosed_DeletedAtOnce_UnreadableKeptUntilItIsDeleted()
+	{
+		_folder.Write("a.txt", "a");
+		_folder.Write("b.txt", "b");
+		_folder.Write("c.txt", "c");
+		await OpenAsync();
+		await _engine.SyncOnceAsync(Ct);
+
+		// The page is reloaded; meanwhile c.txt was deleted and a.txt cannot be read.
+		var engine = new SyncEngine(_server.Transport, _folder, TimeProvider.System);
+		await engine.OpenFolderAsync();
+		_folder.Files.Remove("c.txt");
+		_folder.Unreadable.Add("a.txt");
+		await engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Synced, engine.Phase);
+		Assert.False(File.Exists(_server.PathOf(Repo, "c.txt")));
+		Assert.Equal("a", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
+		Assert.Equal("b", File.ReadAllText(_server.PathOf(Repo, "b.txt")));
+
+		_folder.Unreadable.Clear();
+		_folder.Files.Remove("a.txt");
+		await engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Synced, engine.Phase);
+		Assert.False(File.Exists(_server.PathOf(Repo, "a.txt")));
+		Assert.True(File.Exists(_server.PathOf(Repo, "b.txt")));
+	}
+
+	[Fact]
+	public async Task FailedUploadThenDeleted_DeletedOnMirror()
+	{
+		_folder.Write("a.txt", "a");
+		_folder.Write("b.txt", "b");
+		await OpenAsync();
+		await _engine.SyncOnceAsync(Ct);
+		_folder.Write("a.txt", "a2");
+		_folder.ReadFailures.Add("a.txt");
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(FileSyncState.Error, _engine.FileAt("a.txt")!.State);
+
+		_folder.Files.Remove("a.txt");
+		_folder.ReadFailures.Clear();
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Synced, _engine.Phase);
+		Assert.False(File.Exists(_server.PathOf(Repo, "a.txt")));
+		Assert.True(File.Exists(_server.PathOf(Repo, "b.txt")));
+	}
+
+	[Fact]
+	public async Task TooLargeAfterReload_MirrorCopyKept_DeletedWhenTheFileIs()
+	{
+		_folder.Write("a.txt", "a");
+		_folder.Write("b.txt", "b");
+		await OpenAsync();
+		await _engine.SyncOnceAsync(Ct);
+
+		var engine = new SyncEngine(_server.Transport, _folder, TimeProvider.System);
+		await engine.OpenFolderAsync();
+		_folder.Files.Remove("a.txt");
+		_folder.SizeOnly["a.txt"] = SyncLimits.MaxFileSize + 1;
+		await engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Synced, engine.Phase);
+		Assert.Equal(FileSyncState.TooLarge, engine.FileAt("a.txt")!.State);
+		Assert.Equal("a", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
+
+		_folder.SizeOnly.Clear();
+		await engine.SyncOnceAsync(Ct);
+
+		Assert.False(File.Exists(_server.PathOf(Repo, "a.txt")));
+		Assert.True(File.Exists(_server.PathOf(Repo, "b.txt")));
+	}
+
+	[Fact]
+	public async Task FullManifestEveryTenMinutes_RemovesWhatNoDeltaCouldSee()
+	{
+		var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 3, 12, 0, 0, TimeSpan.Zero));
+		var engine = new SyncEngine(_server.Transport, _folder, clock);
+		_folder.Write("a.txt", "a");
+		await engine.OpenFolderAsync();
+		await engine.SyncOnceAsync(Ct);
+		File.WriteAllText(_server.PathOf(Repo, "stray.txt"), "s");
+		_server.Transport.Sent.Clear();
+
+		clock.Advance(SyncEngine.FullManifestInterval - TimeSpan.FromSeconds(1));
+		await engine.SyncOnceAsync(Ct);
+
+		Assert.Empty(_server.Transport.Sent);
+		Assert.True(File.Exists(_server.PathOf(Repo, "stray.txt")));
+
+		clock.Advance(TimeSpan.FromSeconds(1));
+		await engine.SyncOnceAsync(Ct);
+
+		Assert.Equal([MessageTypes.SyncManifest], SentTypes());
+		Assert.False(File.Exists(_server.PathOf(Repo, "stray.txt")));
+		Assert.Equal("a", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
 	}
 
 	[Fact]
@@ -1033,6 +1161,9 @@ public sealed class SyncEngineTests : IDisposable
 	}
 
 	private static string Sha(string text) => Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(text)));
+
+	private SyncManifestPayload LastManifest() =>
+		_server.Transport.Sent.Last(e => e.Type == MessageTypes.SyncManifest).Payload.Deserialize<SyncManifestPayload>(JsonSerializerOptions.Web)!;
 
 	private List<string> SentTypes() => [.. _server.Transport.Sent.Select(e => e.Type)];
 

@@ -58,15 +58,52 @@ public sealed class ManifestPlannerTests
 	}
 
 	[Fact]
-	public void ManifestPages_WorstCasePaths_EveryEnvelopeUnderSignalRLimit()
+	public void ManifestPages_WorstCasePathsAndKeep_EveryEnvelopeUnderSignalRLimit()
 	{
 		// 260 non-ASCII chars: each is escaped to \uXXXX (6 bytes) in JSON.
 		var entries = Enumerable.Range(0, 300).Select(i => new ManifestEntry($"{i:D3}/" + new string('ж', 256), long.MaxValue, Hash)).ToList();
+		var keep = Enumerable.Range(0, 1200).Select(i => $"{i:D4}/" + new string('ж', 254) + (i % 2 == 0 ? "/" : "ж")).ToList();
 
-		var pages = ManifestPlanner.ManifestPages(new string('r', RepoName.MaxLength), entries);
+		var pages = ManifestPlanner.ManifestPages(new string('r', RepoName.MaxLength), entries, keep);
 
-		Assert.All(pages, p => Assert.True(WireSize(Envelope.Create(MessageTypes.SyncManifest, p, Guid.NewGuid().ToString("N"))) < SignalRLimit));
+		Assert.All(pages, p => Assert.True(WireSize(Envelope.Create(MessageTypes.SyncManifest, p, Guid.NewGuid().ToString("N"))) < SignalRLimit - 4096));
+		Assert.All(pages, p => Assert.True(p.Entries.Count + (p.Keep?.Count ?? 0) <= SyncLimits.MaxPageEntries));
 		Assert.Equal(300, pages.Sum(p => p.Entries.Count));
+		Assert.Equal(keep, pages.SelectMany(p => p.Keep ?? []));
+	}
+
+	[Fact]
+	public void ManifestPages_ManySmallKeep_PagedByCount()
+	{
+		var keep = Enumerable.Range(0, 1200).Select(i => $"k{i}").ToList();
+
+		var pages = ManifestPlanner.ManifestPages("repo", [new("a.txt", 1, Hash)], keep);
+
+		Assert.Equal([1, 500, 500, 200], pages.Select(p => p.Entries.Count + (p.Keep?.Count ?? 0)));
+		Assert.Equal([false, false, false, true], pages.Select(p => p.Final));
+	}
+
+	[Fact]
+	public void ManifestPages_KeepAfterEntries_OnlyLastIsFinal()
+	{
+		var pages = ManifestPlanner.ManifestPages("repo", [new("a.txt", 1, Hash)], ["big.bin", "locked/"]);
+
+		Assert.Equal(2, pages.Count);
+		Assert.Equal(["a.txt"], pages[0].Entries.Select(e => e.Path));
+		Assert.Null(pages[0].Keep);
+		Assert.False(pages[0].Final);
+		Assert.Empty(pages[1].Entries);
+		Assert.Equal(["big.bin", "locked/"], pages[1].Keep);
+		Assert.True(pages[1].Final);
+	}
+
+	[Fact]
+	public void ManifestPages_OnlyKeep_OneFinalPage()
+	{
+		var page = Assert.Single(ManifestPlanner.ManifestPages("repo", [], ["locked/"]));
+
+		Assert.True(page.Final);
+		Assert.Equal(["locked/"], page.Keep);
 	}
 
 	[Fact]

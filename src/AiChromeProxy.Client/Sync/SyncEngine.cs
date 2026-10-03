@@ -28,8 +28,8 @@ public enum SyncPhase
 }
 
 /// <summary>
-/// One-way sync of the picked folder to the server's mirror: scan → (first time or after a reconnect) open + full manifest,
-/// otherwise a delta → upload what the server needs, one file at a time in chunks. Rescans every <see cref="ScanInterval"/>
+/// One-way sync of the picked folder to the server's mirror: scan → (first time, after a reconnect, and every
+/// <see cref="FullManifestInterval"/>) the full manifest with its keep list, otherwise a delta → upload what the server needs, one file at a time in chunks. Rescans every <see cref="ScanInterval"/>
 /// while the tab is visible and immediately on focus (ponytail: polling; switch to FileSystemObserver once it is stable).
 /// </summary>
 public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeProvider time)
@@ -42,6 +42,9 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 
 	public static readonly TimeSpan ScanInterval = TimeSpan.FromSeconds(10);
 	public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
+
+	/// <summary>How often a session sends the full manifest again (with its keep list), so the mirror never stays stale; cheap, the server caches hashes.</summary>
+	public static readonly TimeSpan FullManifestInterval = TimeSpan.FromMinutes(10);
 
 	/// <summary>A file whose upload failed is not tried again with the same size and hash before this much time has passed.</summary>
 	public static readonly TimeSpan FailureBackoff = TimeSpan.FromMinutes(5);
@@ -62,7 +65,10 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 	/// <summary>Upload failures by path: the same size and hash is not tried again before <c>Until</c>, and its failure is logged once.</summary>
 	private readonly Dictionary<string, (ManifestEntry Entry, string Error, DateTimeOffset Until)> _failures = new(StringComparer.Ordinal);
 
-	/// <summary>What the server has, as far as this page knows (kept across reconnects: it decides what is never deleted).</summary>
+	/// <summary>
+	/// What the server has, as far as this page knows (kept across reconnects): a path that disappears from the folder is deleted there.
+	/// An empty hash means its content there is unknown (upload pending or failed, or kept while it cannot be read).
+	/// </summary>
 	private Dictionary<string, ManifestEntry> _known = new(StringComparer.Ordinal);
 	private SyncFile[] _files = [];
 	private Dictionary<string, int> _fileIndex = new(StringComparer.Ordinal);
@@ -82,6 +88,7 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 	private int _generation;
 	private int _cycleRunning;
 	private long _lastRaise;
+	private long _fullManifestAt;
 	private string? _repo;
 	private bool _visible = true;
 	private bool _reconnecting;
@@ -276,35 +283,27 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 			var repo = _repo;
 			var started = time.GetTimestamp();
 			var backedOff = entries.Where(e => BackedOff(e) is not null).ToDictionary(e => e.Path, StringComparer.Ordinal);
+			var listed = entries.Select(e => e.Path).ToHashSet(StringComparer.Ordinal);
+			bool Kept(string path) => !listed.Contains(path) && SyncPath.IsKept(path, scan.Keep);
 			List<string> need;
 			List<string> deleted = [];
 			bool pass;
-			var full = false;
-			if (repo is null)
+
+			// A fresh session (first pass, reconnect, folder change) and then every FullManifestInterval: the full manifest, so nothing
+			// stale stays on the mirror; the keep list protects what this scan could not sync.
+			var full = repo is null || time.GetElapsedTime(_fullManifestAt) >= FullManifestInterval;
+			repo ??= await OpenAsync(generation, ct);
+			if (full)
 			{
-				repo = await OpenAsync(generation, ct);
 				pass = true;
-				if (scan.Partial)
-				{
-					// Something could not be read and the server's copy of it is unknown: a full manifest would delete it there.
-					// Everything is upserted instead, and only files the scan saw disappear since the last known state are deleted.
-					Log(SyncActivityKind.PassStarted, $"Sync of {FileCount(entries.Count)}; some could not be read, so nothing unseen is deleted.");
-					var stale = _known.ToDictionary(k => k.Key, k => k.Value with { Sha256 = string.Empty }, StringComparer.Ordinal);
-					var pages = ManifestPlanner.DeltaPages(repo, stale, entries);
-					deleted = [.. pages.SelectMany(p => p.Deletes)];
-					need = await SendDeltaAsync(repo, generation, pages, ct);
-				}
-				else
-				{
-					full = true;
-					Log(SyncActivityKind.PassStarted, $"Full sync of {FileCount(entries.Count)}.");
-					need = await SendManifestAsync(repo, generation, entries, ct);
-				}
+				Log(SyncActivityKind.PassStarted, $"Full sync of {FileCount(entries.Count)}.");
+				need = await SendManifestAsync(repo, generation, entries, scan.Keep, ct);
+				_fullManifestAt = time.GetTimestamp();
 			}
 			else
 			{
-				// A backed-off file is left out of the delta as if the server had it (it is neither upserted nor deleted).
-				var known = new Dictionary<string, ManifestEntry>(_known, StringComparer.Ordinal);
+				// What is kept is neither upserted nor deleted; a backed-off file is left out as if the server had it.
+				var known = _known.Where(k => !Kept(k.Key)).ToDictionary(StringComparer.Ordinal);
 				foreach (var (path, entry) in backedOff)
 				{
 					known[path] = entry;
@@ -321,17 +320,29 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 				need = await SendDeltaAsync(repo, generation, pages, ct);
 			}
 
-			// The server now has every entry except the ones it asked for (and the backed-off ones it was not told about).
+			// The server now has every entry except the ones it asked for and the backed-off ones: those (until uploaded) and the kept
+			// files stay known with an unknown hash, so that their deletion is sent too.
 			EnsureCurrent(generation, repo);
 			var needed = need.ToHashSet(StringComparer.Ordinal);
-			_known = entries.Where(e => !needed.Contains(e.Path) && !backedOff.ContainsKey(e.Path)).ToDictionary(e => e.Path, StringComparer.Ordinal);
+			var nowKnown = entries.ToDictionary(e => e.Path, e => needed.Contains(e.Path) || backedOff.ContainsKey(e.Path) ? e with { Sha256 = string.Empty } : e, StringComparer.Ordinal);
+			foreach (var (path, entry) in _known.Where(k => Kept(k.Key)))
+			{
+				nowKnown.TryAdd(path, entry);
+			}
+
+			foreach (var path in scan.Keep.Where(k => !k.EndsWith('/')))
+			{
+				nowKnown.TryAdd(path, new ManifestEntry(path, 0, string.Empty));
+			}
+
+			_known = nowKnown;
 			foreach (var f in _files.Where(f => f.State == FileSyncState.Pending && !needed.Contains(f.Path)).ToList())
 			{
 				SetFileState(f.Path, FileSyncState.Synced, null);
 			}
 
-			// Kept entries (unreadable now) and backed-off ones are never uploaded here.
-			var upload = entries.Where(e => needed.Contains(e.Path) && !scan.Kept.Contains(e.Path) && !backedOff.ContainsKey(e.Path)).ToList();
+			// Backed-off files are not uploaded before their backoff ends.
+			var upload = entries.Where(e => needed.Contains(e.Path) && !backedOff.ContainsKey(e.Path)).ToList();
 			var (uploaded, failed) = await UploadAsync(repo, generation, upload, ct);
 			if (pass)
 			{
@@ -420,8 +431,8 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 	}
 
 	/// <summary>
-	/// Scans the folder. Nothing the scan could not see or read becomes a delete: a known file that is unreadable, too large now,
-	/// or in a folder that could not be listed keeps its last-known entry (<see cref="ScanResult.Kept"/>).
+	/// Scans the folder. Nothing the scan could not see or read becomes a delete: a file that is unreadable or too large, and a folder
+	/// that could not be listed, go to the keep list (<see cref="ScanResult.Keep"/>).
 	/// </summary>
 	/// <returns>The entries to sync, or null when the folder cannot be synced (<see cref="Problem"/> says why).</returns>
 	private async Task<ScanResult?> ScanAsync(int generation)
@@ -486,27 +497,20 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 		var hashByPath = syncable.Select((f, i) => (f.Path, Hash: hashes[i])).ToDictionary(x => x.Path, x => x.Hash, StringComparer.Ordinal);
 		var entries = new List<ManifestEntry>();
 		var files = new List<SyncFile>();
-		var kept = new HashSet<string>(StringComparer.Ordinal);
-		var partial = false;
+		var keep = new HashSet<string>(StringComparer.Ordinal);
 
-		// A known file that cannot be synced now stays as the server has it: listed again, never deleted, never uploaded.
-		bool Keep(string path)
-		{
-			if (_known.TryGetValue(path, out var known))
-			{
-				entries.Add(known);
-				kept.Add(path);
-				return true;
-			}
-
-			return false;
-		}
+		// The mirror keeps the last synced version of what cannot be synced now (a path the server would refuse cannot be on it).
+		string? Keep(string path) => keep.Add(path) && _known.TryGetValue(path, out var known) && known.Sha256.Length > 0 ? known.Sha256 : null;
 
 		foreach (var f in included)
 		{
 			if (f.Size > SyncLimits.MaxFileSize)
 			{
-				Keep(f.Path);
+				if (SyncPath.IsValid(f.Path))
+				{
+					Keep(f.Path);
+				}
+
 				files.Add(new SyncFile(f.Path, f.Size, null, FileSyncState.TooLarge));
 			}
 			else if (SyncPath.GetError(f.Path) is { } error)
@@ -515,9 +519,7 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 			}
 			else if (hashByPath[f.Path] is not { } hash)
 			{
-				var wasKept = Keep(f.Path);
-				partial |= !wasKept;
-				files.Add(new SyncFile(f.Path, f.Size, null, FileSyncState.Error, wasKept ? KeptUnread : Unreadable));
+				files.Add(new SyncFile(f.Path, f.Size, null, FileSyncState.Error, Keep(f.Path) is null ? Unreadable : KeptUnread));
 			}
 			else
 			{
@@ -529,24 +531,26 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 			}
 		}
 
-		// What the walk could not see at all: unreadable files and folders it could not list.
+		// What the walk could not see at all: unreadable files and folders it could not list (their known files are listed as kept).
 		var unlisted = skipped.Where(s => s.EndsWith('/')).ToList();
-		var unseen = skipped.Where(s => !s.EndsWith('/') && !rules.IsIgnored(s)).ToHashSet(StringComparer.Ordinal);
+		foreach (var path in skipped.Where(s => !s.EndsWith('/') && !rules.IsIgnored(s) && SyncPath.IsValid(s)))
+		{
+			var hash = Keep(path);
+			files.Add(new SyncFile(path, hash is null ? 0 : _known[path].Size, hash, FileSyncState.Error, hash is null ? Unreadable : KeptUnread));
+		}
+
 		var scanned = scan.Files.Select(f => f.Path).ToHashSet(StringComparer.Ordinal);
-		var hidden = _known.Keys.Where(p => !scanned.Contains(p) && !rules.IsIgnored(p) && (unseen.Contains(p) || unlisted.Any(d => p.StartsWith(d, StringComparison.Ordinal)))).ToList();
-		foreach (var path in hidden)
+		foreach (var prefix in unlisted.Where(d => !rules.IsIgnored(d) && SyncPath.GetKeepError(d) is null))
 		{
-			Keep(path);
-			files.Add(new SyncFile(path, _known[path].Size, _known[path].Sha256, FileSyncState.Error, KeptUnread));
+			keep.Add(prefix);
+			var hidden = _known.Where(k => k.Key.StartsWith(prefix, StringComparison.Ordinal) && k.Value.Sha256.Length > 0 && !scanned.Contains(k.Key) && !rules.IsIgnored(k.Key));
+			foreach (var (path, known) in hidden)
+			{
+				files.Add(new SyncFile(path, known.Size, known.Sha256, FileSyncState.Error, KeptUnread));
+			}
 		}
 
-		foreach (var path in unseen.Where(p => !kept.Contains(p)))
-		{
-			files.Add(new SyncFile(path, 0, null, FileSyncState.Error, Unreadable));
-		}
-
-		partial |= unlisted.Count > 0 || unseen.Any(p => !kept.Contains(p));
-		if (entries.Count == 0 && _known.Count > 0)
+		if (entries.Count == 0 && keep.Count == 0 && _known.Count > 0)
 		{
 			Problem = LooksEmpty;
 			return null;
@@ -566,7 +570,7 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 		}
 
 		Raise();
-		return new ScanResult(entries, kept, partial);
+		return new ScanResult(entries, keep);
 	}
 
 	/// <returns>The repo name the server uses (sanitized folder name).</returns>
@@ -578,10 +582,10 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 		return _repo;
 	}
 
-	private async Task<List<string>> SendManifestAsync(string repo, int generation, List<ManifestEntry> entries, CancellationToken ct)
+	private async Task<List<string>> SendManifestAsync(string repo, int generation, List<ManifestEntry> entries, IReadOnlySet<string> keep, CancellationToken ct)
 	{
 		var need = new List<string>();
-		foreach (var page in ManifestPlanner.ManifestPages(repo, entries))
+		foreach (var page in ManifestPlanner.ManifestPages(repo, entries, [.. keep.Order(StringComparer.Ordinal)]))
 		{
 			EnsureCurrent(generation, repo);
 			try
@@ -797,8 +801,10 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 		Changed?.Invoke();
 	}
 
-	/// <param name="Entries">What the server should have, sorted by path (kept entries included).</param>
-	/// <param name="Kept">Known paths listed with their last-known entry because they cannot be read now; never uploaded.</param>
-	/// <param name="Partial">Something unreadable may be on the server without this page knowing it: a full manifest would delete it.</param>
-	private sealed record ScanResult(List<ManifestEntry> Entries, HashSet<string> Kept, bool Partial);
+	/// <param name="Entries">What the server should have, sorted by path.</param>
+	/// <param name="Keep">
+	/// What the scan could not sync but the mirror must keep (never deleted, never uploaded): unreadable and too large files, and
+	/// folders that could not be listed as a prefix ending in <c>/</c>. Only valid protocol paths.
+	/// </param>
+	private sealed record ScanResult(List<ManifestEntry> Entries, HashSet<string> Keep);
 }

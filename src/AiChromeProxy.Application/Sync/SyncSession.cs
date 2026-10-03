@@ -18,6 +18,7 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 	private const string EmptyMirrorRefusal = "An empty folder would delete the whole mirror; refusing.";
 
 	private readonly HashSet<string> _manifestPaths = new(StringComparer.OrdinalIgnoreCase);
+	private readonly HashSet<string> _keep = new(StringComparer.OrdinalIgnoreCase);
 	private readonly Dictionary<string, ManifestEntry> _expected = new(StringComparer.Ordinal);
 	private readonly SemaphoreSlim _gate = new(1, 1);
 	private volatile bool _disposed;
@@ -125,8 +126,7 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 	{
 		var repo = RepoName.Sanitize(payload.Repo) ?? throw BadRequest("sync.open needs the folder name in 'repo'.");
 		DiscardUpload();
-		_manifestPaths.Clear();
-		_passNeed = 0;
+		EndManifestPass();
 		_expected.Clear();
 		_repo = repo;
 		ResetStats();
@@ -139,20 +139,28 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 		{
 			var repo = CheckRepo(payload.Repo);
 			var entries = payload.Entries ?? throw BadRequest("sync.manifest needs 'entries'.");
-			if (_manifestPaths.Count + entries.Count > SyncLimits.MaxFiles)
+			var keep = payload.Keep ?? [];
+			if (_manifestPaths.Count + entries.Count > SyncLimits.MaxFiles || _keep.Count + keep.Count > SyncLimits.MaxFiles)
 			{
-				throw new EnvelopeException(ErrorCodes.TooLarge, $"A manifest may list at most {SyncLimits.MaxFiles} files.");
+				throw new EnvelopeException(ErrorCodes.TooLarge, $"A manifest may list (and keep) at most {SyncLimits.MaxFiles} files.");
 			}
 
 			entries.ToList().ForEach(Validate);
+			if (keep.Select(SyncPath.GetKeepError).FirstOrDefault(e => e is not null) is { } keepError)
+			{
+				throw BadRequest(keepError);
+			}
+
 			var need = await NeedAsync(repo, entries, ct);
 			_manifestPaths.UnionWith(entries.Select(e => e.Path));
+			_keep.UnionWith(keep);
 			_passNeed += need.Count;
 			if (payload.Final)
 			{
 				// Case-insensitive: the mirror is on Windows, where "Readme.md" on disk is the manifest's "README.md".
-				var stale = store.ListFiles(repo).Where(p => !_manifestPaths.Contains(p)).ToList();
-				if (_manifestPaths.Count == 0 && stale.Count > 0)
+				// What the browser could not read, list or sync (keep) stays as it is.
+				var stale = store.ListFiles(repo).Where(p => !_manifestPaths.Contains(p) && !SyncPath.IsKept(p, _keep)).ToList();
+				if (_manifestPaths.Count + _keep.Count == 0 && stale.Count > 0)
 				{
 					// A browser that lost access to the folder must never wipe the mirror.
 					throw BadRequest(EmptyMirrorRefusal);
@@ -166,8 +174,7 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 					_manifestPaths.Count,
 					_passNeed,
 					stale.Count);
-				_manifestPaths.Clear();
-				_passNeed = 0;
+				EndManifestPass();
 			}
 
 			return Reply(MessageTypes.SyncNeed, new SyncNeedPayload(repo, need), request);
@@ -175,8 +182,7 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 		catch
 		{
 			// A refused page ends the pass; the client starts the next one from the first page.
-			_manifestPaths.Clear();
-			_passNeed = 0;
+			EndManifestPass();
 			throw;
 		}
 	}
@@ -336,6 +342,13 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 		}
 
 		return repo == _repo ? _repo : throw BadRequest($"Repo '{repo}' is not the open one ('{_repo}').");
+	}
+
+	private void EndManifestPass()
+	{
+		_manifestPaths.Clear();
+		_keep.Clear();
+		_passNeed = 0;
 	}
 
 	private void ResetStats()
