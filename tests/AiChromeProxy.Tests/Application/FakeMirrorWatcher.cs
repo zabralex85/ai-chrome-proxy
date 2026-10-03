@@ -13,8 +13,16 @@ public sealed class FakeMirrorWatcher : IMirrorWatcher
 	/// <summary>Repos whose watch is not disposed.</summary>
 	public IReadOnlyList<string> Active => [.. _watches.Where(w => !w.Handle.Disposed).Select(w => w.Repo)];
 
+	/// <summary>Thrown by <see cref="Watch"/> when set.</summary>
+	public Exception? Throws { get; set; }
+
 	public IDisposable Watch(string repo, Func<IReadOnlyCollection<string>?, Task> changed)
 	{
+		if (Throws is not null)
+		{
+			throw Throws;
+		}
+
 		var handle = new Handle();
 		_watches.Add((repo, changed, handle));
 		return handle;

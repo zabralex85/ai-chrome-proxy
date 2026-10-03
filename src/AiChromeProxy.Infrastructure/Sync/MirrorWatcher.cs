@@ -9,6 +9,9 @@ public sealed class MirrorWatcher(IOptions<MirrorOptions> options, TimeProvider 
 {
 	private static readonly TimeSpan Quiet = TimeSpan.FromMilliseconds(500);
 
+	/// <summary>The longest a steady stream of events (build output, logs) can hold back the callback.</summary>
+	private static readonly TimeSpan MaxWait = TimeSpan.FromSeconds(3);
+
 	private readonly string _root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(options.Value.Root));
 
 	public IDisposable Watch(string repo, Func<IReadOnlyCollection<string>?, Task> changed)
@@ -28,6 +31,8 @@ public sealed class MirrorWatcher(IOptions<MirrorOptions> options, TimeProvider 
 		private readonly HashSet<string> _pending = new(StringComparer.OrdinalIgnoreCase);
 		private readonly FileSystemWatcher _watcher;
 		private readonly ITimer _timer;
+		private readonly TimeProvider _time;
+		private DateTimeOffset? _first;
 		private bool _overflow;
 		private bool _disposed;
 
@@ -36,6 +41,7 @@ public sealed class MirrorWatcher(IOptions<MirrorOptions> options, TimeProvider 
 			_folder = folder;
 			_changed = changed;
 			_logger = logger;
+			_time = time;
 			_timer = time.CreateTimer(Fire, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
 			_watcher = new FileSystemWatcher(folder)
 			{
@@ -43,7 +49,14 @@ public sealed class MirrorWatcher(IOptions<MirrorOptions> options, TimeProvider 
 				NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size,
 				InternalBufferSize = 64 * 1024,
 			};
-			_watcher.Changed += (_, e) => Add(e.FullPath);
+			_watcher.Changed += (_, e) =>
+			{
+				// A folder's timestamp changes whenever an entry in it is created, deleted or renamed; its files report themselves.
+				if (!Directory.Exists(e.FullPath))
+				{
+					Add(e.FullPath);
+				}
+			};
 			_watcher.Created += (_, e) => Add(e.FullPath);
 			_watcher.Deleted += (_, e) => Add(e.FullPath);
 			_watcher.Renamed += (_, e) => Add(e.OldFullPath, e.FullPath);
@@ -108,13 +121,19 @@ public sealed class MirrorWatcher(IOptions<MirrorOptions> options, TimeProvider 
 			}
 		}
 
-		/// <summary>Restarts the quiet period; the caller holds the lock.</summary>
+		/// <summary>Restarts the quiet period, but never past <see cref="MaxWait"/> after the first event; the caller holds the lock.</summary>
 		private void Arm()
 		{
-			if (!_disposed)
+			if (_disposed)
 			{
-				_timer.Change(Quiet, Timeout.InfiniteTimeSpan);
+				return;
 			}
+
+			// ponytail: fixed 3 s ceiling; make it configurable if a repo needs a different latency.
+			var now = _time.GetUtcNow();
+			_first ??= now;
+			var left = _first.Value + MaxWait - now;
+			_timer.Change(left < Quiet ? (left > TimeSpan.Zero ? left : TimeSpan.Zero) : Quiet, Timeout.InfiniteTimeSpan);
 		}
 
 		private void Fire(object? state)
@@ -129,6 +148,7 @@ public sealed class MirrorWatcher(IOptions<MirrorOptions> options, TimeProvider 
 
 				paths = _overflow ? null : [.. _pending];
 				_overflow = false;
+				_first = null;
 				_pending.Clear();
 			}
 

@@ -80,13 +80,45 @@ public sealed class MirrorWatcherTests : IDisposable
 		File.WriteAllText(Path.Combine(_root, "r", "a.txt"), "a");
 		await WaitForPendingAsync(watch, "a.txt");
 
+		// The quiet period is running with a pending path: disposing must cancel it.
 		watch.Dispose();
-		_time.Advance(TimeSpan.FromSeconds(5));
-		File.WriteAllText(Path.Combine(_root, "r", "b.txt"), "b");
-		await Task.Delay(200, TestContext.Current.CancellationToken);
 		_time.Advance(TimeSpan.FromSeconds(5));
 
 		Assert.Empty(_calls);
+	}
+
+	[Fact]
+	public async Task FolderTimestampChange_NotReported_OnlyTheFile()
+	{
+		Directory.CreateDirectory(Path.Combine(_root, "r", "d"));
+		using (var watch = Start(Record))
+		{
+			File.WriteAllText(Path.Combine(_root, "r", "d", "f.txt"), "f");
+			await WaitForPendingAsync(watch, "d/f.txt");
+
+			_time.Advance(TimeSpan.FromMilliseconds(500));
+
+			var paths = Assert.Single(_calls)!;
+			Assert.Contains("d/f.txt", paths);
+			Assert.DoesNotContain("d", paths);
+		}
+	}
+
+	[Fact]
+	public void SteadyEvents_FireAtLatestAfterThreeSeconds()
+	{
+		using (var watch = Start(Record))
+		{
+			var start = _time.GetUtcNow();
+			for (var i = 0; i < 8 && _calls.Count == 0; i++)
+			{
+				watch.Overflow();
+				_time.Advance(TimeSpan.FromMilliseconds(400));
+			}
+
+			Assert.Single(_calls);
+			Assert.True(_time.GetUtcNow() - start <= TimeSpan.FromMilliseconds(3200));
+		}
 	}
 
 	[Fact]

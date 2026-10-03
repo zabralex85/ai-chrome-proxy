@@ -92,6 +92,17 @@ public sealed class SyncSessionsWatchTests : IDisposable
 		Assert.DoesNotContain(_pushed["c3"], e => e.Type == MessageTypes.SyncRemote);
 	}
 
+	[Fact]
+	public async Task WatchFails_SessionStillOpens()
+	{
+		_watcher.Throws = new InvalidOperationException("no watcher");
+
+		await OpenAsync("c1", "r");
+
+		Assert.Equal("r", _sessions.Get("c1").Repo);
+		_sessions.Close("c1");
+	}
+
 	private async Task OpenAsync(string connection, string repo)
 	{
 		var pushed = _pushed.TryGetValue(connection, out var list) ? list : _pushed[connection] = [];

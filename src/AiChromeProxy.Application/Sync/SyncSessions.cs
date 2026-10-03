@@ -58,9 +58,10 @@ public sealed class SyncSessions(IMirrorStore store, IProjectStore projects, ILo
 			{
 				watch = watcher.Watch(to, paths => ChangedAsync(to, paths));
 			}
-			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+			catch (Exception ex)
 			{
 				// The session still works; it just does not see server-side edits.
+				// ponytail: a failed watch is cached (not retried) until every session has left the repo; retry on the next open if that matters.
 				logger.LogError(ex, "Sync {Repo}: cannot watch the mirror folder", to);
 			}
 
