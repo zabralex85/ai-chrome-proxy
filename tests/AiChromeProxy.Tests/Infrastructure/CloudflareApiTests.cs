@@ -79,6 +79,22 @@ public sealed class CloudflareApiTests : IDisposable
 	}
 
 	[Fact]
+	public async Task List_NoTotalPages_FollowsFullPages()
+	{
+		// cfd_tunnel answers result_info without total_pages: a full page means there may be more.
+		var full = "[" + string.Join(',', Enumerable.Range(1, CloudflareApi.PageSize).Select(i => $$"""{"id":"t{{i}}"}""")) + "]";
+		_handler
+			.OnResponse("GET", "accounts/a1/cfd_tunnel?is_deleted=false&page=1&per_page=50", () => FakeCloudflareHandler.Json(HttpStatusCode.OK, $$$"""{"success":true,"errors":[],"result":{{{full}}},"result_info":{"page":1,"per_page":50,"count":50}}"""))
+			.OnResponse("GET", "accounts/a1/cfd_tunnel?is_deleted=false&page=2&per_page=50", () => FakeCloudflareHandler.Json(HttpStatusCode.OK, """{"success":true,"errors":[],"result":[{"id":"t51"}],"result_info":{"page":2,"per_page":50,"count":1}}"""));
+
+		var items = await _api.ListAsync<Item>("accounts/a1/cfd_tunnel?is_deleted=false", TestContext.Current.CancellationToken);
+
+		Assert.Equal(51, items.Count);
+		Assert.Equal("t51", items[^1].Id);
+		Assert.Equal(2, _handler.Requests.Count);
+	}
+
+	[Fact]
 	public async Task Send_BodyAsSnakeCaseJson()
 	{
 		_handler.On("POST", "accounts/a1/cfd_tunnel", """{"id":"t1","name":"n"}""");

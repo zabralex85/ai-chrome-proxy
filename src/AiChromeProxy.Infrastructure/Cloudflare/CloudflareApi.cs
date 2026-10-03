@@ -45,7 +45,10 @@ public sealed class CloudflareApi(HttpClient http, string apiToken, Func<TimeSpa
 		return envelope.Result ?? throw new CloudflareApiException($"Cloudflare API returned no result on {method} {PathOnly(path)}.");
 	}
 
-	/// <summary>All pages of a list (<c>page</c> and <c>per_page</c> are appended to <paramref name="path"/>), following <c>result_info.total_pages</c>.</summary>
+	/// <summary>
+	/// All pages of a list (<c>page</c> and <c>per_page</c> are appended to <paramref name="path"/>), following <c>result_info.total_pages</c>;
+	/// without it (the tunnel list has none), while a page comes back full.
+	/// </summary>
 	public async Task<IReadOnlyList<T>> ListAsync<T>(string path, CancellationToken ct)
 	{
 		var items = new List<T>();
@@ -53,8 +56,9 @@ public sealed class CloudflareApi(HttpClient http, string apiToken, Func<TimeSpa
 		for (var page = 1; ; page++)
 		{
 			var envelope = await SendEnvelopeAsync<List<T>>(HttpMethod.Get, $"{path}{separator}page={page}&per_page={PageSize}", null, ct);
-			items.AddRange(envelope.Result ?? []);
-			if (page >= (envelope.ResultInfo?.TotalPages ?? 1))
+			var result = envelope.Result ?? [];
+			items.AddRange(result);
+			if (envelope.ResultInfo?.TotalPages is { } totalPages ? page >= totalPages : result.Count < PageSize)
 			{
 				return items;
 			}
@@ -117,7 +121,7 @@ public sealed class CloudflareApi(HttpClient http, string apiToken, Func<TimeSpa
 
 	private sealed record ApiError(int Code, string Message);
 
-	private sealed record ResultInfo(int TotalPages);
+	private sealed record ResultInfo(int? TotalPages);
 
 	private sealed record TokenStatus(string Status);
 }
