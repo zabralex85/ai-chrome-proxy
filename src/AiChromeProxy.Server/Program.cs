@@ -68,7 +68,7 @@ if (!access.Enabled)
 app.UseMiddleware<CloudflareAccessMiddleware>();
 app.MapStaticAssets();
 app.MapHub<TransportHub>(TransportHub.Path);
-app.MapFallbackToFile("index.html");
+app.MapClientPage();
 
 app.Run();
 

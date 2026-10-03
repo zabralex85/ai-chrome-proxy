@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using AiChromeProxy.Application.Transport;
 using AiChromeProxy.Client.Transport;
 using AiChromeProxy.Domain;
@@ -28,6 +29,9 @@ public sealed class TransportHubTests : IAsyncDisposable
 		{
 			b.UseEnvironment(Environments.Production);
 			b.UseStaticWebAssets();
+
+			// Cache headers as published: with the build manifest MapStaticAssets otherwise sends no-cache for everything.
+			b.UseSetting("ReloadStaticAssetsAtRuntime", "false");
 			b.UseSetting("Server:PublicHost", ServerHostingTests.PublicHost);
 			b.UseSetting("CloudflareAccess:TeamDomain", TestAccessIssuer.TeamDomain);
 			b.UseSetting("CloudflareAccess:Audience", TestAccessIssuer.Audience);
@@ -160,32 +164,63 @@ public sealed class TransportHubTests : IAsyncDisposable
 		}
 	}
 
-	/// <summary>The Server serves the Client as published: no build-time placeholder may survive, and the unfingerprinted script name must resolve.</summary>
+	/// <summary>
+	/// The page is never cached (a proxy may stretch <c>no-cache</c> into hours) and names only fingerprinted, immutable files: the Blazor script,
+	/// the stylesheet and, through the import map, <c>dotnet.js</c> (the boot manifest) and the fsaccess module.
+	/// </summary>
 	[Theory]
 	[InlineData("/")]
+	[InlineData("/index.html")]
 	[InlineData("/some/client/route")]
-	public async Task Page_WithToken_LoadsBlazorScriptThatExists(string path)
+	public async Task Page_WithToken_NoStore_LoadsOnlyFingerprintedAssets(string path)
 	{
 		var ct = TestContext.Current.CancellationToken;
 		using (var client = _factory.CreateClient())
 		{
-			var html = await Get(client, path, ct);
-			Assert.Contains("\"_framework/blazor.webassembly.js\"", html, StringComparison.Ordinal);
-			Assert.DoesNotContain("#[", html, StringComparison.Ordinal);
+			using (var response = await Send(client, path, ct))
+			{
+				var html = await response.Content.ReadAsStringAsync(ct);
 
-			Assert.Contains("Blazor", await Get(client, "/_framework/blazor.webassembly.js", ct), StringComparison.Ordinal);
+				Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+				Assert.Equal("text/html", response.Content.Headers.ContentType?.MediaType);
+				Assert.Equal("no-store", response.Headers.CacheControl?.ToString());
+				Assert.DoesNotContain("#[", html, StringComparison.Ordinal);
+				Assert.DoesNotContain("{{", html, StringComparison.Ordinal);
+
+				var script = Assert.Single(Regex.Matches(html, "<script src=\"([^\"]+)\"")).Groups[1].Value;
+				var stylesheet = Assert.Single(Regex.Matches(html, "<link rel=\"stylesheet\" href=\"([^\"]+)\"")).Groups[1].Value;
+				var importMap = Regex.Match(html, "<script type=\"importmap\">(.*?)</script>", RegexOptions.Singleline).Groups[1].Value;
+				var imports = JsonDocument.Parse(importMap).RootElement.GetProperty("imports");
+				var dotnet = imports.GetProperty("./_framework/dotnet.js").GetString()!;
+				var fsaccess = imports.GetProperty("./js/fsaccess.js").GetString()!;
+
+				Assert.Matches(@"^_framework/blazor\.webassembly\.[a-z0-9]+\.js$", script);
+				Assert.Matches(@"^css/app\.[a-z0-9]+\.css$", stylesheet);
+				Assert.Matches(@"^\./_framework/dotnet\.[a-z0-9]+\.js$", dotnet);
+				Assert.Matches(@"^\./js/fsaccess\.[a-z0-9]+\.js$", fsaccess);
+				foreach (var asset in new[] { script, stylesheet, dotnet[2..], fsaccess[2..] })
+				{
+					using (var file = await Send(client, "/" + asset, ct))
+					{
+						Assert.Equal(HttpStatusCode.OK, file.StatusCode);
+						Assert.Contains("immutable", file.Headers.CacheControl?.ToString(), StringComparison.Ordinal);
+					}
+				}
+			}
 		}
 	}
 
 	[Fact]
-	public void ClientIndexHtml_HasNoBuildPlaceholders()
+	public void ClientIndexHtml_HasOnlyServerPlaceholders()
 	{
-		// Placeholders are filled only when a Blazor app is published on its own; the hosting Server serves this file as it is.
+		// Build placeholders are filled only when a Blazor app is published on its own; the hosting Server fills its own {{...}} ones.
 		var html = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Client", "index.html"));
 
 		Assert.DoesNotContain("#[", html, StringComparison.Ordinal);
-		Assert.DoesNotContain("type=\"importmap\"", html, StringComparison.Ordinal);
 		Assert.DoesNotContain("id=\"webassembly\"", html, StringComparison.Ordinal);
+		Assert.Contains("<script type=\"importmap\">{{importmap}}</script>", html, StringComparison.Ordinal);
+		Assert.Contains("<link rel=\"stylesheet\" href=\"{{stylesheet}}\" />", html, StringComparison.Ordinal);
+		Assert.Contains("<script src=\"{{blazor-script}}\"></script>", html, StringComparison.Ordinal);
 	}
 
 	[Fact]
@@ -270,16 +305,12 @@ public sealed class TransportHubTests : IAsyncDisposable
 			.Build();
 	}
 
-	private async Task<string> Get(HttpClient client, string path, CancellationToken ct)
+	private async Task<HttpResponseMessage> Send(HttpClient client, string path, CancellationToken ct)
 	{
 		using (var request = new HttpRequestMessage(HttpMethod.Get, path))
 		{
 			request.Headers.Add(CloudflareAccessMiddleware.HeaderName, _issuer.Token());
-			using (var response = await client.SendAsync(request, ct))
-			{
-				Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-				return await response.Content.ReadAsStringAsync(ct);
-			}
+			return await client.SendAsync(request, ct);
 		}
 	}
 
