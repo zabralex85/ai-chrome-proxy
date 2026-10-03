@@ -278,6 +278,19 @@ public sealed class ServiceSetupSecurityTests : IDisposable
 	}
 
 	[Fact]
+	public void PrepareSettingsDirectory_ElevatedTray_AdminOwnedUnprotectedRoot_Protected()
+	{
+		// An elevated process (UAC off, built-in Administrator, CI) owns what it creates as Administrators, so that folder is its own.
+		var dataDir = new DataDirectory(Path.Combine(_temp, "settings-elevated"));
+		Directory.CreateDirectory(dataDir.Root);
+		var administrators = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+
+		ServiceSetup.PrepareSettingsDirectory(dataDir, Current, OwnedByAdministrators(dataDir.Root), tokenOwner: administrators);
+
+		Assert.Equal(ServiceSetup.DataDirectoryDacl(Current), RawDacl.Sddl(dataDir.Root));
+	}
+
+	[Fact]
 	public void PrepareSettingsDirectory_AdminOwnedProtectedRoot_LeftAsItIs()
 	{
 		var dataDir = new DataDirectory(Path.Combine(_temp, "settings-installed"));

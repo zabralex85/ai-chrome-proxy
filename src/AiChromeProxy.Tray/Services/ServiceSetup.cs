@@ -104,7 +104,8 @@ public static class ServiceSetup
 	/// <c>&lt;DataDir&gt;</c> is created with the <see cref="DataDirectoryDacl"/> of <paramref name="user"/>, one the user owns gets it as
 	/// install writes it, and one owned by Administrators or SYSTEM (an install made it) must already be protected. Links and untrusted owners are refused.
 	/// </summary>
-	public static void PrepareSettingsDirectory(DataDirectory dataDir, SecurityIdentifier user, Func<string, SecurityIdentifier?> ownerOf)
+	/// <param name="tokenOwner">The owner this process gives what it creates (<see cref="System.Security.Principal.WindowsIdentity.Owner"/>): the user, or Administrators when elevated; a folder it owns is treated as the user's own.</param>
+	public static void PrepareSettingsDirectory(DataDirectory dataDir, SecurityIdentifier user, Func<string, SecurityIdentifier?> ownerOf, SecurityIdentifier? tokenOwner = null)
 	{
 		if (!Directory.Exists(dataDir.Root))
 		{
@@ -115,7 +116,8 @@ public static class ServiceSetup
 			security.CreateDirectory(dataDir.Root);
 		}
 
-		if (ownerOf(dataDir.Root) == user)
+		var owner = ownerOf(dataDir.Root);
+		if (owner == user || (owner is not null && owner == tokenOwner))
 		{
 			PrepareDataDirectory(dataDir, user, user, ownerOf);
 			return;

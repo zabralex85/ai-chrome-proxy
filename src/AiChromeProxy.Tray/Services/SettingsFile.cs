@@ -79,10 +79,11 @@ public static class SettingsFile
 		var settings = LoadOrEmpty(dataDir);
 		change(settings);
 
-		var user = WindowsIdentity.GetCurrent().User!;
+		using var identity = WindowsIdentity.GetCurrent();
+		var user = identity.User!;
 		try
 		{
-			ServiceSetup.PrepareSettingsDirectory(dataDir, user, DataDirectoryGuard.OwnerOf);
+			ServiceSetup.PrepareSettingsDirectory(dataDir, user, DataDirectoryGuard.OwnerOf, identity.Owner);
 		}
 		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
 		{
