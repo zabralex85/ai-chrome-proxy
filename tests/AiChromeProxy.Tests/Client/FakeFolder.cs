@@ -36,6 +36,12 @@ public sealed class FakeFolder : IFolderAccess
 	/// <summary>Paths whose <see cref="ReadChunkAsync"/> fails like fsaccess.js does for a file that changed or vanished.</summary>
 	public HashSet<string> ReadFailures { get; } = new(StringComparer.Ordinal);
 
+	/// <summary>Paths whose <see cref="ReadChunkAsync"/> fails from this offset on (after earlier chunks were read).</summary>
+	public Dictionary<string, long> ReadFailuresAt { get; } = new(StringComparer.Ordinal);
+
+	/// <summary>Answers <see cref="HasAccessAsync"/> gives first, one per call; <see cref="Granted"/> once empty.</summary>
+	public Queue<bool> AccessAnswers { get; } = new();
+
 	/// <summary>Files whose <c>getFile()</c> fails during the walk: left out of the scan and reported in <see cref="FolderScan.Skipped"/>, like fsaccess.js.</summary>
 	public HashSet<string> Unreadable { get; } = new(StringComparer.Ordinal);
 
@@ -66,7 +72,7 @@ public sealed class FakeFolder : IFolderAccess
 
 	public Task<FolderGrant?> RestoreAsync() => Task.FromResult(Remembered ? new FolderGrant(Name, Granted) : null);
 
-	public Task<bool> HasAccessAsync() => Task.FromResult(Granted);
+	public Task<bool> HasAccessAsync() => Task.FromResult(AccessAnswers.TryDequeue(out var answer) ? answer : Granted);
 
 	public Task<bool> RequestAccessAsync()
 	{
@@ -126,7 +132,7 @@ public sealed class FakeFolder : IFolderAccess
 	public Task<byte[]> ReadChunkAsync(string path, long offset, int length)
 	{
 		ChunkReads.Add(path);
-		if (ReadFailures.Contains(path))
+		if (ReadFailures.Contains(path) || (ReadFailuresAt.TryGetValue(path, out var at) && offset >= at))
 		{
 			return Task.FromException<byte[]>(new JSException($"NotReadableError: '{path}' could not be read."));
 		}

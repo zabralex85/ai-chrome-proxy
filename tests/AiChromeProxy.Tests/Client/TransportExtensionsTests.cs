@@ -44,6 +44,17 @@ public sealed class TransportExtensionsTests
 	}
 
 	[Fact]
+	public async Task Request_SendFails_Throws_AndUnsubscribes()
+	{
+		var transport = new FakeTransport { Reply = _ => Task.FromException<Envelope?>(new IOException("offline")) };
+
+		await Assert.ThrowsAsync<IOException>(
+			() => transport.RequestAsync(Envelope.Create("x", new { }), Timeout, TestContext.Current.CancellationToken));
+
+		Assert.Equal(0, transport.ReceivedHandlers);
+	}
+
+	[Fact]
 	public async Task Request_NoReply_TimesOut_AndUnsubscribes()
 	{
 		var transport = new FakeTransport();

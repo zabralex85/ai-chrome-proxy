@@ -28,6 +28,8 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 	private (string Path, Exception Error)? _chunkFailure;
 	private int _storedFiles;
 	private long _storedBytes;
+
+	/// <summary>When the pass being uploaded started (its first manifest page, or its delta): the stored summary measures that pass.</summary>
 	private long _started;
 	private int _passNeed;
 
@@ -145,6 +147,12 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 		try
 		{
 			var repo = CheckRepo(payload.Repo);
+			if (_manifestPaths.Count + _keep.Count == 0)
+			{
+				// The first page starts a pass.
+				ResetStats();
+			}
+
 			var entries = payload.Entries ?? throw BadRequest("sync.manifest needs 'entries'.");
 			var keep = payload.Keep ?? [];
 			if (_manifestPaths.Count + entries.Count > SyncLimits.MaxFiles || _keep.Count + keep.Count > SyncLimits.MaxFiles)
@@ -197,6 +205,7 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 	private async Task<Envelope> DeltaAsync(SyncDeltaPayload payload, Envelope request, CancellationToken ct)
 	{
 		var repo = CheckRepo(payload.Repo);
+		ResetStats();
 		var upserts = payload.Upserts ?? throw BadRequest("sync.delta needs 'upserts'.");
 		var deletes = payload.Deletes ?? throw BadRequest("sync.delta needs 'deletes'.");
 

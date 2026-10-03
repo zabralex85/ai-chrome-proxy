@@ -3,11 +3,16 @@
 
 @{
     var errors = Engine.ErrorCount;
+    var text = SyncText;
+
+    // The live region keeps its last stable outcome while a scan or an upload runs (an unchanged text is not announced again).
+    _announced = Format.SyncAnnouncement(Engine.Folder, Engine.Phase, Engine.SyncedCount) ?? _announced;
 }
+@* Shown: every state. Announced (live region): stable outcomes only; the shown text is hidden from screen readers while it repeats the announced one. *@
 <footer class="status-box" data-testid="sync-status">
     <span class="status-line status-@Tone">
         <Icon Name="@IconName" Class="@(Engine.Phase is SyncPhase.Scanning or SyncPhase.Uploading ? "spin" : null)" />
-        <span class="status-text"><span role="status" data-testid="status-sync">@SyncText</span><span data-testid="status-rescan">@Format.Rescan(Engine.Folder, Engine.Phase, Engine.NextScan - DateTimeOffset.UtcNow)</span></span>
+        <span class="status-text"><span aria-live="off" aria-hidden="@(text == _announced ? "true" : null)" data-testid="status-sync">@text</span><span class="visually-hidden" role="status" data-testid="status-announced">@_announced</span><span data-testid="status-rescan">@Format.Rescan(Engine.Folder, Engine.Phase, Engine.NextScan - DateTimeOffset.UtcNow)</span></span>
     </span>
     <button type="button" class="error-count @(errors > 0 ? "has-errors" : null)" data-testid="status-errors"
             title="Show the errors" aria-label="@($"{errors} errors, show the list")" @onclick="OnShowErrors">
@@ -17,6 +22,7 @@
 
 @code {
     private readonly CancellationTokenSource _stop = new();
+    private string? _announced;
 
     [Parameter, EditorRequired]
     public SyncEngine Engine { get; set; } = null!;

@@ -8,6 +8,7 @@ using AiChromeProxy.Domain.Sync;
 using AiChromeProxy.Infrastructure.Sync;
 using AiChromeProxy.Tests.Server;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 
 namespace AiChromeProxy.Tests.Application;
 
@@ -195,6 +196,37 @@ public sealed class SyncSessionTests : IDisposable
 		Assert.Equal(content, File.ReadAllBytes(Path.Combine(_repoRoot, "src", "big.bin")));
 		Assert.Empty(Directory.GetFiles(Path.Combine(_repoRoot, "src"), "*.aicp-tmp"));
 		Assert.Contains(_logger.Messages, m => m.StartsWith($"Sync repo: stored 1 files, {content.Length} bytes in ", StringComparison.Ordinal));
+	}
+
+	[Fact]
+	public async Task StoredSummary_MeasuresThePass_NotTheSession()
+	{
+		var clock = new FakeTimeProvider();
+		using (var session = new SyncSession(new FileSystemMirrorStore(Options.Create(new MirrorOptions { Root = _root })), _logger, clock))
+		{
+			async Task SendAsync(Envelope request)
+			{
+				await session.HandleAsync(request, Ct);
+			}
+
+			await SendAsync(Envelope.Create(MessageTypes.SyncOpen, new SyncOpenPayload(Repo)));
+			clock.Advance(TimeSpan.FromMinutes(1));
+			await SendAsync(Manifest(false, Entry("a.txt", "a")));
+			clock.Advance(TimeSpan.FromSeconds(1));
+			await SendAsync(Manifest(true, Entry("b.txt", "b")));
+			clock.Advance(TimeSpan.FromSeconds(2));
+			await SendAsync(Chunk("a.txt", 0, "a"u8.ToArray(), last: true));
+			await SendAsync(Chunk("b.txt", 0, "b"u8.ToArray(), last: true));
+
+			clock.Advance(TimeSpan.FromMinutes(2));
+			await SendAsync(Delta([Entry("c.txt", "c")]));
+			clock.Advance(TimeSpan.FromSeconds(4));
+			await SendAsync(Chunk("c.txt", 0, "c"u8.ToArray(), last: true));
+		}
+
+		Assert.Equal(
+			["Sync repo: stored 2 files, 2 bytes in 00:00:03", "Sync repo: stored 1 files, 1 bytes in 00:00:04"],
+			_logger.Messages.Where(m => m.StartsWith("Sync repo: stored", StringComparison.Ordinal)));
 	}
 
 	[Fact]

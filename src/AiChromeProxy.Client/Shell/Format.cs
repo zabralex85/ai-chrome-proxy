@@ -46,7 +46,7 @@ public static class Format
 		};
 	}
 
-	/// <summary>The sync status box text (a live region), e.g. "Synced 1 234 files" or "Uploading 12/80".</summary>
+	/// <summary>The sync status box text as shown (<see cref="SyncAnnouncement"/> is what the live region says), e.g. "Synced 1 234 files" or "Uploading 12/80".</summary>
 	public static string SyncStatus(FolderStatus folder, SyncPhase phase, int synced, int uploadDone, int uploadTotal)
 	{
 		if (folder == FolderStatus.None)
@@ -68,6 +68,10 @@ public static class Format
 			_ => "Waiting for the server…",
 		};
 	}
+
+	/// <summary>What the status live region announces: the stable outcome (null while scanning or uploading, which are only shown).</summary>
+	public static string? SyncAnnouncement(FolderStatus folder, SyncPhase phase, int synced) =>
+		folder == FolderStatus.Ready && phase is SyncPhase.Scanning or SyncPhase.Uploading ? null : SyncStatus(folder, phase, synced, 0, 0);
 
 	/// <summary>The countdown after "Synced …": " · Rescan in 7 s" while synced and waiting, otherwise null. Kept out of the live region (it changes every second).</summary>
 	public static string? Rescan(FolderStatus folder, SyncPhase phase, TimeSpan? untilNextScan) =>

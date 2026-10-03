@@ -30,7 +30,7 @@ Requires **Chrome 123 or newer** (File System Access API; the theme uses CSS `li
 
 1. **Open folder** calls `showDirectoryPicker({mode: "read"})` (`Scripts/fsaccess.ts`). The folder handle is kept in IndexedDB (best effort: without IndexedDB everything still works, only the hash cache and **Restore access** are lost). After a reload Chrome asks again with one click (**Restore access**).
 2. Every 10 s while the tab is visible, and at once when it gets focus, the browser reads the root `.gitignore`, walks the folder (without entering the built-in excluded folders and the folders the `.gitignore` excludes), drops excluded files, hashes new or changed files (SHA-256 via WebCrypto, cached by size and modification time) and tells the server what changed. Only one scan runs at a time.
-3. The server answers with the paths it is missing; the browser uploads them in 16 KB chunks, one file at a time. Each file is written to `<path>.<session>.aicp-tmp` (a temp name per connection, so a reconnect never collides with the old connection's unfinished upload) and moved into place only after its SHA-256 matched.
+3. The server answers with the paths it is missing; the browser uploads them in 16 KB chunks, in order and pipelined: the next file's chunks go out without waiting for the previous file's `sync.stored`, with at most 16 files awaiting their reply (so a first sync over a slow link is not one round trip per file; the server still stores one file after the other). If the connection drops, the replies still awaited are lost and the pass ends; the next scan starts over with the full manifest. Each file is written to `<path>.<session>.aicp-tmp` (a temp name per connection, so a reconnect never collides with the old connection's unfinished upload) and moved into place only after its SHA-256 matched.
 
 | Message (`Envelope.type`) | Direction | Payload (camelCase) |
 |---|---|---|
@@ -83,6 +83,29 @@ A file on the mirror is deleted only when a scan positively saw it absent. A fil
 | `dotnet run` without a data directory | `src\AiChromeProxy.Server\data\mirror` (gitignored; `data/mirror` under the content root) |
 
 Set `Mirror:Root` (or the environment variable `Mirror__Root`) to put it elsewhere. Only the default location inside the data directory gets the data directory's protected DACL (see [Windows host](windows-host.md)); a custom `Mirror:Root` outside it keeps whatever permissions its folder has, so restrict it yourself (other local users could otherwise read the synced code, or plant files Claude will act on). Every protocol path is validated (relative, `/`-separated, normalized, checked by the rules above) and must resolve inside `<root>\<repo>` exactly as written (a path that Windows would rewrite, for example an 8.3 expansion, is refused); the server never follows a link or junction inside the mirror.
+
+### Long paths on Windows
+
+A synced path may be up to 260 characters (relative to the folder), so on the mirror `<root>\<repo>\<path>` can pass the classic 260-character `MAX_PATH` limit (the default root alone, `C:\ProgramData\AiChromeProxy\mirror\`, takes 36). The Server itself handles long paths; the tools that run in the mirror (git, builds, later Claude) may not:
+
+- **Enable Win32 long paths** (as administrator): Group Policy *Computer Configuration → Administrative Templates → System → Filesystem → Enable Win32 long paths*, or `HKLM\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled = 1` (DWORD):
+  ```powershell
+  New-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem -Name LongPathsEnabled -Value 1 -PropertyType DWord -Force
+  ```
+  A process reads it when it starts, so no service restart is needed: tools started afterwards (new git processes) see it. Programs without the long-path opt-in in their manifest still stop at 260.
+- **git:** `git config --system core.longpaths true` (as administrator).
+- **A short `Mirror:Root`** such as `C:\m` shortens every path. Set it in `%ProgramData%\AiChromeProxy\appsettings.json` (`"Mirror": { "Root": "C:\\m" }`) or as the machine environment variable `Mirror__Root`, then restart the service. Prefer the `appsettings.json` file: a machine-level environment variable reaches a Windows service only after a reboot. Outside the data directory the mirror gets **no** protected DACL, and standard users may create folders in `C:\`: create the folder yourself first and restrict it, for example (as administrator):
+  ```powershell
+  # The service account is the SERVICE_START_NAME of the service, not $env:USERNAME (under over-the-shoulder UAC that is the approving admin).
+  # The service account (the tray user), e.g. .\jane or DESKTOP-1\jane:
+  $svc = ((sc.exe qc AiChromeProxy) -match 'SERVICE_START_NAME') -replace '^.*:\s*', ''
+  if (Test-Path C:\m) { (Get-Acl C:\m).Owner; throw 'C:\m exists and you did not create it: pick another name' }
+  New-Item -ItemType Directory C:\m -ErrorAction Stop
+  icacls C:\m /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "${svc}:(OI)(CI)M"
+  ```
+  If the folder already exists and you did not create it, pick another name: someone else may own it and keep control of its ACL.
+- **Not `subst` or mapped network drives:** they exist per logon session, and the service (which runs without anyone logged on) does not see them.
+- **Segment limit:** a single file or folder name stays limited to 237 characters (NTFS allows 255, minus the temp suffix `.<tag>.aicp-tmp`); no setting lifts it.
 
 ## Manual checklist (Chrome on the locked-down machine)
 
