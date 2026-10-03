@@ -17,6 +17,9 @@ public partial class App : Avalonia.Application
 {
 	private static readonly TimeSpan StatusPollInterval = TimeSpan.FromSeconds(2);
 
+	/// <summary>The remote access wizard's connection to api.cloudflare.com (one per tray, shared by its windows).</summary>
+	private static readonly HttpClient CloudflareHttp = new() { Timeout = TimeSpan.FromSeconds(30) };
+
 	public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
 	public override void OnFrameworkInitializationCompleted()
@@ -35,6 +38,9 @@ public partial class App : Avalonia.Application
 
 		base.OnFrameworkInitializationCompleted();
 	}
+
+	/// <summary>Opens <paramref name="address"/> in the default browser.</summary>
+	internal static void Open(Uri address) => Process.Start(new ProcessStartInfo(address.AbsoluteUri) { UseShellExecute = true })?.Dispose();
 
 	private static NativeMenuItem Item(string header, Action onClick)
 	{
@@ -61,8 +67,6 @@ public partial class App : Avalonia.Application
 		window.Show();
 	}
 
-	private static void Open(Uri address) => Process.Start(new ProcessStartInfo(address.AbsoluteUri) { UseShellExecute = true })?.Dispose();
-
 	private void StartTray(IClassicDesktopStyleApplicationLifetime desktop)
 	{
 		var dataDir = DataDirectory.FromEnvironment();
@@ -73,6 +77,12 @@ public partial class App : Avalonia.Application
 		var update = new NativeMenuItem { Command = vm.UpdateCommand };
 		var status = new NativeMenuItem { IsEnabled = false };
 		var error = new NativeMenuItem { IsEnabled = false };
+
+		void ShowRemoteAccess() => ShowSingle(desktop, () => new RemoteAccessWindow
+		{
+			DataContext = new RemoteAccessViewModel(dataDir, CloudflareHttp, service, AdminCommand.RunElevatedAsync, Environment.MachineName),
+		});
+
 		var menu = new NativeMenu
 		{
 			status,
@@ -85,6 +95,7 @@ public partial class App : Avalonia.Application
 			new NativeMenuItem("Install service…") { Command = vm.InstallCommand },
 			new NativeMenuItem("Uninstall service") { Command = vm.UninstallCommand },
 			new NativeMenuItemSeparator(),
+			Item("Set up remote access…", ShowRemoteAccess),
 			Item("Settings…", () => ShowSingle(desktop, () => new SettingsWindow { DataContext = new SettingsViewModel(dataDir, new RegistryAutoStart(), service) })),
 			Item("Logs…", () => ShowSingle(desktop, () => new LogsWindow { DataContext = new LogsViewModel(dataDir) })),
 			Item("Open UI", () => Open(SettingsViewModel.UiAddress(dataDir))),
@@ -114,6 +125,12 @@ public partial class App : Avalonia.Application
 		Render();
 		TrayIcon.SetIcons(this, [icon]);
 		_ = vm.RunUpdateChecksAsync(TimeProvider.System, CancellationToken.None);
+
+		// First run: nothing is published yet, so lead with the wizard.
+		if (RemoteAccessViewModel.NeedsSetup(dataDir))
+		{
+			ShowRemoteAccess();
+		}
 
 		// ponytail: polls the SCM every 2 s for the tray's lifetime (one cheap query); restrict to "menu open" via NativeMenu.Opening/Closed if it ever matters.
 		DispatcherTimer.Run(

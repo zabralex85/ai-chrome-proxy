@@ -1,0 +1,72 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:AiChromeProxy.Tray.ViewModels"
+        xmlns:cf="using:AiChromeProxy.Infrastructure.Cloudflare"
+        x:Class="AiChromeProxy.Tray.Views.RemoteAccessWindow"
+        x:DataType="vm:RemoteAccessViewModel"
+        Title="Set up remote access"
+        Icon="/Assets/tray.ico"
+        Width="560" SizeToContent="Height" CanResize="False"
+        WindowStartupLocation="CenterScreen">
+  <StackPanel Margin="16" Spacing="8">
+
+    <!-- 1. Token -->
+    <StackPanel Spacing="8" IsVisible="{Binding IsTokenStage}">
+      <TextBlock TextWrapping="Wrap"
+                 Text="Publishes this server at https://&lt;subdomain&gt;.&lt;your domain&gt; through Cloudflare Tunnel, behind Cloudflare Access (only the emails you list can sign in). Zero Trust must be enabled once on the account (free plan)." />
+      <TextBlock TextWrapping="Wrap" Text="Create a Cloudflare API token (Custom token) with these permissions; it is used only in this window and never saved:" />
+      <TextBlock Margin="12,0,0,0" TextWrapping="Wrap"
+                 Text="Account — Cloudflare Tunnel: Edit&#10;Account — Access: Apps and Policies: Edit&#10;Account — Access: Organizations, Identity Providers, and Groups: Read&#10;Zone — DNS: Edit&#10;Zone — Zone: Read" />
+      <Button Content="Create token…" Click="OnCreateToken" />
+      <TextBlock Text="Cloudflare API token" />
+      <TextBox Text="{Binding ApiToken}" PasswordChar="●" />
+    </StackPanel>
+
+    <!-- 2. Details -->
+    <StackPanel Spacing="8" IsVisible="{Binding IsDetailsStage}">
+      <TextBlock Text="Zone (your domain in Cloudflare)" />
+      <ComboBox ItemsSource="{Binding Zones}" SelectedItem="{Binding SelectedZone}" HorizontalAlignment="Stretch">
+        <ComboBox.ItemTemplate>
+          <DataTemplate x:DataType="cf:CloudflareZone">
+            <TextBlock Text="{Binding Name}" />
+          </DataTemplate>
+        </ComboBox.ItemTemplate>
+      </ComboBox>
+      <TextBlock Text="Subdomain" />
+      <TextBox Text="{Binding Subdomain}" />
+      <TextBlock Text="Allowed email addresses (comma or one per line)" />
+      <TextBox Text="{Binding Emails}" AcceptsReturn="True" Height="80" TextWrapping="Wrap" />
+      <TextBlock Text="{Binding PublicUrl}" FontWeight="SemiBold" />
+    </StackPanel>
+
+    <!-- 3. Progress -->
+    <StackPanel Spacing="4" IsVisible="{Binding IsProgressStage}">
+      <ItemsControl ItemsSource="{Binding Steps}">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="x:String">
+            <TextBlock Text="{Binding}" TextWrapping="Wrap" />
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+      <TextBlock Text="Working…" IsVisible="{Binding IsBusy}" />
+      <TextBlock Text="{Binding Status}" TextWrapping="Wrap" FontWeight="SemiBold" />
+    </StackPanel>
+
+    <ItemsControl ItemsSource="{Binding Errors}">
+      <ItemsControl.ItemTemplate>
+        <DataTemplate x:DataType="x:String">
+          <TextBlock Text="{Binding}" Foreground="#C42B1C" TextWrapping="Wrap" />
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+
+    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+      <Button Content="Back" Command="{Binding BackCommand}" IsVisible="{Binding CanGoBack}" />
+      <Button Content="Continue" Command="{Binding ContinueCommand}" IsVisible="{Binding IsTokenStage}" IsDefault="True" />
+      <Button Content="Set up" Command="{Binding SetUpCommand}" IsVisible="{Binding IsDetailsStage}" />
+      <Button Content="Install service…" Command="{Binding InstallServiceCommand}" IsVisible="{Binding IsInstallOffered}" />
+      <Button Content="Restart service" Command="{Binding RestartServiceCommand}" IsVisible="{Binding IsRestartOffered}" />
+      <Button Content="Open" Click="OnOpen" IsVisible="{Binding Succeeded}" />
+    </StackPanel>
+  </StackPanel>
+</Window>
