@@ -14,7 +14,7 @@
 
 <div class="shell @(_dragging is null ? null : "resizing")" data-testid="shell" data-theme="@_theme"
      style="--left-width: @(_filesOpen ? _leftWidth : 0)px; --right-width: @(_historyOpen ? _rightWidth : 0)px">
-    <TopBar FolderName="@Engine.FolderName" State="@Transport.State" PingMs="@_pingMs" Theme="@_theme" OnToggleTheme="ToggleThemeAsync" User="@_user"
+    <TopBar FolderName="@Engine.FolderName" State="@Transport.State" PingMs="@_pingMs" UpdateInstalled="@_updateInstalled" Theme="@_theme" OnToggleTheme="ToggleThemeAsync" User="@_user"
             FilesOpen="@_filesOpen" OnToggleFiles="() => _filesOpen = !_filesOpen"
             FilesAttention="@(_filesOpen ? null : Format.Attention(Engine.Folder, Engine.ErrorCount))"
             HistoryOpen="@_historyOpen" OnToggleHistory="() => _historyOpen = !_historyOpen" />
@@ -49,6 +49,8 @@
     /// <summary>Engine changes (one per file state during a sync) re-render the page at most this often.</summary>
     private static readonly TimeSpan RenderInterval = TimeSpan.FromMilliseconds(150);
 
+    private static readonly string ClientVersion = ProductVersion.Of(typeof(Home).Assembly);
+
     private readonly CancellationTokenSource _stop = new();
     private readonly TabSet _tabs = new();
     private string? _theme;
@@ -61,6 +63,7 @@
     private double _dragStartX;
     private int _dragStartWidth;
     private long? _pingMs;
+    private bool _updateInstalled;
     private int _viewport;
     private RenderCoalescer? _render;
 
@@ -205,8 +208,9 @@
         var watch = Stopwatch.StartNew();
         try
         {
-            await Transport.RequestAsync(Envelope.Create(MessageTypes.Ping, new { }), TimeSpan.FromSeconds(5), _stop.Token);
+            var pong = await Transport.RequestAsync(Envelope.Create(MessageTypes.Ping, new { }), TimeSpan.FromSeconds(5), _stop.Token);
             _pingMs = watch.ElapsedMilliseconds;
+            _updateInstalled = ProductVersion.ServerDiffers(pong.Payload, ClientVersion);
         }
         catch (Exception) when (_stop.IsCancellationRequested)
         {

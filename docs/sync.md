@@ -20,7 +20,7 @@ Requires **Chrome 123 or newer** (File System Access API; the theme uses CSS `li
 +-----------+------------------------------------+-----------------+
 ```
 
-- **Top bar:** app name, folder name, connection pill (Connected / Connecting… / Reconnecting… / Offline; the tooltip shows the ping latency), theme toggle (system → light → dark, kept in `localStorage`), panel toggles, and the user: the Cloudflare Access email, or "local" when there is none (Development).
+- **Top bar:** app name, folder name, connection pill (Connected / Connecting… / Reconnecting… / Offline; the tooltip shows the ping latency), theme toggle (system → light → dark, kept in `localStorage`), panel toggles, and the user: the Cloudflare Access email, or "local" when there is none (Development). When the server runs another version than the page (an update was installed while the tab was open; the `pong` payload carries an optional `serverVersion`), a non-blocking **A new version is installed — Reload** banner appears.
 - **Left:** **Open folder** (or the folder name with **Change**); when access is lost or the server refuses the folder, a notice with **Restore access** and **Change folder**. The tree shows a sync badge per file (synced, pending, too large, error). At the bottom the **sync status**: "Synced 1 234 files · Rescan in 7 s", "Uploading 12/80", "Access needed"; the error count opens the **Errors** tab.
 - **Centre:** tabs (a permanent Welcome tab, one closable tab per opened file showing its metadata, the Errors tab), the main area, and a disabled chat input (Claude chat arrives in a later sub-project).
 - **Right:** **Actions history**, newest first, at most 500 entries: folder opened, pass started/finished (files, bytes, duration; "Already in sync" when nothing changed), uploads and deletes, errors with the server's message, reconnects, access lost. At the bottom the **connection status** with the ping latency (measured every 15 s).
@@ -106,6 +106,10 @@ A synced path may be up to 260 characters (relative to the folder), so on the mi
   If the folder already exists and you did not create it, pick another name: someone else may own it and keep control of its ACL.
 - **Not `subst` or mapped network drives:** they exist per logon session, and the service (which runs without anyone logged on) does not see them.
 - **Segment limit:** a single file or folder name stays limited to 237 characters (NTFS allows 255, minus the temp suffix `.<tag>.aicp-tmp`); no setting lifts it.
+
+## Troubleshooting
+
+- **The page still behaves like the previous version after an update.** The Server sends the page (`index.html`) with `Cache-Control: no-store` and points it only at fingerprinted files (`blazor.webassembly.<hash>.js`, `app.<hash>.css`, and through an import map `dotnet.<hash>.js` and `fsaccess.<hash>.js`), so a new version is picked up on the next load even when a proxy caches the other files. A tab opened before the update shows the **A new version is installed — Reload** banner; click **Reload**, or press **Ctrl+Shift+R**. On Cloudflare, also set *Caching → Configuration → Browser Cache TTL* to **Respect Existing Headers** (see [Remote access](windows-host.md#remote-access)).
 
 ## Manual checklist (Chrome on the locked-down machine)
 

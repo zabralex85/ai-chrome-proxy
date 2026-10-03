@@ -4,6 +4,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Adds the fingerprinted _framework/blazor.webassembly.<hash>.js endpoint the Server's index.html points at (see ClientPage). -->
+    <BlazorFingerprintBlazorJs>true</BlazorFingerprintBlazorJs>
   </PropertyGroup>
 
   <!-- Browser code: Scripts/*.ts (strict, tsconfig.json) compiled to wwwroot/js on every build; the output is gitignored.
