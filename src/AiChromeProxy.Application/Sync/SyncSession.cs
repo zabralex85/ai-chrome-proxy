@@ -122,6 +122,7 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 			// Case-insensitive: the mirror is on Windows, where "Readme.md" on disk is the manifest's "README.md".
 			var stale = store.ListFiles(repo).Where(p => !_manifestPaths.Contains(p)).ToList();
 			stale.ForEach(p => store.Delete(repo, p));
+			store.DeleteStaleTemps(repo, _upload?.Entry.Path);
 			logger.LogInformation(
 				"Sync {Repo}: manifest of {Files} files, {Need} to upload, {Deleted} deleted",
 				repo,

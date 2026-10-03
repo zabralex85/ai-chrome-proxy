@@ -123,6 +123,23 @@ public sealed class SyncSessionTests : IDisposable
 		Assert.Contains(_logger.Messages, m => m.Contains("Sync repo: manifest of 2 files, 0 to upload, 1 deleted", StringComparison.Ordinal));
 	}
 
+	[Fact]
+	public async Task FinalPage_DeletesStaleTempFiles_KeepsOpenUpload()
+	{
+		Directory.CreateDirectory(Path.Combine(_repoRoot, "src"));
+		File.WriteAllText(Path.Combine(_repoRoot, "src", "old.cs.aicp-tmp"), "crashed upload");
+		await OpenAsync();
+		await NeedAsync(Manifest(false, Entry("a.txt", "abcd")));
+		await _session.HandleAsync(Chunk("a.txt", 0, "ab"u8.ToArray(), last: false), Ct);
+
+		await NeedAsync(Manifest(true, Entry("a.txt", "abcd")));
+
+		Assert.False(File.Exists(Path.Combine(_repoRoot, "src", "old.cs.aicp-tmp")));
+		Assert.True(File.Exists(Path.Combine(_repoRoot, "a.txt.aicp-tmp")));
+		Assert.Equal(MessageTypes.SyncStored, (await _session.HandleAsync(Chunk("a.txt", 2, "cd"u8.ToArray(), last: true), Ct))!.Type);
+		Assert.Equal("abcd", File.ReadAllText(Path.Combine(_repoRoot, "a.txt")));
+	}
+
 	[Theory]
 	[InlineData("../escape.txt", 1, ErrorCodes.BadRequest)]
 	[InlineData("ok.txt", -1, ErrorCodes.BadRequest)]

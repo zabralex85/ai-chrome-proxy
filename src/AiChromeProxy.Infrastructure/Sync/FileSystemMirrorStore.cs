@@ -11,6 +11,9 @@ namespace AiChromeProxy.Infrastructure.Sync;
 /// <summary><see cref="IMirrorStore"/> on the local file system under <see cref="MirrorOptions.Root"/>.</summary>
 public sealed class FileSystemMirrorStore(IOptions<MirrorOptions> options) : IMirrorStore
 {
+	// AttributesToSkip replaces the default (Hidden | System): hidden files are synced files too; links are never entered.
+	private static readonly EnumerationOptions Recursive = new() { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = true };
+
 	private readonly string _root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(options.Value.Root));
 	private readonly ConcurrentDictionary<string, CachedHash> _hashes = new(StringComparer.OrdinalIgnoreCase);
 
@@ -48,14 +51,19 @@ public sealed class FileSystemMirrorStore(IOptions<MirrorOptions> options) : IMi
 			return cached.Sha256;
 		}
 
-		string hash;
-		using (var stream = file.OpenRead())
+		// Shares writers and deleters: a file another process has open must not fail the whole manifest page.
+		using (var stream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
 		{
-			hash = Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, ct));
-		}
+			var hash = Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, ct));
 
-		_hashes[key] = new CachedHash(file.Length, file.LastWriteTimeUtc, hash);
-		return hash;
+			// Cached only if the file did not change while it was read, so the key never pairs with a mixed hash.
+			if (stream.Length == file.Length && File.GetLastWriteTimeUtc(stream.SafeFileHandle) == file.LastWriteTimeUtc)
+			{
+				_hashes[key] = new CachedHash(file.Length, file.LastWriteTimeUtc, hash);
+			}
+
+			return hash;
+		}
 	}
 
 	public IReadOnlyList<string> ListFiles(string repo)
@@ -66,9 +74,7 @@ public sealed class FileSystemMirrorStore(IOptions<MirrorOptions> options) : IMi
 			return [];
 		}
 
-		// AttributesToSkip replaces the default (Hidden | System): hidden files are synced files too; links are never entered.
-		var enumeration = new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = true };
-		return Directory.EnumerateFiles(repoRoot, "*", enumeration)
+		return Directory.EnumerateFiles(repoRoot, "*", Recursive)
 			.Select(f => Path.GetRelativePath(repoRoot, f).Replace(Path.DirectorySeparatorChar, '/'))
 			.Where(SyncPath.IsValid)
 			.ToList();
@@ -78,7 +84,11 @@ public sealed class FileSystemMirrorStore(IOptions<MirrorOptions> options) : IMi
 	{
 		var full = Resolve(repo, path);
 		Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-		return new FileStream(full + SyncPath.TempSuffix, FileMode.Create, FileAccess.Write, FileShare.None);
+
+		// A hard link or file link left at the temp name would be written through: remove the entry (never its target), then create anew.
+		var temp = full + SyncPath.TempSuffix;
+		File.Delete(temp);
+		return new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None);
 	}
 
 	public void Commit(string repo, string path)
@@ -89,6 +99,33 @@ public sealed class FileSystemMirrorStore(IOptions<MirrorOptions> options) : IMi
 	}
 
 	public void DiscardTemp(string repo, string path) => File.Delete(Resolve(repo, path) + SyncPath.TempSuffix);
+
+	public void DeleteStaleTemps(string repo, string? keep)
+	{
+		var repoRoot = RepoRoot(repo);
+		if (!Directory.Exists(repoRoot) || IsLink(repoRoot))
+		{
+			return;
+		}
+
+		var kept = keep is null ? null : Resolve(repo, keep) + SyncPath.TempSuffix;
+		foreach (var temp in Directory.EnumerateFiles(repoRoot, "*" + SyncPath.TempSuffix, Recursive))
+		{
+			if (string.Equals(temp, kept, StringComparison.OrdinalIgnoreCase))
+			{
+				continue;
+			}
+
+			try
+			{
+				File.Delete(temp);
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+			{
+				// Still open by another connection's upload (or read-only): left for a later sweep.
+			}
+		}
+	}
 
 	public void Delete(string repo, string path)
 	{
@@ -130,7 +167,8 @@ public sealed class FileSystemMirrorStore(IOptions<MirrorOptions> options) : IMi
 		var full = FullPathIn(repoRoot, path);
 		for (var dir = Path.GetDirectoryName(full)!; dir.Length >= repoRoot.Length; dir = Path.GetDirectoryName(dir)!)
 		{
-			if (Directory.Exists(dir) && IsLink(dir))
+			// Path.Exists, not Directory.Exists: a file-type link to a folder is not a directory but still redirects the path.
+			if (Path.Exists(dir) && IsLink(dir))
 			{
 				throw BadRequest($"Path '{path}' crosses a link or junction in the mirror.");
 			}

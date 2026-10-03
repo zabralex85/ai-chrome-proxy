@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using AiChromeProxy.Application.Transport;
@@ -67,6 +68,89 @@ public sealed class FileSystemMirrorStoreTests : IDisposable
 
 		Assert.False(File.Exists(Path.Combine(_repoRoot, "a.txt.aicp-tmp")));
 		Assert.Equal("old", File.ReadAllText(Path.Combine(_repoRoot, "a.txt")));
+	}
+
+	[Fact]
+	public async Task CreateTemp_HardLinkAtTempName_Replaced_OutsideFileUnchanged()
+	{
+		var outside = Path.Combine(_temp, "outside.txt");
+		File.WriteAllText(outside, "secret");
+		HardLink(Path.Combine(_repoRoot, "a.txt.aicp-tmp"), outside);
+
+		using (var stream = _store.CreateTemp(Repo, "a.txt"))
+		{
+			await stream.WriteAsync("upload"u8.ToArray(), TestContext.Current.CancellationToken);
+		}
+
+		Assert.Equal("secret", File.ReadAllText(outside));
+		Assert.Equal("upload", File.ReadAllText(Path.Combine(_repoRoot, "a.txt.aicp-tmp")));
+	}
+
+	[Fact]
+	public async Task GetHash_FileOpenByWriter_Hashed()
+	{
+		var file = Path.Combine(_repoRoot, "a.txt");
+		File.WriteAllText(file, "abc");
+
+		using (new FileStream(file, FileMode.Open, FileAccess.Write, FileShare.ReadWrite))
+		{
+			Assert.Equal(Sha("abc"u8.ToArray()), await _store.GetHashAsync(Repo, "a.txt", TestContext.Current.CancellationToken));
+		}
+	}
+
+	[Fact]
+	public void FileSymlinkAsPathComponent_Refused()
+	{
+		var outside = Path.Combine(_temp, "outside");
+		Directory.CreateDirectory(outside);
+		File.WriteAllText(Path.Combine(outside, "secret.txt"), "s");
+		try
+		{
+			// A file-type link to a folder: Directory.Exists is false for it, the link check must still see it.
+			File.CreateSymbolicLink(Path.Combine(_repoRoot, "f"), outside);
+		}
+		catch (IOException)
+		{
+			Assert.Skip("Creating symbolic links needs Developer Mode or the SeCreateSymbolicLinkPrivilege.");
+		}
+		catch (UnauthorizedAccessException)
+		{
+			Assert.Skip("Creating symbolic links needs Developer Mode or the SeCreateSymbolicLinkPrivilege.");
+		}
+
+		Assert.Equal(ErrorCodes.BadRequest, Assert.Throws<EnvelopeException>(() => _store.Delete(Repo, "f/secret.txt")).Code);
+		Assert.Equal(ErrorCodes.BadRequest, Assert.Throws<EnvelopeException>(() => _store.CreateTemp(Repo, "f/new.txt")).Code);
+		Assert.True(File.Exists(Path.Combine(outside, "secret.txt")));
+		Assert.False(File.Exists(Path.Combine(outside, "new.txt.aicp-tmp")));
+	}
+
+	[Fact]
+	public void DeleteStaleTemps_RemovesLeftovers_KeepsKeptOpenAndBehindJunctions()
+	{
+		var outside = Path.Combine(_temp, "outside");
+		Directory.CreateDirectory(outside);
+		File.WriteAllText(Path.Combine(outside, "x.aicp-tmp"), "o");
+		Junction(Path.Combine(_repoRoot, "link"), outside);
+		Directory.CreateDirectory(Path.Combine(_repoRoot, "src"));
+		File.WriteAllText(Path.Combine(_repoRoot, "a.txt"), "a");
+		File.WriteAllText(Path.Combine(_repoRoot, "a.txt.aicp-tmp"), "stale");
+		File.WriteAllText(Path.Combine(_repoRoot, "src", "b.cs.aicp-tmp"), "stale");
+		File.WriteAllText(Path.Combine(_repoRoot, "kept.txt.aicp-tmp"), "uploading");
+		var open = Path.Combine(_repoRoot, "open.txt.aicp-tmp");
+
+		using (new FileStream(open, FileMode.Create, FileAccess.Write, FileShare.None))
+		{
+			_store.DeleteStaleTemps(Repo, "kept.txt");
+		}
+
+		Assert.False(File.Exists(Path.Combine(_repoRoot, "a.txt.aicp-tmp")));
+		Assert.False(File.Exists(Path.Combine(_repoRoot, "src", "b.cs.aicp-tmp")));
+		Assert.True(File.Exists(Path.Combine(_repoRoot, "a.txt")));
+		Assert.True(File.Exists(Path.Combine(_repoRoot, "kept.txt.aicp-tmp")));
+		Assert.True(File.Exists(open));
+		Assert.True(File.Exists(Path.Combine(outside, "x.aicp-tmp")));
+
+		_store.DeleteStaleTemps("not-synced-yet", null);
 	}
 
 	[Fact]
@@ -240,6 +324,16 @@ public sealed class FileSystemMirrorStoreTests : IDisposable
 	}
 
 	private static string Sha(byte[] content) => Convert.ToHexStringLower(SHA256.HashData(content));
+
+	/// <summary>A hard link needs no privilege, unlike a symbolic link.</summary>
+	private static void HardLink(string link, string target)
+	{
+		using (var process = Process.Start(new ProcessStartInfo("cmd.exe", $"/c mklink /H \"{link}\" \"{target}\"") { CreateNoWindow = true, RedirectStandardOutput = true })!)
+		{
+			process.WaitForExit();
+			Assert.Equal(0, process.ExitCode);
+		}
+	}
 
 	private void Junction(string link, string target)
 	{
