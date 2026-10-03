@@ -12,6 +12,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/AiChromeProxy.E2E/AiChromeProxy.E2E.csproj" />
+    <Project Path="tests/AiChromeProxy.FakeAgent/AiChromeProxy.FakeAgent.csproj" />
     <Project Path="tests/AiChromeProxy.Tests/AiChromeProxy.Tests.csproj" />
   </Folder>
 </Solution>
