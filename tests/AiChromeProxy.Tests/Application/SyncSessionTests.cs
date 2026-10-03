@@ -142,6 +142,7 @@ public sealed class SyncSessionTests : IDisposable
 
 	[Theory]
 	[InlineData("../escape.txt", 1, ErrorCodes.BadRequest)]
+	[InlineData(".git/config", 1, ErrorCodes.BadRequest)]
 	[InlineData("ok.txt", -1, ErrorCodes.BadRequest)]
 	[InlineData("ok.txt", SyncLimits.MaxFileSize + 1, ErrorCodes.TooLarge)]
 	public async Task Manifest_InvalidEntry_Refused(string path, long size, string code)

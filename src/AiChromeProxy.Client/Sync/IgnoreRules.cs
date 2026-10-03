@@ -15,7 +15,7 @@ public sealed class IgnoreRules
 	public static readonly IReadOnlyList<string> BuiltInDirectories = [".git", "node_modules", "bin", "obj", ".vs", ".idea"];
 
 	public static readonly IReadOnlyList<string> BuiltInPatterns =
-		[".git/", "node_modules/", "bin/", "obj/", ".vs/", ".idea/", ".env", ".env.*", "*.pfx", "*.key", "*.pem", "id_rsa*"];
+		[".git", "node_modules/", "bin/", "obj/", ".vs/", ".idea/", ".env", ".env.*", "*.pfx", "*.key", "*.pem", "id_rsa*"];
 
 	private static readonly IReadOnlyList<Rule> BuiltIn = Parse(BuiltInPatterns);
 

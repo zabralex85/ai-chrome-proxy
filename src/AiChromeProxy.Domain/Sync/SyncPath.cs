@@ -6,7 +6,7 @@ namespace AiChromeProxy.Domain.Sync;
 
 /// <summary>
 /// Rules every path in the sync protocol must meet, on both ends: relative, <c>/</c>-separated, no empty / <c>.</c> / <c>..</c> segments,
-/// nothing Windows cannot store or would reinterpret (device names, 8.3 short names, best-fit lookalikes of <c>/ \ . :</c>). The server additionally checks that the resolved path stays inside the repo folder.
+/// no <c>.git</c> segment, nothing Windows cannot store or would reinterpret (device names, 8.3 short names, best-fit lookalikes of <c>/ \ . :</c>). The server additionally checks that the resolved path stays inside the repo folder.
 /// </summary>
 public static class SyncPath
 {
@@ -17,6 +17,8 @@ public static class SyncPath
 
 	/// <summary>Suffix of the server's temporary upload files; reserved so a synced file can never collide with one.</summary>
 	public const string TempSuffix = ".aicp-tmp";
+
+	private const string GitSegment = ".git";
 
 	private static readonly char[] Forbidden = ['\\', ':', '*', '?', '"', '<', '>', '|'];
 
@@ -71,6 +73,12 @@ public static class SyncPath
 			if (segment.EndsWith('.') || segment.EndsWith(' '))
 			{
 				return $"Path '{path}' has a segment ending with a dot or a space.";
+			}
+
+			// Git metadata (a .git folder, or a submodule's .git file) is never synced: writing it on the server could make git run hooks.
+			if (segment.Equals(GitSegment, StringComparison.OrdinalIgnoreCase))
+			{
+				return $"Path '{path}' has a '{GitSegment}' segment; git metadata is never synced.";
 			}
 
 			if (segment.EndsWith(TempSuffix, StringComparison.OrdinalIgnoreCase))

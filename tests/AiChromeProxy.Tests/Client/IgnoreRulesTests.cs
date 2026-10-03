@@ -6,6 +6,8 @@ public sealed class IgnoreRulesTests
 {
 	[Theory]
 	[InlineData(".git/config")]
+	[InlineData("sub/.git")]
+	[InlineData(".GIT")]
 	[InlineData("node_modules/react/index.js")]
 	[InlineData("web/node_modules/x.js")]
 	[InlineData("src/App/bin/Release/App.dll")]

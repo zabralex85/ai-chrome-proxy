@@ -9,6 +9,8 @@ public sealed class SyncPathTests
 	[InlineData("src/App/Program.cs")]
 	[InlineData(".gitignore")]
 	[InlineData(".github/workflows/ci.yml")]
+	[InlineData(".gitattributes")]
+	[InlineData("src/x.git/a")]
 	[InlineData("docs/My File (1).md")]
 	[InlineData("con-fig/x.txt")]
 	[InlineData("CONSOLE.md")]
@@ -85,6 +87,10 @@ public sealed class SyncPathTests
 	[InlineData("a\uFF0E\uFF0E/b")]
 	[InlineData("C\uFF1Ax")]
 	[InlineData("a\u2044b")]
+	[InlineData(".git/config")]
+	[InlineData(".GIT/HEAD")]
+	[InlineData("sub/.git")]
+	[InlineData("a/.Git/hooks/x")]
 	public void Invalid(string? path)
 	{
 		Assert.NotNull(SyncPath.GetError(path));
@@ -135,6 +141,7 @@ public sealed class SyncPathTests
 	[InlineData("lpt0.log", "_lpt0_log")]
 	[InlineData("LPT\u00B2", "LPT_")]
 	[InlineData("CONIN$", "CONIN_")]
+	[InlineData(".git", "__git")]
 	public void RepoName_Sanitized(string folder, string expected)
 	{
 		var repo = RepoName.Sanitize(folder);
