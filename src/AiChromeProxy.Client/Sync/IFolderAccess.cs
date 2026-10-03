@@ -14,14 +14,15 @@ public interface IFolderAccess
 
 	/// <summary>
 	/// Walks the folder without descending into <paramref name="skipDirectories"/>; stops after <paramref name="maxEntries"/> entries
-	/// (files and folders). Entries that cannot be read are left out.
+	/// (files and folders). Entries that cannot be read are left out and reported in <see cref="FolderScan.Skipped"/>;
+	/// throws when the folder itself cannot be listed (it never looks empty instead).
 	/// </summary>
 	Task<FolderScan> ScanAsync(IReadOnlyList<string> skipDirectories, int maxEntries);
 
 	/// <summary>SHA-256 (lower-case hex) per path of the last scan, in order; null for a file that could not be read or is larger than <c>SyncLimits.MaxFileSize</c>.</summary>
 	Task<IReadOnlyList<string?>> HashAsync(IReadOnlyList<string> paths);
 
-	/// <summary>Text of a file of the last scan, or null when it is not there.</summary>
+	/// <summary>Text of a file of the last scan, or null when it is not there; throws when it is there but cannot be read.</summary>
 	Task<string?> ReadTextAsync(string path);
 
 	/// <summary>

@@ -36,6 +36,15 @@ public sealed class FakeFolder : IFolderAccess
 	/// <summary>Paths whose <see cref="ReadChunkAsync"/> fails like fsaccess.js does for a file that changed or vanished.</summary>
 	public HashSet<string> ReadFailures { get; } = new(StringComparer.Ordinal);
 
+	/// <summary>Files whose <c>getFile()</c> fails during the walk: left out of the scan and reported in <see cref="FolderScan.Skipped"/>, like fsaccess.js.</summary>
+	public HashSet<string> Unreadable { get; } = new(StringComparer.Ordinal);
+
+	/// <summary>Files the walk sees but that cannot be read afterwards: <see cref="HashAsync"/> returns null, <see cref="ReadTextAsync"/> throws.</summary>
+	public HashSet<string> HashFailures { get; } = new(StringComparer.Ordinal);
+
+	/// <summary>Folders (paths without a trailing <c>/</c>) whose listing fails: their files are left out, the prefix is reported as skipped.</summary>
+	public HashSet<string> UnlistedDirectories { get; } = new(StringComparer.Ordinal);
+
 	/// <summary>Path of every <see cref="ReadChunkAsync"/> call, in order.</summary>
 	public List<string> ChunkReads { get; } = [];
 
@@ -65,28 +74,38 @@ public sealed class FakeFolder : IFolderAccess
 			await ScanGate;
 		}
 
+		// Like fsaccess.js: a root that cannot be listed throws (the engine checks access), it never looks empty.
 		if (ScanFailure is not null)
 		{
 			throw ScanFailure;
 		}
 
 		var skip = skipDirectories.ToHashSet(StringComparer.OrdinalIgnoreCase);
+		var unlisted = UnlistedDirectories.Select(d => d + "/").ToList();
 		var files = Files.Select(f => new FileMeta(f.Key, f.Value.Length, 0))
 			.Concat(SizeOnly.Select(f => new FileMeta(f.Key, f.Value, 0)))
 			.Where(f => !f.Path.Split('/')[..^1].Any(skip.Contains))
+			.Where(f => !Unreadable.Contains(f.Path) && !unlisted.Any(d => f.Path.StartsWith(d, StringComparison.Ordinal)))
 			.ToList();
-		return new FolderScan(files, Truncated);
+		return new FolderScan(files, Truncated, [.. Unreadable, .. unlisted]);
 	}
 
 	public Task<IReadOnlyList<string?>> HashAsync(IReadOnlyList<string> paths)
 	{
 		Hashed.AddRange(paths);
-		IReadOnlyList<string?> hashes = [.. paths.Select(p => Files.TryGetValue(p, out var b) ? Convert.ToHexStringLower(SHA256.HashData(b)) : null)];
+		IReadOnlyList<string?> hashes = [.. paths.Select(p => Files.TryGetValue(p, out var b) && !HashFailures.Contains(p) ? Convert.ToHexStringLower(SHA256.HashData(b)) : null)];
 		return Task.FromResult(hashes);
 	}
 
-	public Task<string?> ReadTextAsync(string path) =>
-		Task.FromResult(Files.TryGetValue(path, out var b) ? Encoding.UTF8.GetString(b) : null);
+	public Task<string?> ReadTextAsync(string path)
+	{
+		if (HashFailures.Contains(path))
+		{
+			return Task.FromException<string?>(new JSException($"NotReadableError: '{path}' could not be read."));
+		}
+
+		return Task.FromResult(Files.TryGetValue(path, out var b) && !Unreadable.Contains(path) ? Encoding.UTF8.GetString(b) : null);
+	}
 
 	public Task<byte[]> ReadChunkAsync(string path, long offset, int length)
 	{

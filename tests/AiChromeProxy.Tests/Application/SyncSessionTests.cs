@@ -318,6 +318,34 @@ public sealed class SyncSessionTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Delta_DeletesEveryRemainingFile_BadRequest_NothingDeleted()
+	{
+		File.WriteAllText(Path.Combine(_repoRoot, "a.txt"), "a");
+		File.WriteAllText(Path.Combine(_repoRoot, "b.txt"), "b");
+		await OpenAsync();
+
+		var ex = await Assert.ThrowsAsync<EnvelopeException>(() =>
+			_session.HandleAsync(Envelope.Create(MessageTypes.SyncDelta, new SyncDeltaPayload(Repo, [], ["a.txt", "B.TXT"])), Ct));
+
+		Assert.Equal(ErrorCodes.BadRequest, ex.Code);
+		Assert.Equal("An empty folder would delete the whole mirror; refusing.", ex.Message);
+		Assert.True(File.Exists(Path.Combine(_repoRoot, "a.txt")));
+		Assert.True(File.Exists(Path.Combine(_repoRoot, "b.txt")));
+	}
+
+	[Fact]
+	public async Task Delta_DeletesEveryStoredFile_WhileUploadsPending_Applied()
+	{
+		File.WriteAllText(Path.Combine(_repoRoot, "old.txt"), "o");
+		await OpenAsync();
+		await _session.HandleAsync(Delta([Entry("new.txt", "n")]), Ct);
+
+		await _session.HandleAsync(Envelope.Create(MessageTypes.SyncDelta, new SyncDeltaPayload(Repo, [], ["old.txt"])), Ct);
+
+		Assert.False(File.Exists(Path.Combine(_repoRoot, "old.txt")));
+	}
+
+	[Fact]
 	public async Task ReopenOrDispose_DiscardsUnfinishedUpload()
 	{
 		await OpenAsync();

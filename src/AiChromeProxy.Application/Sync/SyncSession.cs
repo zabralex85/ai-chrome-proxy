@@ -15,6 +15,8 @@ namespace AiChromeProxy.Application.Sync;
 /// </summary>
 public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider time) : IDisposable
 {
+	private const string EmptyMirrorRefusal = "An empty folder would delete the whole mirror; refusing.";
+
 	private readonly HashSet<string> _manifestPaths = new(StringComparer.OrdinalIgnoreCase);
 	private readonly Dictionary<string, ManifestEntry> _expected = new(StringComparer.Ordinal);
 	private readonly SemaphoreSlim _gate = new(1, 1);
@@ -153,7 +155,7 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 				if (_manifestPaths.Count == 0 && stale.Count > 0)
 				{
 					// A browser that lost access to the folder must never wipe the mirror.
-					throw BadRequest("An empty folder would delete the whole mirror; refusing.");
+					throw BadRequest(EmptyMirrorRefusal);
 				}
 
 				stale.ForEach(p => store.Delete(repo, p));
@@ -199,6 +201,12 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 		if (upserts.FirstOrDefault(e => deleted.Contains(e.Path)) is { } both)
 		{
 			throw BadRequest($"'{both.Path}' is both upserted and deleted.");
+		}
+
+		// Like the empty-manifest guard: a delta may not leave a non-empty mirror with nothing (stored or awaited).
+		if (upserts.Count == 0 && deleted.Count > 0 && store.ListFiles(repo) is { Count: > 0 } stored && stored.Concat(_expected.Keys).All(deleted.Contains))
+		{
+			throw BadRequest(EmptyMirrorRefusal);
 		}
 
 		var need = await NeedAsync(repo, upserts, ct);

@@ -98,14 +98,16 @@ export async function requestAccess() {
 
 /**
  * Walks the folder, not descending into the given directory names. Returns { files: [{ path, size, modified }], truncated, skipped }.
- * Files and folders count toward maxEntries; unreadable entries and folders deeper than MAX_DEPTH are skipped (counted in skipped).
+ * Files and folders count toward maxEntries. skipped lists what the walk could not see, so C# never mistakes it for a deletion:
+ * unreadable files by path, and folders that could not be listed (or are deeper than MAX_DEPTH) as a prefix ending in '/'.
+ * Throws when the picked folder itself cannot be listed (lost access must never look like an empty folder).
  */
 export async function scan(skipDirectories, maxEntries) {
     const skip = new Set(skipDirectories.map(d => d.toLowerCase()));
     const found = new Map();
     const list = [];
     let seen = 0;
-    let skipped = 0;
+    const skipped = [];
     let truncated = false;
 
     async function walk(dir, prefix, depth) {
@@ -121,7 +123,7 @@ export async function scan(skipDirectories, maxEntries) {
                         continue;
                     }
                     if (depth >= MAX_DEPTH) {
-                        skipped++;
+                        skipped.push(path + '/');
                         continue;
                     }
                     await walk(handle, path + '/', depth + 1);
@@ -134,12 +136,15 @@ export async function scan(skipDirectories, maxEntries) {
                         found.set(path, handle);
                         list.push({ path, size: file.size, modified: file.lastModified });
                     } catch {
-                        skipped++;
+                        skipped.push(path);
                     }
                 }
             }
-        } catch {
-            skipped++; // the folder could not be listed (or stopped listing); what was found so far is kept
+        } catch (e) {
+            if (depth === 0) {
+                throw e;
+            }
+            skipped.push(prefix); // the folder could not be listed (or stopped listing); what was found so far is kept
         }
     }
 

@@ -151,7 +151,7 @@ public sealed class SyncEngineTests : IDisposable
 	}
 
 	[Fact]
-	public async Task CaseOnlyRename_DeltaNeverUpsertsAndDeletesTheSamePath()
+	public async Task CaseOnlyRename_NeverUpsertsAndDeletesTheSamePath_MirrorKeepsOldCasing()
 	{
 		_folder.Write("readme.md", "r");
 		await OpenAsync();
@@ -166,7 +166,9 @@ public sealed class SyncEngineTests : IDisposable
 		AssertNoDeltaUpsertsAndDeletesTheSamePath();
 		Assert.Equal(SyncPhase.Synced, _engine.Phase);
 		Assert.Empty(_engine.Errors);
-		Assert.Equal("r", File.ReadAllText(_server.PathOf(Repo, "README.md")));
+
+		// Known limitation: the case-insensitive mirror already has the content, so the file keeps its old name there.
+		Assert.Equal(["readme.md"], Directory.GetFiles(Path.Combine(_server.MirrorRoot, Repo)).Select(Path.GetFileName));
 	}
 
 	[Fact]
@@ -369,40 +371,334 @@ public sealed class SyncEngineTests : IDisposable
 	}
 
 	[Fact]
-	public async Task EmptyFolderOverFullMirror_Refused_BlockedUntilRestoreAccess()
+	public async Task EmptyFolderOverFullMirror_AfterReload_ServerRefuses_BlockedUntilRestoreAccess()
 	{
 		_folder.Write("a.txt", "a");
 		await OpenAsync();
-		await _engine.InitializeAsync();
 		await _engine.SyncOnceAsync(Ct);
+
+		// A reloaded page knows nothing about the mirror, so only the server's guard stands between an empty folder and a wipe.
+		var engine = new SyncEngine(_server.Transport, _folder, TimeProvider.System);
+		await engine.OpenFolderAsync();
 		_folder.Files.Clear();
-		_server.Reconnect();
+		await engine.SyncOnceAsync(Ct);
 
-		await _engine.SyncOnceAsync(Ct);
-
-		Assert.Equal(SyncPhase.Failed, _engine.Phase);
-		Assert.True(_engine.Blocked);
-		Assert.Contains("An empty folder would delete the whole mirror", _engine.Problem, StringComparison.Ordinal);
+		Assert.Equal(SyncPhase.Failed, engine.Phase);
+		Assert.True(engine.Blocked);
+		Assert.Contains("An empty folder would delete the whole mirror", engine.Problem, StringComparison.Ordinal);
 		Assert.True(File.Exists(_server.PathOf(Repo, "a.txt")));
 		_server.Transport.Sent.Clear();
 
-		await _engine.SyncOnceAsync(Ct);
+		await engine.SyncOnceAsync(Ct);
 
 		Assert.Empty(_server.Transport.Sent);
 
 		_folder.Write("a.txt", "back");
-		await _engine.RestoreAccessAsync();
+		await engine.RestoreAccessAsync();
 
+		Assert.False(engine.Blocked);
+
+		await engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Synced, engine.Phase);
+		Assert.Equal("back", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
+	}
+
+	[Fact]
+	public async Task FolderLooksEmpty_WhileFilesAreKnown_PassRefused_NothingDeleted()
+	{
+		_folder.Write("a.txt", "a");
+		_folder.Write("b.txt", "b");
+		await OpenAsync();
+		await _engine.InitializeAsync();
+		await _engine.SyncOnceAsync(Ct);
+		_server.Transport.Sent.Clear();
+		_folder.Files.Clear();
+
+		await _engine.SyncOnceAsync(Ct);
+		_server.Reconnect();
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Failed, _engine.Phase);
+		Assert.Equal("The folder looks empty; nothing was deleted. Check access or pick the folder again.", _engine.Problem);
+		Assert.Empty(_server.Transport.Sent);
+		Assert.True(File.Exists(_server.PathOf(Repo, "a.txt")));
+		Assert.True(File.Exists(_server.PathOf(Repo, "b.txt")));
+	}
+
+	[Theory]
+	[InlineData(false)]
+	[InlineData(true)]
+	public async Task KnownFileTurnsUnreadable_NeitherDeletedNorUploaded_DeltaOrFullManifest(bool skippedByWalk)
+	{
+		_folder.Write("a.txt", "a");
+		_folder.Write("b.txt", "b");
+		await OpenAsync();
+		await _engine.InitializeAsync();
+		await _engine.SyncOnceAsync(Ct);
+		_folder.ChunkReads.Clear();
+		(skippedByWalk ? _folder.Unreadable : _folder.HashFailures).Add("a.txt");
+		_folder.Write("b.txt", "b2");
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Synced, _engine.Phase);
+		Assert.Equal(FileSyncState.Error, _engine.FileAt("a.txt")!.State);
+		Assert.Equal("a", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
+		Assert.Equal("b2", File.ReadAllText(_server.PathOf(Repo, "b.txt")));
+
+		_server.Reconnect();
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Synced, _engine.Phase);
+		var manifest = _server.Transport.Sent.Last(e => e.Type == MessageTypes.SyncManifest).Payload.Deserialize<SyncManifestPayload>(JsonSerializerOptions.Web)!;
+		Assert.Contains(new ManifestEntry("a.txt", 1, Sha("a")), manifest.Entries);
+		Assert.Equal("a", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
+		Assert.DoesNotContain("a.txt", _folder.ChunkReads);
+		AssertNoDeltaDeletes();
+	}
+
+	[Fact]
+	public async Task UnlistedFolder_ItsKnownFilesNeitherDeletedNorUploaded()
+	{
+		_folder.Write("ok.txt", "ok");
+		_folder.Write("locked/x.txt", "x");
+		await OpenAsync();
+		await _engine.InitializeAsync();
+		await _engine.SyncOnceAsync(Ct);
+		_folder.UnlistedDirectories.Add("locked");
+
+		await _engine.SyncOnceAsync(Ct);
+		_server.Reconnect();
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Synced, _engine.Phase);
+		Assert.Equal("x", File.ReadAllText(_server.PathOf(Repo, "locked/x.txt")));
+		Assert.Equal(FileSyncState.Error, _engine.FileAt("locked/x.txt")!.State);
+		Assert.Contains(_engine.Errors, e => e.StartsWith("locked/: ", StringComparison.Ordinal));
+		AssertNoDeltaDeletes();
+	}
+
+	[Fact]
+	public async Task UnreadableUnknownFile_AfterReload_NoFullManifest_NothingDeleted()
+	{
+		_folder.Write("a.txt", "a");
+		_folder.Write("b.txt", "b");
+		await OpenAsync();
+		await _engine.SyncOnceAsync(Ct);
+
+		var engine = new SyncEngine(_server.Transport, _folder, TimeProvider.System);
+		await engine.OpenFolderAsync();
+		_folder.Unreadable.Add("a.txt");
+		_folder.Write("c.txt", "c");
+		_server.Transport.Sent.Clear();
+		await engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Synced, engine.Phase);
+		Assert.DoesNotContain(MessageTypes.SyncManifest, SentTypes());
+		Assert.Equal("a", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
+		Assert.Equal("c", File.ReadAllText(_server.PathOf(Repo, "c.txt")));
+		AssertNoDeltaDeletes();
+	}
+
+	[Fact]
+	public async Task KnownFileGrewPastLimit_MarkedTooLarge_NotDeleted()
+	{
+		_folder.Write("a.txt", "a");
+		_folder.Write("b.txt", "b");
+		await OpenAsync();
+		await _engine.InitializeAsync();
+		await _engine.SyncOnceAsync(Ct);
+		_folder.Files.Remove("a.txt");
+		_folder.SizeOnly["a.txt"] = SyncLimits.MaxFileSize + 1;
+
+		await _engine.SyncOnceAsync(Ct);
+		_server.Reconnect();
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Synced, _engine.Phase);
+		Assert.Equal(FileSyncState.TooLarge, _engine.FileAt("a.txt")!.State);
+		Assert.DoesNotContain("a.txt", _folder.Hashed.Skip(2));
+		Assert.Equal("a", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
+		AssertNoDeltaDeletes();
+	}
+
+	[Theory]
+	[InlineData(false)]
+	[InlineData(true)]
+	public async Task UnreadableGitignore_PassAborted_NothingSent(bool skippedByWalk)
+	{
+		_folder.Write(".gitignore", "secret.txt\n");
+		_folder.Write("secret.txt", "s");
+		(skippedByWalk ? _folder.Unreadable : _folder.HashFailures).Add(".gitignore");
+		await OpenAsync();
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Failed, _engine.Phase);
+		Assert.Contains(".gitignore could not be read", _engine.Problem, StringComparison.Ordinal);
+		Assert.Empty(_server.Transport.Sent);
+		Assert.Empty(_folder.Hashed);
+	}
+
+	[Fact]
+	public async Task ReconnectDuringUploads_RemainingFilesNotAttempted_NextPassResends()
+	{
+		_folder.Write("a.txt", "a");
+		_folder.Write("b.txt", "b");
+		_folder.Write("c.txt", "c");
+		await OpenAsync();
+		await _engine.InitializeAsync();
+		var real = _server.Transport.Reply!;
+		var reconnected = false;
+		_server.Transport.Reply = async e =>
+		{
+			var reply = await real(e);
+			if (reply?.Type == MessageTypes.SyncStored && !reconnected)
+			{
+				reconnected = true;
+				_server.Reconnect();
+			}
+
+			return reply;
+		};
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(["a.txt"], _folder.ChunkReads);
+		Assert.Equal(SyncPhase.Failed, _engine.Phase);
+		Assert.NotNull(_engine.Problem);
 		Assert.False(_engine.Blocked);
 
 		await _engine.SyncOnceAsync(Ct);
 
 		Assert.Equal(SyncPhase.Synced, _engine.Phase);
-		Assert.Equal("back", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
+		Assert.Equal(["a.txt", "b.txt", "c.txt"], _folder.ChunkReads);
+		Assert.Equal("c", File.ReadAllText(_server.PathOf(Repo, "c.txt")));
 	}
 
 	[Fact]
-	public async Task FileChangedDuringUpload_MarkedError_OthersSynced_RetriedNextScan()
+	public async Task FolderChangedWhileOpening_OldCycleStops_NewFolderSyncedUnderItsName()
+	{
+		_folder.Write("a.txt", "a");
+		await OpenAsync();
+		var real = _server.Transport.Reply!;
+		_server.Transport.Reply = async e =>
+		{
+			if (e.Type == MessageTypes.SyncOpen && _folder.PickResult == "My Repo")
+			{
+				_folder.PickResult = "Other";
+				await _engine.OpenFolderAsync();
+			}
+
+			return await real(e);
+		};
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal([MessageTypes.SyncOpen], SentTypes());
+		Assert.Null(_engine.Problem);
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Synced, _engine.Phase);
+		Assert.Equal("Other", _server.Transport.Sent[1].Payload.Deserialize<SyncOpenPayload>(JsonSerializerOptions.Web)!.Repo);
+		Assert.True(File.Exists(_server.PathOf("Other", "a.txt")));
+		Assert.False(File.Exists(_server.PathOf(Repo, "a.txt")));
+	}
+
+	[Fact]
+	public async Task ManifestFailsWithInternalError_NotBlocked_RetriedNextPass()
+	{
+		_folder.Write("a.txt", "a");
+		await OpenAsync();
+		var refusals = 0;
+		RefuseWhen(e => e.Type == MessageTypes.SyncManifest && refusals++ == 0, ErrorCodes.Internal, "Server is restarting.");
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.False(_engine.Blocked);
+		Assert.Equal(SyncPhase.Failed, _engine.Phase);
+		Assert.Equal("Server is restarting.", _engine.Problem);
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Synced, _engine.Phase);
+		Assert.True(File.Exists(_server.PathOf(Repo, "a.txt")));
+	}
+
+	[Fact]
+	public async Task PersistentUploadFailure_BackedOffFiveMinutes_LoggedOnce()
+	{
+		var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 3, 12, 0, 0, TimeSpan.Zero));
+		var engine = new SyncEngine(_server.Transport, _folder, clock);
+		_folder.Write("a.txt", "a");
+		_folder.Write("b.txt", "b");
+		_folder.ReadFailures.Add("a.txt");
+		await engine.OpenFolderAsync();
+
+		await engine.SyncOnceAsync(Ct);
+		var sent = _server.Transport.Sent.Count;
+		clock.Advance(SyncEngine.ScanInterval);
+		await engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(["a.txt", "b.txt"], _folder.ChunkReads);
+		Assert.Equal(sent, _server.Transport.Sent.Count);
+		Assert.Equal(FileSyncState.Error, engine.FileAt("a.txt")!.State);
+		Assert.Contains("could not be read", engine.FileAt("a.txt")!.Error, StringComparison.Ordinal);
+
+		clock.Advance(SyncEngine.FailureBackoff);
+		await engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(["a.txt", "b.txt", "a.txt"], _folder.ChunkReads);
+		Assert.Single(engine.Activity, a => a.Kind == SyncActivityKind.Error);
+
+		_folder.ReadFailures.Clear();
+		clock.Advance(SyncEngine.FailureBackoff);
+		await engine.SyncOnceAsync(Ct);
+
+		Assert.Equal("a", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
+		Assert.Equal(FileSyncState.Synced, engine.FileAt("a.txt")!.State);
+	}
+
+	[Fact]
+	public async Task Activity_FullSyncWithNothingToUpload_AlreadyInSync()
+	{
+		_folder.Write("a.txt", "a");
+		_folder.Write("b.txt", "b");
+		await OpenAsync();
+		await _engine.SyncOnceAsync(Ct);
+
+		var engine = new SyncEngine(_server.Transport, _folder, TimeProvider.System);
+		await engine.OpenFolderAsync();
+		await engine.SyncOnceAsync(Ct);
+
+		Assert.Equal("Already in sync (2 files).", engine.Activity[0].Text);
+		Assert.Equal(SyncActivityKind.PassFinished, engine.Activity[0].Kind);
+	}
+
+	[Fact]
+	public async Task Errors_SameListUntilStatesChange()
+	{
+		_folder.Write("ok.txt", "ok");
+		_folder.Write("trailing.", "x");
+		await OpenAsync();
+		await _engine.SyncOnceAsync(Ct);
+		var errors = _engine.Errors;
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Same(errors, _engine.Errors);
+
+		_folder.Write("also.", "y");
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.NotSame(errors, _engine.Errors);
+		Assert.Equal(2, _engine.Errors.Count);
+	}
+
+	[Fact]
+	public async Task FileChangedDuringUpload_MarkedError_OthersSynced_NewContentSentNextScan()
 	{
 		_folder.Write("a.txt", "aaaa");
 		_folder.Write("b.txt", "bbbb");
@@ -418,9 +714,10 @@ public sealed class SyncEngineTests : IDisposable
 		Assert.False(File.Exists(_server.PathOf(Repo, "a.txt")));
 
 		_folder.ReadOverride.Clear();
+		_folder.Write("a.txt", "AAAA");
 		await _engine.SyncOnceAsync(Ct);
 
-		Assert.Equal("aaaa", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
+		Assert.Equal("AAAA", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
 		Assert.All(_engine.Files, f => Assert.Equal(FileSyncState.Synced, f.State));
 	}
 
@@ -437,7 +734,7 @@ public sealed class SyncEngineTests : IDisposable
 	}
 
 	[Fact]
-	public async Task ReadChunkFails_FileMarkedError_OthersSynced_RetriedOnceNextScan()
+	public async Task ReadChunkFails_FileMarkedError_OthersSynced_RetriedOnceChanged()
 	{
 		_folder.Write("a.txt", "a");
 		_folder.Write("b.txt", "b");
@@ -455,10 +752,11 @@ public sealed class SyncEngineTests : IDisposable
 		Assert.Equal(["a.txt", "b.txt"], _folder.ChunkReads);
 
 		_folder.ReadFailures.Clear();
+		_folder.Write("a.txt", "a2");
 		await _engine.SyncOnceAsync(Ct);
 
 		Assert.Equal(["a.txt", "b.txt", "a.txt"], _folder.ChunkReads);
-		Assert.Equal("a", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
+		Assert.Equal("a2", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
 		Assert.All(_engine.Files, f => Assert.Equal(FileSyncState.Synced, f.State));
 	}
 
@@ -666,7 +964,14 @@ public sealed class SyncEngineTests : IDisposable
 		Assert.True(condition());
 	}
 
+	private static string Sha(string text) => Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(text)));
+
 	private List<string> SentTypes() => [.. _server.Transport.Sent.Select(e => e.Type)];
+
+	private void AssertNoDeltaDeletes() =>
+		Assert.All(
+			_server.Transport.Sent.Where(e => e.Type == MessageTypes.SyncDelta),
+			e => Assert.Empty(e.Payload.Deserialize<SyncDeltaPayload>(JsonSerializerOptions.Web)!.Deletes));
 
 	private void AssertNoDeltaUpsertsAndDeletesTheSamePath()
 	{
