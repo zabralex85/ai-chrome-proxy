@@ -114,6 +114,21 @@ Verified on a prototype before planning; these override the sections above where
 14. The tests project targets `net10.0-windows` (it references the tray); Avalonia 12.1.3 (stable).
 15. Never name a source folder `Logs`, `Log`, `Release`, `Debug`, `bin` or `obj` — the Visual Studio `.gitignore` silently drops them.
 
+## Changes after the first real install (2026-10-03)
+
+**Problem.** `Setup.exe` run over an existing install fails with "Failed to remove existing application directory". Velopack's Setup kills the processes it can see in the app folder (the tray), then renames the folder; the service process (started by the SCM, higher integrity) is not killed, keeps `current\server\*.exe` and `cloudflared.exe` open, and the rename is denied. Velopack has no hook that runs before that rename.
+
+**Decision: the service runs from a copy outside the app folder.**
+
+- Service binary: `<DataDir>\server\AiChromeProxy.Server.exe` (`%ProgramData%\AiChromeProxy\server`, inside the protected data directory; `<DataDir>` is always the default here — `AICP_DATA_DIR` is ignored, as in the elevated install). The app folder `current\server` stays the package layout and the source of the copy.
+- Copy ("sync"): `current\server` → `<DataDir>\server.new` (complete copy), then swap: `server` → `server.old`, `server.new` → `server`, delete `server.old`. The service must be stopped first (its files are in use). A failed copy leaves the old `server` in place.
+- **Install service…** (elevated): after preparing the data directory, stop the service if it runs, sync, create or reconfigure the service with the new binary path, start it if it was running or newly created.
+- Velopack **install** hook (runs in the new version after Setup extracted it, not elevated): if the service exists and points to `<DataDir>\server`: remember whether it was running, stop it (the user has SERVICE_STOP), sync, start it if it was running. Nothing if the service is not installed.
+- Velopack **after-update** hook: same sync; start rule unchanged (start only when the pending-update marker exists, i.e. the update stopped it). `UpdateOrchestrator` keeps stopping the service before apply (harmless; keeps the marker semantics).
+- **Uninstall** (elevated, and the before-uninstall hook): delete the service as today, then delete `<DataDir>\server` (`<DataDir>` config and logs are kept).
+- **Migration:** a service installed by an older version still points to `current\server`. Hooks leave it alone (old behaviour: after-update starts it from `current\server`). The tray shows "Run Install service… once to move the service out of the app folder (needed to install updates with Setup.exe)" while the service's binary path is not `<DataDir>\server\…`.
+- Testable decisions (paths, sync order, start rules, migration detection) live in tested code; the file copy runs on temp directories in tests; SCM calls stay behind `IServiceControl` (gains: the configured binary path).
+
 ## Done when
 
 - Tag `v0.1.0` produces a GitHub Release with `Setup.exe`.
