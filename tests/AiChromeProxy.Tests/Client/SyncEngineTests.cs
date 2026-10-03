@@ -1370,6 +1370,49 @@ public sealed class SyncEngineTests : IDisposable
 		Assert.Empty(mismatches);
 	}
 
+	[Fact]
+	public async Task BrowserWithoutFolderAccess_Unsupported_ExplainsAndNeverSyncs()
+	{
+		_folder.Supported = false;
+		_folder.Remembered = true;
+
+		await _engine.InitializeAsync();
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(FolderStatus.Unsupported, _engine.Folder);
+		Assert.Equal(SyncEngine.Unsupported, _engine.Problem);
+		Assert.Contains(_engine.Activity, a => a.Text == SyncEngine.Unsupported);
+		Assert.Empty(_server.Transport.Sent);
+		Assert.Equal(0, _folder.Scans);
+	}
+
+	[Fact]
+	public async Task PickerFails_ProblemShown_NothingThrown()
+	{
+		_folder.ClickFailure = new JSException("SecurityError: Blocked by policy.\n    at pick (fsaccess.js:94:31)");
+
+		await _engine.OpenFolderAsync();
+
+		Assert.Equal(FolderStatus.None, _engine.Folder);
+		Assert.Equal("Could not open the folder: SecurityError: Blocked by policy.", _engine.Problem);
+		Assert.Contains(_engine.Activity, a => a.Kind == SyncActivityKind.Error && a.Text == _engine.Problem);
+	}
+
+	[Fact]
+	public async Task AccessRequestsFail_ProblemShown_NothingThrown()
+	{
+		_folder.Write("a.txt", "a");
+		await OpenAsync();
+		_folder.ClickFailure = new JSException("NotAllowedError: Denied.");
+
+		await _engine.RestoreAccessAsync();
+		Assert.Equal("Could not get access to the folder: NotAllowedError: Denied.", _engine.Problem);
+
+		await _engine.AllowWritingAsync();
+		Assert.Equal("Could not get write access to the folder: NotAllowedError: Denied.", _engine.Problem);
+		Assert.False(_engine.CanWrite);
+	}
+
 	private static string? AggregateMismatch(SyncEngine engine)
 	{
 		var synced = engine.Files.Where(f => f.State == FileSyncState.Synced).ToList();

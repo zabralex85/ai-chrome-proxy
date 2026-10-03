@@ -18,6 +18,12 @@ public sealed class FakeFolder : IFolderAccess
 	/// <summary>What <see cref="PickAsync"/> returns; null = the user cancelled.</summary>
 	public string? PickResult { get; set; } = "My Repo";
 
+	/// <summary>What <see cref="IsSupportedAsync"/> answers: false like a browser without the File System Access API.</summary>
+	public bool Supported { get; set; } = true;
+
+	/// <summary>Thrown by <see cref="PickAsync"/>, <see cref="RequestAccessAsync"/> and <see cref="RequestWriteAccessAsync"/> (e.g. a policy refusing the picker).</summary>
+	public Exception? ClickFailure { get; set; }
+
 	/// <summary>Whether <see cref="RestoreAsync"/> finds a remembered folder.</summary>
 	public bool Remembered { get; set; }
 
@@ -77,7 +83,9 @@ public sealed class FakeFolder : IFolderAccess
 
 	public void Write(string path, string text) => Files[path] = Encoding.UTF8.GetBytes(text);
 
-	public Task<string?> PickAsync() => Task.FromResult(PickResult);
+	public Task<bool> IsSupportedAsync() => Task.FromResult(Supported);
+
+	public Task<string?> PickAsync() => ClickFailure is null ? Task.FromResult(PickResult) : Task.FromException<string?>(ClickFailure);
 
 	public Task<FolderGrant?> RestoreAsync() => Task.FromResult(Remembered ? new FolderGrant(Name, Granted) : null);
 
@@ -85,6 +93,11 @@ public sealed class FakeFolder : IFolderAccess
 
 	public Task<bool> RequestAccessAsync()
 	{
+		if (ClickFailure is not null)
+		{
+			return Task.FromException<bool>(ClickFailure);
+		}
+
 		Granted = true;
 		return Task.FromResult(true);
 	}
@@ -164,6 +177,11 @@ public sealed class FakeFolder : IFolderAccess
 
 	public Task<bool> RequestWriteAccessAsync()
 	{
+		if (ClickFailure is not null)
+		{
+			return Task.FromException<bool>(ClickFailure);
+		}
+
 		WriteAccess = true;
 		return Task.FromResult(true);
 	}

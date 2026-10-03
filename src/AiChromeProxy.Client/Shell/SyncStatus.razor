@@ -51,6 +51,7 @@
     {
         FolderStatus.None => "folder",
         FolderStatus.NeedsPermission => "lock",
+        FolderStatus.Unsupported => "warning",
         _ => Engine.Phase switch
         {
             SyncPhase.Synced => "check",
@@ -59,7 +60,7 @@
         },
     };
 
-    private string Tone => Engine.Folder == FolderStatus.NeedsPermission || Engine.Phase == SyncPhase.Failed
+    private string Tone => Engine.Folder is FolderStatus.NeedsPermission or FolderStatus.Unsupported || Engine.Phase == SyncPhase.Failed
         ? "warn"
         : Engine.Folder == FolderStatus.Ready && Engine.Phase == SyncPhase.Synced ? "ok" : "muted";
 

@@ -63,7 +63,17 @@ public sealed partial class SyncEngine
 	/// <summary>Asks for write access (call it straight from the <b>Allow writing</b> click); the next cycle, started now, writes what waits.</summary>
 	public async Task AllowWritingAsync()
 	{
-		CanWrite = await folder.RequestWriteAccessAsync();
+		try
+		{
+			CanWrite = await folder.RequestWriteAccessAsync();
+		}
+		catch (JSException ex)
+		{
+			CanWrite = false;
+			ClickFailed("Could not get write access to the folder", ex);
+			return;
+		}
+
 		Raise();
 		Wake();
 	}
