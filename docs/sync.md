@@ -49,7 +49,7 @@ After the last manifest page the server deletes mirror files that are neither in
 
 ## Back channel
 
-The server keeps, per file, a **base**: the last SHA-256 both sides agreed on, in SQLite (WAL) at `<DataDir>icp.db` (dev: `dataicp.db` under the content root; `Projects:Database` overrides). Each file is decided three ways from the browser's hash, the mirror's hash and the base: equal → in sync; the mirror still at the base → the browser's change is uploaded (or deleted); the browser still at the base → the server's change is pushed; both changed → pushed as a conflict candidate. Before a repo's first full manifest after upgrading, the browser wins as in 3a; afterwards the three-way rule applies. Bases survive a service restart.
+The server keeps, per file, a **base**: the last SHA-256 both sides agreed on, in SQLite (WAL) at `<DataDir>\aicp.db` (dev: `data\aicp.db` under the content root; `Projects:Database` overrides). Each file is decided three ways from the browser's hash, the mirror's hash and the base: equal → in sync; the mirror still at the base → the browser's change is uploaded (or deleted); the browser still at the base → the server's change is pushed; both changed → pushed as a conflict candidate. Before a repo's first full manifest after upgrading, the browser wins as in 3a; afterwards the three-way rule applies. Bases survive a service restart.
 
 1. A `FileSystemWatcher` on the mirror (500 ms quiet, at most 3 s) notices a server edit or delete and pushes `sync.remote`.
 2. The browser fetches the file (`sync.fetch`), checks the hash, re-hashes its own file after the fetch and writes only if the file is still the agreed version; then it sends `sync.ack`. If the file changed meanwhile, it is a **conflict**.
@@ -91,7 +91,7 @@ A file on the mirror is deleted only when a scan positively saw it absent. A fil
 - **Same folder name:** two folders with the same name (after sanitizing) share one mirror folder, and each sync deletes the other's files. Open one at a time, or rename a folder.
 - **Check-then-write window:** the browser writes a pushed change if its file is still the agreed version; a save in the few milliseconds between that check and the write is lost.
 - **Upload commit window:** a mirror file changing in the milliseconds between the server's check and the commit of an upload is not detected (the next pass pushes it as a conflict candidate).
-- **Conflicts show text only;** the preview is the server's text only.
+- **Conflicts show no diff:** the Conflict tab previews only the server's version as text (up to 256 KB); a diff view comes with the code navigator.
 - One folder at a time.
 
 ## Where the mirror lives

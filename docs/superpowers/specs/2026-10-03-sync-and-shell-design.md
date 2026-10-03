@@ -74,6 +74,6 @@ A case-only rename keeps the old casing on the mirror. Two folders with the same
 - The shell UI replaces the status page; E2E covers it.
 - CI green; gate ≥ 85%.
 
-## Out of scope (3b and later)
+## Out of scope (3b and later; 3b is done: [back channel](2026-10-03-back-channel-design.md))
 
 Writing to the client, hash-guard, conflict UI (3b); file viewer/Monaco, search (code navigator); chat (Claude chat); multiple folders open at once; `FileSystemObserver`; block-level deltas.
