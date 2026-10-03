@@ -53,6 +53,31 @@ public sealed class ServerChangesUiTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Banner_ManyServerDeletes_ApplyAllEvenWithAutomaticApply()
+	{
+		_folder.WriteAccess = true;
+		var paths = Enumerable.Range(0, 30).Select(i => $"f{i:00}.txt").ToList();
+		paths.ForEach(p => _folder.Write(p, p));
+		await SyncedAsync();
+		var deleted = paths.Take(SyncEngine.MassDeleteCount + 1).ToList();
+		_server.Transport.Push(Envelope.Create(
+			MessageTypes.SyncRemote,
+			new SyncRemotePayload(Repo, [.. deleted.Select(p => new RemoteChange(p, null, 0, Sha(p)))])));
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.True(_engine.Settings.ApplyServerChangesOrDefault);
+		var banner = RemoteBanner.Of(_engine)!;
+		Assert.Equal(("21 server changes waiting", "Apply all"), (banner.Text, banner.Button));
+		Assert.Equal(30, _folder.Files.Count);
+
+		await _engine.ApplyAsync(null);
+
+		Assert.Equal(30 - deleted.Count, _folder.Files.Count);
+		Assert.Null(RemoteBanner.Of(_engine));
+	}
+
+	[Fact]
 	public async Task Banner_CountsOnlyWaitingChanges_NotConflicts()
 	{
 		await ConflictAsync();

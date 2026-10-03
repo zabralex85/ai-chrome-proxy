@@ -14,6 +14,15 @@ namespace AiChromeProxy.Client.Sync;
 /// </summary>
 public sealed partial class SyncEngine
 {
+	/// <summary>
+	/// Waiting server deletions beyond this many (and beyond <see cref="MassDeleteShare"/> of the synced files) are held for <b>Apply all</b>,
+	/// even with automatic apply on: a mistake on the server must not empty the folder unseen.
+	/// </summary>
+	public const int MassDeleteCount = 20;
+
+	/// <summary>Share of the synced files that waiting server deletions must also exceed to be held (see <see cref="MassDeleteCount"/>).</summary>
+	public const double MassDeleteShare = 0.10;
+
 	/// <summary>Largest server file <see cref="ServerTextAsync"/> previews.</summary>
 	private const int MaxPreviewSize = 256 * 1024;
 
@@ -24,6 +33,9 @@ public sealed partial class SyncEngine
 
 	private IReadOnlyList<RemoteItem> _remoteList = [];
 
+	/// <summary>Whether the deletions held now were logged (once per hold).</summary>
+	private bool _heldLogged;
+
 	/// <summary>The rules of the last scan (null before the first): a server change of a path they exclude is never written.</summary>
 	private IgnoreRules? _rules;
 
@@ -32,6 +44,15 @@ public sealed partial class SyncEngine
 
 	/// <summary>Items of <see cref="Remote"/> in <see cref="RemoteStatus.Conflict"/>.</summary>
 	public int ConflictCount { get; private set; }
+
+	/// <summary>
+	/// Whether the waiting server deletions are more than <see cref="MassDeleteCount"/> and more than <see cref="MassDeleteShare"/> of the
+	/// synced files: automatic apply leaves them for <b>Apply all</b>.
+	/// </summary>
+	public bool DeletionsHeld =>
+		_remoteList.Count(r => r.Status == RemoteStatus.Waiting && r.Change.Sha256 is null) is var deletes
+		&& deletes > MassDeleteCount
+		&& deletes > _known.Count * MassDeleteShare;
 
 	/// <summary>The browser's last answer to "may the folder be written".</summary>
 	public bool CanWrite { get; private set; }
@@ -53,7 +74,7 @@ public sealed partial class SyncEngine
 		CanWrite = await folder.HasWriteAccessAsync();
 		if (CanWrite)
 		{
-			await ApplyWaitingAsync(repo, generation, path, CancellationToken.None);
+			await ApplyWaitingAsync(repo, generation, c => path is null || c.Path == path, CancellationToken.None);
 		}
 		else
 		{
@@ -171,7 +192,10 @@ public sealed partial class SyncEngine
 		Wake();
 	}
 
-	/// <summary>At the start of a cycle: applies the waiting changes when the folder may be written and automatic apply is on.</summary>
+	/// <summary>
+	/// At the start of a cycle: applies the waiting changes when the folder may be written and automatic apply is on; many deletions
+	/// (<see cref="DeletionsHeld"/>) keep waiting for <b>Apply all</b>.
+	/// </summary>
 	private async Task ApplyRemoteAsync(int generation, CancellationToken ct)
 	{
 		if (_repo is not { } repo || !_remoteList.Any(r => r.Status == RemoteStatus.Waiting))
@@ -182,7 +206,15 @@ public sealed partial class SyncEngine
 		CanWrite = await folder.HasWriteAccessAsync();
 		if (CanWrite && Settings.ApplyServerChangesOrDefault)
 		{
-			await ApplyWaitingAsync(repo, generation, null, ct);
+			var held = DeletionsHeld;
+			if (held && !_heldLogged)
+			{
+				var deletes = _remoteList.Count(r => r.Status == RemoteStatus.Waiting && r.Change.Sha256 is null);
+				Log(SyncActivityKind.Received, $"The server deleted {deletes} files; review and click Apply all to delete them here.");
+			}
+
+			_heldLogged = held;
+			await ApplyWaitingAsync(repo, generation, c => !held || c.Sha256 is not null, ct);
 		}
 	}
 
@@ -191,13 +223,13 @@ public sealed partial class SyncEngine
 	/// (absent when there is none) → write or delete, then acknowledge; anything else → conflict. Never writes a path this folder excludes
 	/// or <see cref="SyncPath"/> rejects. Losing write access stops it with the rest still waiting.
 	/// </summary>
-	private async Task ApplyWaitingAsync(string repo, int generation, string? only, CancellationToken ct)
+	private async Task ApplyWaitingAsync(string repo, int generation, Func<RemoteChange, bool> select, CancellationToken ct)
 	{
 		List<string> received = [];
 		List<string> deleted = [];
 		try
 		{
-			foreach (var item in _remoteList.Where(r => r.Status == RemoteStatus.Waiting && (only is null || r.Change.Path == only)))
+			foreach (var item in _remoteList.Where(r => r.Status == RemoteStatus.Waiting && select(r.Change)))
 			{
 				EnsureCurrent(generation, repo);
 				var change = item.Change;

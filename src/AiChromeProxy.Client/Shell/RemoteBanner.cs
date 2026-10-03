@@ -10,7 +10,7 @@ public sealed record RemoteBanner(string Text, string Button)
 	public const string AllowWriting = "Allow writing";
 	public const string ApplyAll = "Apply all";
 
-	/// <summary>Null when nothing waits, or when the next cycle writes it anyway (write access and automatic apply).</summary>
+	/// <summary>Null when nothing waits, or when the next cycle writes it anyway (write access and automatic apply, unless deletions are held).</summary>
 	public static RemoteBanner? Of(SyncEngine engine)
 	{
 		var waiting = engine.Remote.Count(r => r.Status == RemoteStatus.Waiting);
@@ -24,6 +24,6 @@ public sealed record RemoteBanner(string Text, string Button)
 			return new RemoteBanner(Format.ServerChanges(waiting) + " — ", AllowWriting);
 		}
 
-		return engine.Settings.ApplyServerChangesOrDefault ? null : new RemoteBanner(Format.ServerChanges(waiting) + " waiting", ApplyAll);
+		return engine.Settings.ApplyServerChangesOrDefault && !engine.DeletionsHeld ? null : new RemoteBanner(Format.ServerChanges(waiting) + " waiting", ApplyAll);
 	}
 }

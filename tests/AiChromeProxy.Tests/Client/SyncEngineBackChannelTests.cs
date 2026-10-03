@@ -341,6 +341,47 @@ public sealed class SyncEngineBackChannelTests : IDisposable
 		Assert.Empty(_engine.Remote);
 	}
 
+	[Theory]
+	[InlineData(30, 21, true)]
+	[InlineData(30, 20, false)]
+	[InlineData(250, 21, false)]
+	public async Task ManyServerDeletes_HeldForApplyAll_EditsStillApplied(int files, int deletes, bool held)
+	{
+		_folder.WriteAccess = true;
+		var paths = Enumerable.Range(0, files).Select(i => $"f{i:000}.txt").ToList();
+		paths.ForEach(p => _folder.Write(p, p));
+		await SyncedAsync();
+		var deleted = paths.Take(deletes).ToList();
+		deleted.ForEach(p => File.Delete(_server.PathOf(Repo, p)));
+		File.WriteAllText(_server.PathOf(Repo, paths[^1]), "edited on the server");
+		await _server.Watcher.RaiseAsync(Repo, [.. deleted, paths[^1]]);
+
+		await _engine.SyncOnceAsync(Ct);
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal("edited on the server", Text(paths[^1]));
+		Assert.Equal(held, _engine.DeletionsHeld);
+		var message = $"The server deleted {deletes} files; review and click Apply all to delete them here.";
+		Assert.Equal(held ? 1 : 0, _engine.Activity.Count(a => a.Text == message));
+		if (!held)
+		{
+			Assert.Equal(files - deletes, _folder.Files.Count);
+			Assert.Empty(_engine.Remote);
+			return;
+		}
+
+		Assert.Equal(files, _folder.Files.Count);
+		Assert.Equal(deleted, _engine.Remote.Select(r => r.Change.Path));
+		Assert.All(_engine.Remote, r => Assert.Equal((RemoteStatus.Waiting, null), (r.Status, r.Change.Sha256)));
+
+		await _engine.ApplyAsync(null);
+
+		Assert.Equal(files - deletes, _folder.Files.Count);
+		Assert.Empty(_engine.Remote);
+		Assert.False(_engine.DeletionsHeld);
+		Assert.DoesNotContain(_server.Projects.GetBases(Repo).Keys, deleted.Contains);
+	}
+
 	[Fact]
 	public async Task MirrorWiped_FolderKeepsEveryFile_UploadedAgain()
 	{
