@@ -81,6 +81,7 @@ public partial class App : Avalonia.Application
 		var appVersion = typeof(App).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
 		var vm = new TrayViewModel(service, admin, updates, ServiceVersion, appVersion);
 		var update = new NativeMenuItem { Command = vm.UpdateCommand };
+		var checkUpdates = new NativeMenuItem(vm.CheckUpdatesText) { Command = vm.CheckForUpdatesCommand };
 		var status = new NativeMenuItem { IsEnabled = false };
 		var error = new NativeMenuItem { IsEnabled = false };
 
@@ -106,6 +107,7 @@ public partial class App : Avalonia.Application
 			Item("Logs…", () => ShowSingle(desktop, () => new LogsWindow { DataContext = new LogsViewModel(dataDir) })),
 			Item("Open UI", () => Open(SettingsViewModel.UiAddress(dataDir))),
 			update,
+			checkUpdates,
 			new NativeMenuItemSeparator(),
 			Item("Exit", () => desktop.Shutdown()),
 		};
@@ -124,6 +126,7 @@ public partial class App : Avalonia.Application
 			error.IsVisible = vm.ErrorText is not null;
 			update.Header = vm.UpdateText;
 			update.IsVisible = vm.IsUpdateAvailable;
+			checkUpdates.Header = vm.CheckUpdatesText;
 		}
 
 		// An update or Setup cut off between the two renames of a copy leaves the service without its folder: repair before the first status.
