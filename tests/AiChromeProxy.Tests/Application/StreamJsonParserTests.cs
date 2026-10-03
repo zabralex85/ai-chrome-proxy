@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using AiChromeProxy.Application.Chat;
 using AiChromeProxy.Domain.Chat;
 
@@ -84,6 +85,59 @@ public sealed class StreamJsonParserTests
 	}
 
 	[Fact]
+	public void TextToolText_MessageReplacesPrecedingDeltas_InOrder()
+	{
+		var (_, events) = Run("text-tool-text.jsonl");
+
+		Assert.Equal(
+			[
+				"text:Let ",
+				"text:me look.",
+				"message:Let me look.",
+				"tool:toolu_1:Bash:ls",
+				"toolResult:toolu_1:False:a.txt",
+				"text:Found ",
+				"text:a.txt.",
+				"message:Found a.txt.",
+				"result:True:0.01:9:",
+			],
+			events.Select(Describe));
+	}
+
+	[Fact]
+	public void LongMessageAndDelta_AreSplit_NotTruncated()
+	{
+		var parser = new StreamJsonParser();
+		var big = new string('y', 40_000);
+
+		var message = parser.Feed($$$"""{"type":"assistant","message":{"content":[{"type":"text","text":"{{{big}}}"}]}}""");
+		var delta = parser.Feed($$$$"""{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"{{{{big}}}}"}}}""");
+
+		Assert.True(message.Count > 1);
+		Assert.All(message, e => Assert.Equal(ChatEventKinds.Message, e.Kind));
+		Assert.Equal(big, string.Concat(message.Select(e => e.Text)));
+		Assert.Equal(big, string.Concat(delta.Select(e => e.Text)));
+		Assert.All(message.Concat(delta), e => Assert.True(JsonSerializer.SerializeToUtf8Bytes(e, JsonSerializerOptions.Web).Length <= ChatLimits.MaxEventBytes));
+	}
+
+	[Fact]
+	public void ErrorFlagWithSuccessSubtype_AndNoText_SaysError()
+	{
+		var events = new StreamJsonParser().Feed("""{"type":"result","subtype":"success","is_error":true}""");
+
+		Assert.Equal("error", events[0].Error);
+		Assert.False(events[0].Ok);
+	}
+
+	[Fact]
+	public void CompactJsonSummary_KeepsNonAsciiReadable()
+	{
+		var events = new StreamJsonParser().Feed("""{"type":"assistant","message":{"content":[{"type":"tool_use","id":"a","name":"X","input":{"q":"привет & <b>"}}]}}""");
+
+		Assert.Equal("{\"q\":\"привет & <b>\"}", events[0].Summary);
+	}
+
+	[Fact]
 	public void FilePath_InsideCwd_IsRelative_OutsideStaysAbsolute()
 	{
 		var parser = new StreamJsonParser();
@@ -91,7 +145,7 @@ public sealed class StreamJsonParserTests
 
 		var events = parser.Feed("""{"type":"assistant","message":{"content":[{"type":"tool_use","id":"a","name":"Edit","input":{"file_path":"C:\\mirror\\repo\\src\\A.cs"}},{"type":"tool_use","id":"b","name":"Write","input":{"file_path":"D:\\other\\B.cs"}}]}}""");
 
-		Assert.Equal(["src\\A.cs", "D:\\other\\B.cs"], events.Select(e => e.Summary));
+		Assert.Equal(["src/A.cs", "D:\\other\\B.cs"], events.Select(e => e.Summary));
 	}
 
 	private static (StreamJsonParser Parser, List<ChatEvent> Events) Run(string fixture)
@@ -111,6 +165,7 @@ public sealed class StreamJsonParserTests
 		ChatEventKinds.Text or ChatEventKinds.Message => $"{e.Kind}:{e.Text}",
 		ChatEventKinds.Tool => $"tool:{e.ToolId}:{e.Name}:{e.Summary}",
 		ChatEventKinds.ToolResult => $"toolResult:{e.ToolId}:{e.IsError}:{e.Summary}",
-		_ => $"result:{e.Ok}:{e.CostUsd}:{e.DurationMs}:{e.Error}",
+		ChatEventKinds.Result => $"result:{e.Ok}:{e.CostUsd}:{e.DurationMs}:{e.Error}",
+		_ => throw new InvalidOperationException($"Unexpected kind {e.Kind}"),
 	};
 }
