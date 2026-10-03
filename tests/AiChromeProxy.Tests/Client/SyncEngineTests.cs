@@ -1,0 +1,696 @@
+using System.Text;
+using System.Text.Json;
+using AiChromeProxy.Client.Sync;
+using AiChromeProxy.Client.Transport;
+using AiChromeProxy.Domain;
+using AiChromeProxy.Domain.Sync;
+using Microsoft.Extensions.Time.Testing;
+using Microsoft.JSInterop;
+
+namespace AiChromeProxy.Tests.Client;
+
+/// <summary>The browser-side engine against the real server-side sync (<see cref="LoopbackServer"/>) and an in-memory folder.</summary>
+public sealed class SyncEngineTests : IDisposable
+{
+	private const string Repo = "My_Repo";
+
+	private readonly LoopbackServer _server = new();
+	private readonly FakeFolder _folder = new();
+	private readonly SyncEngine _engine;
+	private Func<Envelope, Task<Envelope?>>? _realReply;
+
+	public SyncEngineTests()
+	{
+		_engine = new SyncEngine(_server.Transport, _folder, TimeProvider.System);
+	}
+
+	private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+	public void Dispose() => _server.Dispose();
+
+	[Fact]
+	public async Task FirstSync_OpenManifestUpload_MirrorHasIncludedFilesOnly()
+	{
+		_folder.Write("README.md", "# hi");
+		_folder.Write("src/app.cs", "class App { }");
+		_folder.Write(".gitignore", "build/\n*.log\n");
+		_folder.Write(".env", "SECRET=1");
+		_folder.Write("certs/site.pem", "key");
+		_folder.Write("node_modules/x/index.js", "x");
+		_folder.Write("src/bin/app.dll", "dll");
+		_folder.Write("build/out.js", "out");
+		_folder.Write("debug.log", "log");
+		await OpenAsync();
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Synced, _engine.Phase);
+		Assert.Null(_engine.Problem);
+		Assert.Equal([".gitignore", "README.md", "src/app.cs"], _engine.Files.Select(f => f.Path));
+		Assert.All(_engine.Files, f => Assert.Equal(FileSyncState.Synced, f.State));
+		Assert.Equal([".gitignore", "README.md", "src/app.cs"], _folder.Hashed.Order(StringComparer.Ordinal));
+		Assert.Equal("class App { }", File.ReadAllText(_server.PathOf(Repo, "src/app.cs")));
+		Assert.False(File.Exists(_server.PathOf(Repo, ".env")));
+		Assert.False(Directory.Exists(_server.PathOf(Repo, "node_modules")));
+		Assert.False(Directory.Exists(_server.PathOf(Repo, "build")));
+		Assert.Equal([MessageTypes.SyncOpen, MessageTypes.SyncManifest, MessageTypes.SyncChunk, MessageTypes.SyncChunk, MessageTypes.SyncChunk], SentTypes());
+		Assert.Equal(3, _engine.UploadTotal);
+		Assert.Equal(3, _engine.UploadDone);
+		Assert.NotNull(_engine.LastSync);
+	}
+
+	[Fact]
+	public async Task LargeFile_SentInChunks()
+	{
+		var content = Enumerable.Range(0, (SyncLimits.ChunkSize * 2) + 5).Select(i => (byte)i).ToArray();
+		_folder.Files["big.bin"] = content;
+		await OpenAsync();
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(content, File.ReadAllBytes(_server.PathOf(Repo, "big.bin")));
+		Assert.Equal(3, SentTypes().Count(t => t == MessageTypes.SyncChunk));
+	}
+
+	[Fact]
+	public async Task ChunkData_IsBase64UrlWithoutPadding()
+	{
+		byte[] content = [0xFB, 0xFF, 0xBF, 0xFE];
+		_folder.Files["bytes.bin"] = content;
+		await OpenAsync();
+
+		await _engine.SyncOnceAsync(Ct);
+
+		var chunk = _server.Transport.Sent.Single(e => e.Type == MessageTypes.SyncChunk).Payload.Deserialize<SyncChunkPayload>(JsonSerializerOptions.Web)!;
+		Assert.Equal(SyncData.Encode(content), chunk.Data);
+		Assert.True(chunk.Data.IndexOfAny(['+', '/', '=']) < 0, chunk.Data);
+		Assert.Equal(content, File.ReadAllBytes(_server.PathOf(Repo, "bytes.bin")));
+	}
+
+	[Fact]
+	public async Task NoChanges_SecondScanSendsNothing()
+	{
+		_folder.Write("a.txt", "a");
+		await OpenAsync();
+		await _engine.SyncOnceAsync(Ct);
+		var sent = _server.Transport.Sent.Count;
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(sent, _server.Transport.Sent.Count);
+		Assert.Equal(SyncPhase.Synced, _engine.Phase);
+	}
+
+	[Fact]
+	public async Task Files_SameListWhileNothingChanges_FileAtFindsEntries()
+	{
+		_folder.Write("a.txt", "a");
+		await OpenAsync();
+		await _engine.SyncOnceAsync(Ct);
+		var files = _engine.Files;
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Same(files, _engine.Files);
+		Assert.Equal(FileSyncState.Synced, _engine.FileAt("a.txt")!.State);
+		Assert.Null(_engine.FileAt("missing.txt"));
+
+		_folder.Write("b.txt", "b");
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.NotSame(files, _engine.Files);
+		Assert.Equal(FileSyncState.Synced, _engine.FileAt("b.txt")!.State);
+	}
+
+	[Fact]
+	public async Task Changes_SentAsDelta_MirrorFollowsEditAddDeleteRename()
+	{
+		_folder.Write("edit.txt", "v1");
+		_folder.Write("delete.txt", "d");
+		_folder.Write("old-name.txt", "r");
+		await OpenAsync();
+		await _engine.SyncOnceAsync(Ct);
+		_server.Transport.Sent.Clear();
+
+		_folder.Write("edit.txt", "v2");
+		_folder.Write("dir/added.txt", "new");
+		_folder.Files.Remove("delete.txt");
+		_folder.Files["new-name.txt"] = _folder.Files["old-name.txt"];
+		_folder.Files.Remove("old-name.txt");
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.DoesNotContain(MessageTypes.SyncOpen, SentTypes());
+		Assert.DoesNotContain(MessageTypes.SyncManifest, SentTypes());
+		Assert.Contains(MessageTypes.SyncDelta, SentTypes());
+		AssertNoDeltaUpsertsAndDeletesTheSamePath();
+		Assert.Equal("v2", File.ReadAllText(_server.PathOf(Repo, "edit.txt")));
+		Assert.Equal("new", File.ReadAllText(_server.PathOf(Repo, "dir/added.txt")));
+		Assert.Equal("r", File.ReadAllText(_server.PathOf(Repo, "new-name.txt")));
+		Assert.False(File.Exists(_server.PathOf(Repo, "delete.txt")));
+		Assert.False(File.Exists(_server.PathOf(Repo, "old-name.txt")));
+	}
+
+	[Fact]
+	public async Task CaseOnlyRename_DeltaNeverUpsertsAndDeletesTheSamePath()
+	{
+		_folder.Write("readme.md", "r");
+		await OpenAsync();
+		await _engine.SyncOnceAsync(Ct);
+		_server.Transport.Sent.Clear();
+
+		_folder.Files["README.md"] = _folder.Files["readme.md"];
+		_folder.Files.Remove("readme.md");
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Contains(MessageTypes.SyncDelta, SentTypes());
+		AssertNoDeltaUpsertsAndDeletesTheSamePath();
+		Assert.Equal(SyncPhase.Synced, _engine.Phase);
+		Assert.Empty(_engine.Errors);
+		Assert.Equal("r", File.ReadAllText(_server.PathOf(Repo, "README.md")));
+	}
+
+	[Fact]
+	public async Task FileOverLimit_ListedTooLarge_NotHashedNotSent()
+	{
+		_folder.Write("small.txt", "s");
+		_folder.SizeOnly["video.mp4"] = SyncLimits.MaxFileSize + 1;
+		await OpenAsync();
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(FileSyncState.TooLarge, _engine.Files.Single(f => f.Path == "video.mp4").State);
+		Assert.DoesNotContain("video.mp4", _folder.Hashed);
+		Assert.False(File.Exists(_server.PathOf(Repo, "video.mp4")));
+		Assert.Equal(SyncPhase.Synced, _engine.Phase);
+	}
+
+	[Fact]
+	public async Task NameNotAllowed_ListedAsError_OthersSynced()
+	{
+		_folder.Write("ok.txt", "ok");
+		_folder.Write("trailing.", "x");
+		await OpenAsync();
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(FileSyncState.Error, _engine.Files.Single(f => f.Path == "trailing.").State);
+		Assert.Single(_engine.Errors);
+		Assert.True(File.Exists(_server.PathOf(Repo, "ok.txt")));
+	}
+
+	[Fact]
+	public async Task InvalidPath_ShownWithValidatorMessage_NeverHashedSentOrRetried()
+	{
+		const string ShortName = "GIT~1/hooks/post-checkout";
+		_folder.Write("ok.txt", "ok");
+		_folder.Write(ShortName, "x");
+		await OpenAsync();
+
+		await _engine.SyncOnceAsync(Ct);
+		await _engine.SyncOnceAsync(Ct);
+
+		var file = _engine.FileAt(ShortName)!;
+		Assert.Equal(FileSyncState.Error, file.State);
+		Assert.Equal(SyncPath.GetError(ShortName), file.Error);
+		Assert.Equal([$"{ShortName}: {file.Error}"], _engine.Errors);
+		Assert.DoesNotContain(ShortName, _folder.Hashed);
+		Assert.DoesNotContain(ShortName, _folder.ChunkReads);
+		Assert.DoesNotContain(_server.Transport.Sent, e => e.Payload.GetRawText().Contains("hooks/post-checkout", StringComparison.Ordinal));
+		Assert.Equal(SyncPhase.Synced, _engine.Phase);
+		Assert.True(File.Exists(_server.PathOf(Repo, "ok.txt")));
+	}
+
+	[Fact]
+	public async Task MoreThanMaxFiles_Refused_NothingSent()
+	{
+		for (var i = 0; i <= SyncLimits.MaxFiles; i++)
+		{
+			_folder.Files[$"f/{i}.txt"] = [];
+		}
+
+		await OpenAsync();
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Failed, _engine.Phase);
+		Assert.Contains("more than 20,000 files to sync", _engine.Problem, StringComparison.Ordinal);
+		Assert.Empty(_server.Transport.Sent);
+		Assert.Empty(_folder.Hashed);
+	}
+
+	[Fact]
+	public async Task WalkTruncated_Refused()
+	{
+		_folder.Truncated = true;
+		await OpenAsync();
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Failed, _engine.Phase);
+		Assert.Contains("pick a smaller folder", _engine.Problem, StringComparison.Ordinal);
+		Assert.Empty(_server.Transport.Sent);
+	}
+
+	[Fact]
+	public async Task ScanInProgress_SecondCycleSkipped()
+	{
+		_folder.Write("a.txt", "a");
+		await OpenAsync();
+		var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		_folder.ScanGate = gate.Task;
+
+		var first = _engine.SyncOnceAsync(Ct);
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(1, _folder.Scans);
+		Assert.Equal(SyncPhase.Scanning, _engine.Phase);
+
+		gate.SetResult();
+		await first;
+
+		Assert.Equal(1, _folder.Scans);
+		Assert.Equal(SyncPhase.Synced, _engine.Phase);
+		Assert.Single(SentTypes(), MessageTypes.SyncOpen);
+	}
+
+	[Fact]
+	public async Task Reconnect_NextScanReopensAndSendsFullManifest()
+	{
+		_folder.Write("a.txt", "a");
+		await OpenAsync();
+		await _engine.InitializeAsync();
+		await _engine.SyncOnceAsync(Ct);
+		_server.Transport.Sent.Clear();
+
+		_server.Reconnect();
+		_folder.Write("a.txt", "changed");
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal([MessageTypes.SyncOpen, MessageTypes.SyncManifest, MessageTypes.SyncChunk], SentTypes());
+		Assert.Equal("changed", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
+		Assert.Equal(SyncPhase.Synced, _engine.Phase);
+	}
+
+	[Fact]
+	public async Task ServerLostSession_CycleFails_NextCycleStartsOver()
+	{
+		_folder.Write("a.txt", "a");
+		await OpenAsync();
+		await _engine.SyncOnceAsync(Ct);
+
+		_server.DropSession();
+		_folder.Write("b.txt", "b");
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Failed, _engine.Phase);
+		Assert.Equal("Send sync.open first.", _engine.Problem);
+		Assert.Equal(["Send sync.open first."], _engine.Errors);
+		Assert.False(_engine.Blocked);
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Synced, _engine.Phase);
+		Assert.Null(_engine.Problem);
+		Assert.Equal("b", File.ReadAllText(_server.PathOf(Repo, "b.txt")));
+	}
+
+	[Fact]
+	public async Task DeltaRefused_ShownOnce_NextCycleStartsOverWithFullManifest()
+	{
+		_folder.Write("a.txt", "a");
+		await OpenAsync();
+		await _engine.SyncOnceAsync(Ct);
+		var refusals = 0;
+		RefuseWhen(e => e.Type == MessageTypes.SyncDelta && refusals++ == 0, ErrorCodes.TooLarge, "At most 20000 files may wait for upload.");
+
+		_folder.Write("b.txt", "b");
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Failed, _engine.Phase);
+		Assert.Equal("At most 20000 files may wait for upload.", _engine.Problem);
+		Assert.False(_engine.Blocked);
+		_server.Transport.Sent.Clear();
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal([MessageTypes.SyncOpen, MessageTypes.SyncManifest, MessageTypes.SyncChunk], SentTypes());
+		Assert.Equal(SyncPhase.Synced, _engine.Phase);
+		Assert.Equal("b", File.ReadAllText(_server.PathOf(Repo, "b.txt")));
+	}
+
+	[Fact]
+	public async Task ManifestRefused_Blocked_NotRetried_ChangeFolderResumes()
+	{
+		_folder.Write("a.txt", "a");
+		await OpenAsync();
+		RefuseWhen(e => e.Type == MessageTypes.SyncManifest, ErrorCodes.TooLarge, "At most 20000 files may wait for upload.");
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Failed, _engine.Phase);
+		Assert.True(_engine.Blocked);
+		Assert.Contains("At most 20000 files may wait for upload.", _engine.Problem, StringComparison.Ordinal);
+		var scans = _folder.Scans;
+		_server.Transport.Sent.Clear();
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(scans, _folder.Scans);
+		Assert.Empty(_server.Transport.Sent);
+		Assert.True(_engine.Blocked);
+
+		RefuseWhen(_ => false, ErrorCodes.TooLarge, string.Empty);
+		await _engine.OpenFolderAsync();
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.False(_engine.Blocked);
+		Assert.Equal(SyncPhase.Synced, _engine.Phase);
+		Assert.True(File.Exists(_server.PathOf(Repo, "a.txt")));
+	}
+
+	[Fact]
+	public async Task EmptyFolderOverFullMirror_Refused_BlockedUntilRestoreAccess()
+	{
+		_folder.Write("a.txt", "a");
+		await OpenAsync();
+		await _engine.InitializeAsync();
+		await _engine.SyncOnceAsync(Ct);
+		_folder.Files.Clear();
+		_server.Reconnect();
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Failed, _engine.Phase);
+		Assert.True(_engine.Blocked);
+		Assert.Contains("An empty folder would delete the whole mirror", _engine.Problem, StringComparison.Ordinal);
+		Assert.True(File.Exists(_server.PathOf(Repo, "a.txt")));
+		_server.Transport.Sent.Clear();
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Empty(_server.Transport.Sent);
+
+		_folder.Write("a.txt", "back");
+		await _engine.RestoreAccessAsync();
+
+		Assert.False(_engine.Blocked);
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Synced, _engine.Phase);
+		Assert.Equal("back", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
+	}
+
+	[Fact]
+	public async Task FileChangedDuringUpload_MarkedError_OthersSynced_RetriedNextScan()
+	{
+		_folder.Write("a.txt", "aaaa");
+		_folder.Write("b.txt", "bbbb");
+		_folder.ReadOverride["a.txt"] = Encoding.UTF8.GetBytes("AAAA");
+		await OpenAsync();
+
+		await _engine.SyncOnceAsync(Ct);
+
+		var failed = _engine.Files.Single(f => f.Path == "a.txt");
+		Assert.Equal(FileSyncState.Error, failed.State);
+		Assert.Contains("different size or hash", failed.Error, StringComparison.Ordinal);
+		Assert.Equal(FileSyncState.Synced, _engine.Files.Single(f => f.Path == "b.txt").State);
+		Assert.False(File.Exists(_server.PathOf(Repo, "a.txt")));
+
+		_folder.ReadOverride.Clear();
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal("aaaa", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
+		Assert.All(_engine.Files, f => Assert.Equal(FileSyncState.Synced, f.State));
+	}
+
+	[Fact]
+	public async Task FileShrankDuringUpload_MarkedError()
+	{
+		_folder.Write("a.txt", "aaaa");
+		_folder.ReadOverride["a.txt"] = Encoding.UTF8.GetBytes("aa");
+		await OpenAsync();
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Contains("changed while it was uploaded", _engine.Files.Single().Error, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public async Task ReadChunkFails_FileMarkedError_OthersSynced_RetriedOnceNextScan()
+	{
+		_folder.Write("a.txt", "a");
+		_folder.Write("b.txt", "b");
+		_folder.ReadFailures.Add("a.txt");
+		await OpenAsync();
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncPhase.Synced, _engine.Phase);
+		Assert.Null(_engine.Problem);
+		var failed = _engine.FileAt("a.txt")!;
+		Assert.Equal(FileSyncState.Error, failed.State);
+		Assert.Contains("could not be read", failed.Error, StringComparison.Ordinal);
+		Assert.Equal(FileSyncState.Synced, _engine.FileAt("b.txt")!.State);
+		Assert.Equal(["a.txt", "b.txt"], _folder.ChunkReads);
+
+		_folder.ReadFailures.Clear();
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(["a.txt", "b.txt", "a.txt"], _folder.ChunkReads);
+		Assert.Equal("a", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
+		Assert.All(_engine.Files, f => Assert.Equal(FileSyncState.Synced, f.State));
+	}
+
+	[Fact]
+	public async Task AccessLost_NeedsPermission_RestoreAccessResumes()
+	{
+		_folder.Write("a.txt", "a");
+		await OpenAsync();
+		_folder.ScanFailure = new JSException("NotAllowedError");
+		_folder.Remembered = true;
+		_folder.Granted = false;
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(FolderStatus.NeedsPermission, _engine.Folder);
+		Assert.Equal(SyncPhase.Failed, _engine.Phase);
+		Assert.Contains("Restore access", _engine.Problem, StringComparison.Ordinal);
+
+		_folder.ScanFailure = null;
+		await _engine.RestoreAccessAsync();
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(FolderStatus.Ready, _engine.Folder);
+		Assert.Equal(SyncPhase.Synced, _engine.Phase);
+	}
+
+	[Fact]
+	public async Task ScanFailsWithAccessStillGranted_CycleFails()
+	{
+		_folder.Write("a.txt", "a");
+		await OpenAsync();
+		_folder.ScanFailure = new JSException("disk gone");
+		_folder.Remembered = true;
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(FolderStatus.Ready, _engine.Folder);
+		Assert.Equal("disk gone", _engine.Problem);
+	}
+
+	[Theory]
+	[InlineData(false, false, FolderStatus.None)]
+	[InlineData(true, false, FolderStatus.NeedsPermission)]
+	[InlineData(true, true, FolderStatus.Ready)]
+	public async Task Initialize_RestoresRememberedFolder(bool remembered, bool granted, FolderStatus expected)
+	{
+		_folder.Remembered = remembered;
+		_folder.Granted = granted;
+
+		await _engine.InitializeAsync();
+
+		Assert.Equal(expected, _engine.Folder);
+		Assert.Equal(remembered ? "My Repo" : null, _engine.FolderName);
+		Assert.NotNull(_folder.Visibility);
+	}
+
+	[Fact]
+	public async Task OpenFolder_Cancelled_NothingChanges()
+	{
+		_folder.PickResult = null;
+
+		await _engine.OpenFolderAsync();
+
+		Assert.Equal(FolderStatus.None, _engine.Folder);
+		Assert.Null(_engine.FolderName);
+	}
+
+	[Fact]
+	public async Task Run_SyncsAtOnce_WakesOnFocus_StopsOnCancel()
+	{
+		_folder.Write("a.txt", "a");
+		await OpenAsync();
+		await _engine.InitializeAsync();
+		using (var cts = CancellationTokenSource.CreateLinkedTokenSource(Ct))
+		{
+			var run = Task.Run(() => _engine.RunAsync(cts.Token), Ct);
+			await WaitUntilAsync(() => _folder.Scans == 1 && _engine.NextScan is not null);
+
+			_folder.Visibility!(true);
+			await WaitUntilAsync(() => _folder.Scans == 2);
+
+			_folder.Visibility!(false);
+			await cts.CancelAsync();
+			await run;
+		}
+
+		Assert.True(File.Exists(_server.PathOf(Repo, "a.txt")));
+	}
+
+	[Fact]
+	public async Task Run_Disconnected_DoesNotScan()
+	{
+		await OpenAsync();
+		_server.Transport.SetState(TransportState.Reconnecting);
+		using (var cts = CancellationTokenSource.CreateLinkedTokenSource(Ct))
+		{
+			var run = Task.Run(() => _engine.RunAsync(cts.Token), Ct);
+			await WaitUntilAsync(() => _engine.NextScan is not null);
+			await cts.CancelAsync();
+			await run;
+		}
+
+		Assert.Equal(0, _folder.Scans);
+	}
+
+	[Fact]
+	public async Task Activity_PassLogsStartedUploadedFinished_NoChangeLogsNothing()
+	{
+		var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 3, 12, 0, 0, TimeSpan.Zero));
+		var engine = new SyncEngine(_server.Transport, _folder, clock);
+		_folder.Write("a.txt", "aa");
+		_folder.Write("b.txt", "bbb");
+		await engine.OpenFolderAsync();
+
+		await engine.SyncOnceAsync(Ct);
+		await engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(
+			[SyncActivityKind.PassFinished, SyncActivityKind.Uploaded, SyncActivityKind.PassStarted, SyncActivityKind.FolderOpened],
+			engine.Activity.Select(a => a.Kind));
+		Assert.All(engine.Activity, a => Assert.Equal(clock.GetUtcNow(), a.At));
+		Assert.Equal("Opened folder 'My Repo'.", engine.Activity[3].Text);
+		Assert.Equal("Full sync of 2 files.", engine.Activity[2].Text);
+		Assert.Equal("Uploaded 2 files: a.txt, b.txt.", engine.Activity[1].Text);
+		Assert.Equal("Uploaded 2 files, 5 bytes in 0.0 s.", engine.Activity[0].Text);
+	}
+
+	[Fact]
+	public async Task Activity_DeltaLogsDeletesGrouped_UploadErrorsGrouped()
+	{
+		for (var i = 0; i < 5; i++)
+		{
+			_folder.Write($"d{i}.txt", "d");
+		}
+
+		await OpenAsync();
+		await _engine.SyncOnceAsync(Ct);
+
+		_folder.Files.Clear();
+		_folder.Write("x.txt", "x");
+		_folder.ReadFailures.Add("x.txt");
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(
+			[SyncActivityKind.PassFinished, SyncActivityKind.Error, SyncActivityKind.Deleted, SyncActivityKind.PassStarted],
+			_engine.Activity.Take(4).Select(a => a.Kind));
+		Assert.Equal("Sync of 1 changed and 5 deleted files.", _engine.Activity[3].Text);
+		Assert.Equal("Deleted 5 files: d0.txt, d1.txt, d2.txt and 2 more.", _engine.Activity[2].Text);
+		Assert.Equal("Could not upload 1 file: x.txt: NotReadableError: 'x.txt' could not be read.", _engine.Activity[1].Text);
+	}
+
+	[Fact]
+	public async Task Activity_CycleFailureLoggedOnceWithServerMessage()
+	{
+		_folder.Write("a.txt", "a");
+		await OpenAsync();
+		RefuseWhen(e => e.Type == MessageTypes.SyncOpen, ErrorCodes.Internal, "Server is restarting.");
+
+		await _engine.SyncOnceAsync(Ct);
+		await _engine.SyncOnceAsync(Ct);
+
+		var errors = _engine.Activity.Where(a => a.Kind == SyncActivityKind.Error).ToList();
+		Assert.Equal("Server is restarting.", Assert.Single(errors).Text);
+	}
+
+	[Fact]
+	public async Task Activity_ReconnectAndAccessLostLogged()
+	{
+		_folder.Write("a.txt", "a");
+		await OpenAsync();
+		await _engine.InitializeAsync();
+
+		_server.Reconnect();
+		_folder.ScanFailure = new JSException("NotAllowedError");
+		_folder.Remembered = true;
+		_folder.Granted = false;
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncActivityKind.AccessLost, _engine.Activity[0].Kind);
+		Assert.Contains("Restore access", _engine.Activity[0].Text, StringComparison.Ordinal);
+		Assert.Equal(SyncActivityKind.Reconnected, _engine.Activity[1].Kind);
+	}
+
+	[Fact]
+	public async Task Activity_CappedNewestFirst()
+	{
+		for (var i = 0; i <= SyncEngine.MaxActivity; i++)
+		{
+			_folder.PickResult = $"f{i}";
+			await _engine.OpenFolderAsync();
+		}
+
+		Assert.Equal(SyncEngine.MaxActivity, _engine.Activity.Count);
+		Assert.Equal($"Opened folder 'f{SyncEngine.MaxActivity}'.", _engine.Activity[0].Text);
+		Assert.Equal("Opened folder 'f1'.", _engine.Activity[^1].Text);
+	}
+
+	private static async Task WaitUntilAsync(Func<bool> condition)
+	{
+		for (var i = 0; i < 200 && !condition(); i++)
+		{
+			await Task.Delay(25, Ct);
+		}
+
+		Assert.True(condition());
+	}
+
+	private List<string> SentTypes() => [.. _server.Transport.Sent.Select(e => e.Type)];
+
+	private void AssertNoDeltaUpsertsAndDeletesTheSamePath()
+	{
+		foreach (var envelope in _server.Transport.Sent.Where(e => e.Type == MessageTypes.SyncDelta))
+		{
+			var delta = envelope.Payload.Deserialize<SyncDeltaPayload>(JsonSerializerOptions.Web)!;
+			var deletes = delta.Deletes.ToHashSet(StringComparer.OrdinalIgnoreCase);
+			Assert.DoesNotContain(delta.Upserts, u => deletes.Contains(u.Path));
+		}
+	}
+
+	/// <summary>The server answers matching requests with <c>error {code, message}</c> instead of handling them; replaces an earlier refusal.</summary>
+	private void RefuseWhen(Func<Envelope, bool> refuse, string code, string message)
+	{
+		_realReply ??= _server.Transport.Reply!;
+		var real = _realReply;
+		_server.Transport.Reply = e => refuse(e)
+			? Task.FromResult<Envelope?>(Envelope.Create(MessageTypes.Error, new ErrorPayload(code, message), e.CorrelationId))
+			: real(e);
+	}
+
+	private async Task OpenAsync()
+	{
+		await _engine.OpenFolderAsync();
+		Assert.Equal(FolderStatus.Ready, _engine.Folder);
+	}
+}
