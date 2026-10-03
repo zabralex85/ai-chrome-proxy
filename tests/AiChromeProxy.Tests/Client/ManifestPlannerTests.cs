@@ -15,7 +15,7 @@ public sealed class ManifestPlannerTests
 	[Fact]
 	public void Pages_SplitByCount()
 	{
-		var pages = ManifestPlanner.Pages(Enumerable.Range(0, 1200), _ => 1).ToList();
+		var pages = SyncPages.Split(Enumerable.Range(0, 1200), _ => 1).ToList();
 
 		Assert.Equal([500, 500, 200], pages.Select(p => p.Count));
 	}
@@ -23,7 +23,7 @@ public sealed class ManifestPlannerTests
 	[Fact]
 	public void Pages_SplitByBytes_OversizedItemAlone()
 	{
-		var pages = ManifestPlanner.Pages([10_000, 10_000, 10_000, 30_000, 1], i => i).ToList();
+		var pages = SyncPages.Split([10_000, 10_000, 10_000, 30_000, 1], i => i).ToList();
 
 		Assert.Equal([2, 1, 1, 1], pages.Select(p => p.Count));
 	}
@@ -31,7 +31,7 @@ public sealed class ManifestPlannerTests
 	[Fact]
 	public void Pages_Empty_None()
 	{
-		Assert.Empty(ManifestPlanner.Pages(Array.Empty<int>(), _ => 1));
+		Assert.Empty(SyncPages.Split(Array.Empty<int>(), _ => 1));
 	}
 
 	[Fact]

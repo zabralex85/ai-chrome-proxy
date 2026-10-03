@@ -220,12 +220,15 @@ public sealed class FileSystemMirrorStoreTests : IDisposable
 		var files = _store.ListFiles(Repo).Order(StringComparer.Ordinal).ToList();
 
 		Assert.Equal([".hidden", "a.txt", "src/deep/b.cs"], files);
+		Assert.True(_store.HasFiles(Repo, p => p != "src/deep/b.cs"));
+		Assert.False(_store.HasFiles(Repo, p => p is ".hidden" or "a.txt" or "src/deep/b.cs"));
 	}
 
 	[Fact]
 	public void ListFiles_NoRepoFolder_Empty()
 	{
 		Assert.Empty(_store.ListFiles("not-synced-yet"));
+		Assert.False(_store.HasFiles("not-synced-yet", _ => false));
 	}
 
 	[Fact]
@@ -343,6 +346,41 @@ public sealed class FileSystemMirrorStoreTests : IDisposable
 		Assert.Equal(Path.Combine(content, "rel"), MirrorOptions.ResolveRoot("rel", dataDir, content));
 		Assert.Equal(Path.Combine(_temp, "data", "mirror"), MirrorOptions.ResolveRoot(" ", dataDir, content));
 		Assert.Equal(Path.Combine(content, "data", "mirror"), MirrorOptions.ResolveRoot(null, null, content));
+	}
+
+	[Fact]
+	public async Task ReadAsync_RangeOfFile_EmptyPastTheEnd_NullWhenNoFile_WhileOpenForWriting()
+	{
+		var ct = TestContext.Current.CancellationToken;
+		File.WriteAllText(Path.Combine(_repoRoot, "a.txt"), "hello world");
+		Directory.CreateDirectory(Path.Combine(_repoRoot, "dir"));
+
+		using (new FileStream(Path.Combine(_repoRoot, "a.txt"), FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete))
+		{
+			Assert.Equal("hello"u8.ToArray(), await _store.ReadAsync(Repo, "a.txt", 0, 5, ct));
+			Assert.Equal("world"u8.ToArray(), await _store.ReadAsync(Repo, "a.txt", 6, 100, ct));
+			Assert.Empty((await _store.ReadAsync(Repo, "a.txt", 20, 5, ct))!);
+		}
+
+		Assert.Null(await _store.ReadAsync(Repo, "missing.txt", 0, 5, ct));
+		Assert.Null(await _store.ReadAsync(Repo, "dir", 0, 5, ct));
+		Assert.Equal(11, _store.GetSize(Repo, "a.txt"));
+		Assert.Equal(0, _store.GetSize(Repo, "missing.txt"));
+		Assert.Equal(0, _store.GetSize(Repo, "dir"));
+	}
+
+	[Fact]
+	public async Task ReadAsync_ThroughJunction_BadRequest()
+	{
+		var outside = Path.Combine(_temp, "outside");
+		Directory.CreateDirectory(outside);
+		File.WriteAllText(Path.Combine(outside, "secret.txt"), "s");
+		Junction(Path.Combine(_repoRoot, "link"), outside);
+
+		var read = await Assert.ThrowsAsync<EnvelopeException>(() => _store.ReadAsync(Repo, "link/secret.txt", 0, 5, TestContext.Current.CancellationToken));
+		var size = Assert.Throws<EnvelopeException>(() => _store.GetSize(Repo, "link/secret.txt"));
+
+		Assert.Equal((ErrorCodes.BadRequest, ErrorCodes.BadRequest), (read.Code, size.Code));
 	}
 
 	private static string Sha(byte[] content) => Convert.ToHexStringLower(SHA256.HashData(content));

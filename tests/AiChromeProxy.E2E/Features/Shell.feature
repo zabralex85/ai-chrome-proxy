@@ -36,3 +36,13 @@ Scenario: The error list opens from the sync status
 	Given the app is connected
 	When I click the error count in the sync status
 	Then the error list says "No errors."
+
+Scenario: The project settings gear needs an open folder
+	Given the app is connected
+	Then the project settings button is disabled
+
+Scenario: Project settings tab opens from the gear and shows its fields
+	Given the app is connected with a folder open
+	When I click the project settings button
+	Then the Project settings tab is active
+	And the settings tab shows the excludes, the automatic apply option and a disabled Save button

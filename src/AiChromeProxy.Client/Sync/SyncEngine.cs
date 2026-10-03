@@ -32,7 +32,7 @@ public enum SyncPhase
 /// <see cref="FullManifestInterval"/>) the full manifest with its keep list, otherwise a delta → upload what the server needs in chunks, in order, with up to <see cref="MaxUploadsInFlight"/> files awaiting their reply. Rescans every <see cref="ScanInterval"/>
 /// while the tab is visible and immediately on focus (ponytail: polling; switch to FileSystemObserver once it is stable).
 /// </summary>
-public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeProvider time)
+public sealed partial class SyncEngine(ITransport transport, IFolderAccess folder, TimeProvider time)
 {
 	/// <summary>Files and folders the walk may return before the folder is refused (excluded ones included; protects the tab's memory).</summary>
 	public const int MaxScanEntries = 100_000;
@@ -45,6 +45,8 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 	/// <c>sync.stored</c>, so a first sync is not one round trip per file (the server still stores them one after the other, in order).
 	/// </summary>
 	public const int MaxUploadsInFlight = 16;
+
+	public const string ConnectionLost = "Connection lost — reconnecting…";
 
 	public static readonly TimeSpan ScanInterval = TimeSpan.FromSeconds(10);
 	public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
@@ -97,6 +99,9 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 	private long _lastRaise;
 	private long _fullManifestAt;
 	private string? _repo;
+
+	/// <summary>The open session has not had its full manifest yet.</summary>
+	private bool _freshSession;
 	private bool _visible = true;
 	private bool _reconnecting;
 	private CancellationTokenSource _wake = new();
@@ -178,6 +183,8 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 	{
 		transport.StateChanged -= OnTransportStateChanged;
 		transport.StateChanged += OnTransportStateChanged;
+		transport.Received -= OnReceived;
+		transport.Received += OnReceived;
 		await folder.WatchVisibilityAsync(SetVisible);
 		if (await folder.RestoreAsync() is { } grant)
 		{
@@ -206,6 +213,7 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 		_known = new(StringComparer.Ordinal);
 		_failures.Clear();
 		_repo = null;
+		ResetRemote();
 		Log(SyncActivityKind.FolderOpened, $"Opened folder '{name}'.");
 		Wake();
 		Raise();
@@ -263,8 +271,8 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 	}
 
 	/// <summary>
-	/// One cycle: scan, tell the server (full manifest or delta), upload what it needs. Returns at once while another cycle runs
-	/// or while <see cref="Blocked"/>. Never throws except on cancellation.
+	/// One cycle: open the session (when there is none) or apply the server's changes, scan, tell the server (full manifest or delta),
+	/// upload what it needs. Returns at once while another cycle runs or while <see cref="Blocked"/>. Never throws except on cancellation.
 	/// </summary>
 	public async Task SyncOnceAsync(CancellationToken ct)
 	{
@@ -279,6 +287,17 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 		{
 			Phase = SyncPhase.Scanning;
 			Raise();
+
+			// A fresh session opens before the scan, so that its settings (extra excludes) apply to it.
+			if (_repo is null)
+			{
+				await OpenAsync(generation, ct);
+			}
+			else
+			{
+				await ApplyRemoteAsync(generation, ct);
+			}
+
 			if (await ScanAsync(generation) is not { } scan)
 			{
 				Phase = SyncPhase.Failed;
@@ -289,7 +308,9 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 			var entries = scan.Entries;
 			var repo = _repo;
 			var started = time.GetTimestamp();
-			var backedOff = entries.Where(e => BackedOff(e) is not null).ToDictionary(e => e.Path, StringComparer.Ordinal);
+
+			// A file in conflict is treated like a backed-off one: neither uploaded nor deleted (also when it is gone here) until the user resolves it.
+			var backedOff = entries.Where(e => BackedOff(e) is not null || Conflicted(e.Path) is not null).ToDictionary(e => e.Path, StringComparer.Ordinal);
 			var listed = entries.Select(e => e.Path).ToHashSet(StringComparer.Ordinal);
 			bool Kept(string path) => !listed.Contains(path) && SyncPath.IsKept(path, scan.Keep);
 			List<string> need;
@@ -299,8 +320,9 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 			// A fresh session (first pass, reconnect, folder change) and then every FullManifestInterval: the full manifest, so nothing
 			// stale stays on the mirror; the keep list protects what this scan could not sync.
 			// Also when only kept files are left: a delta would delete every remaining mirror file, which the server refuses.
-			var full = repo is null || time.GetElapsedTime(_fullManifestAt) >= FullManifestInterval || entries.Count == 0;
-			var periodic = full && repo is not null;
+			var fresh = repo is null || _freshSession;
+			var full = fresh || time.GetElapsedTime(_fullManifestAt) >= FullManifestInterval || entries.Count == 0;
+			var periodic = full && !fresh;
 			repo ??= await OpenAsync(generation, ct);
 			if (full)
 			{
@@ -312,6 +334,7 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 
 				need = await SendManifestAsync(repo, generation, entries, scan.Keep, ct);
 				_fullManifestAt = time.GetTimestamp();
+				_freshSession = false;
 				pass = !periodic || need.Count > 0;
 				if (periodic && pass)
 				{
@@ -321,7 +344,7 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 			else
 			{
 				// What is kept is neither upserted nor deleted; a backed-off file is left out as if the server had it.
-				var known = _known.Where(k => !Kept(k.Key)).ToDictionary(StringComparer.Ordinal);
+				var known = _known.Where(k => !Kept(k.Key) && Conflicted(k.Key) is null).ToDictionary(StringComparer.Ordinal);
 				foreach (var (path, entry) in backedOff)
 				{
 					known[path] = entry;
@@ -339,11 +362,11 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 			}
 
 			// The server now has every entry except the ones it asked for and the backed-off ones: those (until uploaded) and the kept
-			// files stay known with an unknown hash, so that their deletion is sent too.
+			// files stay known with an unknown hash, so that their deletion is sent too. A conflicted file gone here stays known as it was.
 			EnsureCurrent(generation, repo);
 			var needed = need.ToHashSet(StringComparer.Ordinal);
 			var nowKnown = entries.ToDictionary(e => e.Path, e => needed.Contains(e.Path) || backedOff.ContainsKey(e.Path) ? e with { Sha256 = string.Empty } : e, StringComparer.Ordinal);
-			foreach (var (path, entry) in _known.Where(k => Kept(k.Key)))
+			foreach (var (path, entry) in _known.Where(k => Kept(k.Key) || Conflicted(k.Key) is not null))
 			{
 				nowKnown.TryAdd(path, entry);
 			}
@@ -382,7 +405,8 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 			{
 				// The server may have lost the session (reconnect, restart): start over with a full manifest.
 				_repo = null;
-				Problem = Blocked ? $"{ex.Message} Sync is paused: change the folder or restore access." : ex.Message;
+				var message = transport.State != TransportState.Connected ? ConnectionLost : ex.Message;
+				Problem = Blocked ? $"{message} Sync is paused: change the folder or restore access." : message;
 				Phase = SyncPhase.Failed;
 			}
 		}
@@ -403,11 +427,11 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 
 	private static string FileCount(int count) => count == 1 ? "1 file" : $"{count} files";
 
-	/// <summary>"Uploaded 5 files: a, b, c and 2 more."</summary>
-	private static string Group(string verb, IReadOnlyList<string> items)
+	/// <summary>"Uploaded 5 files: a, b, c and 2 more." (<paramref name="where"/>, e.g. " from the server", follows the count).</summary>
+	private static string Group(string verb, IReadOnlyList<string> items, string where = "")
 	{
 		const int Shown = 3;
-		return $"{verb} {FileCount(items.Count)}: {string.Join(", ", items.Take(Shown))}" + (items.Count > Shown ? $" and {items.Count - Shown} more." : ".");
+		return $"{verb} {FileCount(items.Count)}{where}: {string.Join(", ", items.Take(Shown))}" + (items.Count > Shown ? $" and {items.Count - Shown} more." : ".");
 	}
 
 	/// <param name="inSync">The file count of a full sync that needed no upload; null otherwise.</param>
@@ -469,7 +493,7 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 		}
 
 		EnsureFolder(generation);
-		var rules = IgnoreRules.Create(gitignore);
+		var rules = _rules = IgnoreRules.Create(gitignore, Settings.Excludes);
 		FolderScan scan;
 		try
 		{
@@ -594,12 +618,16 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 		return new ScanResult(entries, keep);
 	}
 
+	/// <summary>Opens the session; its settings come with the reply (an old server sends none: the defaults).</summary>
 	/// <returns>The repo name the server uses (sanitized folder name).</returns>
 	private async Task<string> OpenAsync(int generation, CancellationToken ct)
 	{
-		var opened = await RequestAsync(MessageTypes.SyncOpen, new SyncOpenPayload(FolderName!), ct);
+		var opened = Read<SyncOpenPayload>(await RequestAsync(MessageTypes.SyncOpen, new SyncOpenPayload(FolderName!), ct));
 		EnsureFolder(generation);
-		_repo = Read<SyncOpenPayload>(opened).Repo;
+		Settings = opened.Settings ?? ProjectSettings.Default;
+		_freshSession = true;
+		ForgetWaiting();
+		_repo = opened.Repo;
 		return _repo;
 	}
 
@@ -765,6 +793,14 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 		catch (Exception ex) when (ex is RequestFailedException or IOException or JSException)
 		{
 			EnsureFolder(generation);
+			if (_remote.ContainsKey(entry.Path))
+			{
+				// The server changed the file meanwhile and pushed its version: decided afresh on the next cycle, not backed off.
+				SetFileState(entry.Path, FileSyncState.Pending, null);
+				UploadDone++;
+				return;
+			}
+
 			if (ex is JSException && (upload.AccessLost || !await folder.HasAccessAsync()))
 			{
 				// Every remaining file would fail the same way: the pass ends, nothing is backed off.

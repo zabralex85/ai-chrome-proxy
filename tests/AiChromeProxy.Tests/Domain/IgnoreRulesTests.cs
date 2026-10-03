@@ -1,6 +1,6 @@
-using AiChromeProxy.Client.Sync;
+using AiChromeProxy.Domain.Sync;
 
-namespace AiChromeProxy.Tests.Client;
+namespace AiChromeProxy.Tests.Domain;
 
 public sealed class IgnoreRulesTests
 {
@@ -224,5 +224,23 @@ public sealed class IgnoreRulesTests
 
 		Assert.Equal(0, ignored);
 		Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), $"took {watch.Elapsed}");
+	}
+
+	[Theory]
+	[InlineData("docs/big/", "docs/big/a.bin", true)]
+	[InlineData("*.tmp", "src/x.tmp", true)]
+	[InlineData("!.env", ".env", true)] // cannot re-include a built-in
+	[InlineData("!keep.log", "keep.log", false)] // re-includes what .gitignore excluded
+	public void Excludes_AppliedAfterGitignore(string excludes, string path, bool ignored)
+	{
+		var rules = IgnoreRules.Create("*.log\n", excludes);
+
+		Assert.Equal(ignored, rules.IsIgnored(path));
+	}
+
+	[Fact]
+	public void Excludes_WithoutWildcards_AreSkippedDirectories()
+	{
+		Assert.Contains("/docs/big", IgnoreRules.Create(null, "/docs/big/").SkipDirectories);
 	}
 }

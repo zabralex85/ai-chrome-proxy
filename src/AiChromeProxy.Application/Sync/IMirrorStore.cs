@@ -14,8 +14,20 @@ public interface IMirrorStore
 	/// </summary>
 	Task<string?> GetHashAsync(string repo, string path, CancellationToken ct);
 
+	/// <summary>
+	/// Up to <paramref name="count"/> bytes of the mirror file from <paramref name="offset"/> (fewer at its end, none past it); null when there is no
+	/// regular file. Read while other processes may write or delete it.
+	/// </summary>
+	Task<byte[]?> ReadAsync(string repo, string path, long offset, int count, CancellationToken ct);
+
+	/// <summary>Length of the mirror file in bytes; 0 when there is no regular file.</summary>
+	long GetSize(string repo, string path);
+
 	/// <summary>Paths of the regular files in the repo folder; links and junctions (and what is behind them) are skipped.</summary>
 	IReadOnlyList<string> ListFiles(string repo);
+
+	/// <summary>Whether the repo folder has a regular file (as listed by <see cref="ListFiles"/>) that is not <paramref name="excluded"/>; stops at the first.</summary>
+	bool HasFiles(string repo, Func<string, bool> excluded);
 
 	/// <summary>
 	/// Creates the temporary file <c>&lt;path&gt;.&lt;tag&gt;.aicp-tmp</c> the upload is assembled in (<paramref name="tag"/>: the session's,

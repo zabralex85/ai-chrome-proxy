@@ -21,6 +21,12 @@ public enum SyncActivityKind
 	Reconnected,
 
 	AccessLost,
+
+	/// <summary>Server changes written to (or deleted from) the folder in one go (count and the first names).</summary>
+	Received,
+
+	/// <summary>A file changed here and on the server since they last agreed.</summary>
+	Conflict,
 }
 
 /// <summary>One entry of the "Actions history" panel.</summary>

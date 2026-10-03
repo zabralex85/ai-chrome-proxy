@@ -10,6 +10,9 @@ public sealed record DataDirectory(string Root)
 
 	public string Logs => Path.Combine(Root, "logs");
 
+	/// <summary>Default <c>Projects:Database</c> when the Server runs with a data directory.</summary>
+	public string Database => Path.Combine(Root, "aicp.db");
+
 	/// <summary>Default <c>Mirror:Root</c> when the Server runs with a data directory.</summary>
 	public string Mirror => Path.Combine(Root, "mirror");
 

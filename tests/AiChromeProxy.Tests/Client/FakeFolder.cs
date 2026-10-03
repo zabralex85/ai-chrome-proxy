@@ -66,6 +66,15 @@ public sealed class FakeFolder : IFolderAccess
 
 	public Action<bool>? Visibility { get; private set; }
 
+	/// <summary>Whether the folder may be written; <see cref="RequestWriteAccessAsync"/> grants it. Writes without it throw like the browser.</summary>
+	public bool WriteAccess { get; set; }
+
+	/// <summary>Answers <see cref="HasWriteAccessAsync"/> gives first, one per call; <see cref="WriteAccess"/> once empty.</summary>
+	public Queue<bool> WriteAccessAnswers { get; } = new();
+
+	/// <summary>Path of every <see cref="WriteAsync"/> and <see cref="DeleteAsync"/> that changed the folder, in order.</summary>
+	public List<string> Writes { get; } = [];
+
 	public void Write(string path, string text) => Files[path] = Encoding.UTF8.GetBytes(text);
 
 	public Task<string?> PickAsync() => Task.FromResult(PickResult);
@@ -139,6 +148,51 @@ public sealed class FakeFolder : IFolderAccess
 
 		var content = ReadOverride.TryGetValue(path, out var o) ? o : Files[path];
 		return Task.FromResult(content.Skip((int)offset).Take(length).ToArray());
+	}
+
+	public Task<string?> HashNowAsync(string path)
+	{
+		if (HashFailures.Contains(path))
+		{
+			return Task.FromException<string?>(new JSException($"NotReadableError: '{path}' could not be read."));
+		}
+
+		return Task.FromResult(Files.TryGetValue(path, out var b) ? Convert.ToHexStringLower(SHA256.HashData(b)) : null);
+	}
+
+	public Task<bool> HasWriteAccessAsync() => Task.FromResult(WriteAccessAnswers.TryDequeue(out var answer) ? answer : WriteAccess);
+
+	public Task<bool> RequestWriteAccessAsync()
+	{
+		WriteAccess = true;
+		return Task.FromResult(true);
+	}
+
+	public Task WriteAsync(string path, byte[] content)
+	{
+		if (!WriteAccess)
+		{
+			return Task.FromException(new JSException($"NotAllowedError: '{path}' cannot be written."));
+		}
+
+		Files[path] = content;
+		Writes.Add(path);
+		return Task.CompletedTask;
+	}
+
+	public Task DeleteAsync(string path)
+	{
+		if (!WriteAccess)
+		{
+			return Task.FromException(new JSException($"NotAllowedError: '{path}' cannot be deleted."));
+		}
+
+		if (Files.Remove(path))
+		{
+			Writes.Add(path);
+		}
+
+		return Task.CompletedTask;
 	}
 
 	public Task WatchVisibilityAsync(Action<bool> changed)

@@ -1,5 +1,6 @@
 // File System Access API glue for the sync engine: the only things C# cannot do in the browser.
-// Read-only in sub-project 3a. Called through JsFolderAccess.cs (IFolderAccess); every other decision is made in C#.
+// The picker asks for read access; writes (server changes, sub-project 3b) need write access granted from a click (requestWriteAccess).
+// Called through JsFolderAccess.cs (IFolderAccess); every other decision (the hash-guard included) is made in C#.
 // IndexedDB (remembered folder, hash cache) is best-effort: when it fails, sync still works, only without the cache.
 // Compiled by MSBuild (Microsoft.TypeScript.MSBuild) to wwwroot/js/fsaccess.js; the output is not committed.
 
@@ -101,6 +102,29 @@ function pickedRoot(): FileSystemDirectoryHandle {
         throw new Error('No folder is picked.');
     }
     return root;
+}
+
+/** A protocol path as its folder names and file name; throws on an empty, '.' or '..' segment (or a backslash) before any handle is touched. */
+function splitPath(path: string): { folders: string[]; name: string } {
+    const segments = path.split('/');
+    if (segments.some(s => s === '' || s === '.' || s === '..' || s.includes('\\'))) {
+        throw new Error(`Invalid path '${path}'.`);
+    }
+    const name = segments.pop() ?? '';
+    return { folders: segments, name };
+}
+
+/** The folder that holds the path's file, optionally creating the missing folders. */
+async function parentOf(folders: string[], create: boolean): Promise<FileSystemDirectoryHandle> {
+    let dir = pickedRoot();
+    for (const folder of folders) {
+        dir = await dir.getDirectoryHandle(folder, { create });
+    }
+    return dir;
+}
+
+function isNotFound(e: unknown): boolean {
+    return e instanceof DOMException && (e.name === 'NotFoundError' || e.name === 'TypeMismatchError');
 }
 
 function toHex(buffer: ArrayBuffer): string {
@@ -278,6 +302,82 @@ export async function readChunk(path: string, offset: number, length: number): P
         chunkFile = { path, file: await handle.getFile() };
     }
     return new Uint8Array(await chunkFile.file.slice(offset, offset + length).arrayBuffer());
+}
+
+/** SHA-256 (lower-case hex) of the file as it is now (not from the last scan), or null when it is not there. Throws when it cannot be read. */
+export async function hashNow(path: string): Promise<string | null> {
+    const { folders, name } = splitPath(path);
+    let file: File;
+    try {
+        file = await (await (await parentOf(folders, false)).getFileHandle(name)).getFile();
+    } catch (e) {
+        if (isNotFound(e)) {
+            return null;
+        }
+        throw e;
+    }
+    return toHex(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()));
+}
+
+/** Whether the picked folder may be written; asks nothing. */
+export async function hasWriteAccess(): Promise<boolean> {
+    return root !== null && (await root.queryPermission({ mode: 'readwrite' })) === 'granted';
+}
+
+/** Asks for write access; must run from a click. */
+export async function requestWriteAccess(): Promise<boolean> {
+    return root !== null && (await root.requestPermission({ mode: 'readwrite' })) === 'granted';
+}
+
+/**
+ * Replaces (or creates, with its folders) the file: createWritable writes a swap file that replaces the original only on close.
+ * A file this call created is removed again when the write fails (no empty file is left behind).
+ */
+export async function write(path: string, bytes: Uint8Array<ArrayBuffer>): Promise<void> {
+    const { folders, name } = splitPath(path);
+    const dir = await parentOf(folders, true);
+    let created = false;
+    let handle: FileSystemFileHandle;
+    try {
+        handle = await dir.getFileHandle(name);
+    } catch (e) {
+        if (!(e instanceof DOMException && e.name === 'NotFoundError')) {
+            throw e;
+        }
+        handle = await dir.getFileHandle(name, { create: true });
+        created = true;
+    }
+    try {
+        const writable = await handle.createWritable();
+        try {
+            await writable.write(bytes);
+            await writable.close();
+        } catch (e) {
+            await writable.abort().catch(() => undefined);
+            throw e;
+        }
+    } catch (e) {
+        if (created) {
+            await dir.removeEntry(name).catch(() => undefined);
+        }
+        throw e;
+    }
+}
+
+/** Deletes the file; no-op when it is not there. Never removes a folder. */
+export async function remove(path: string): Promise<void> {
+    const { folders, name } = splitPath(path);
+    let dir: FileSystemDirectoryHandle;
+    try {
+        dir = await parentOf(folders, false);
+        await dir.getFileHandle(name);
+    } catch (e) {
+        if (e instanceof DOMException && e.name === 'NotFoundError') {
+            return;
+        }
+        throw e;
+    }
+    await dir.removeEntry(name);
 }
 
 /** Calls callback.Changed(visible) when the tab is shown or hidden and when the window gets focus; replaces an earlier watch. */

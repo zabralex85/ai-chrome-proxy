@@ -1,7 +1,7 @@
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace AiChromeProxy.Client.Sync;
+namespace AiChromeProxy.Domain.Sync;
 
 /// <summary>
 /// Which files never leave the machine: the built-in excludes (secrets, VCS and build folders) plus the root <c>.gitignore</c>
@@ -39,8 +39,9 @@ public sealed class IgnoreRules
 	public IReadOnlyList<string> SkipDirectories { get; }
 
 	/// <param name="gitignore">Content of the root <c>.gitignore</c>, or null when there is none.</param>
-	public static IgnoreRules Create(string? gitignore) =>
-		new(gitignore is null ? [] : Parse(gitignore.TrimStart((char)0xFEFF).Split('\n')));
+	/// <param name="excludes">Extra patterns in <c>.gitignore</c> syntax, applied after the <c>.gitignore</c> (a <c>!</c> there cannot re-include a built-in), or null.</param>
+	public static IgnoreRules Create(string? gitignore, string? excludes = null) =>
+		new([.. ParseText(gitignore), .. ParseText(excludes)]);
 
 	/// <param name="path">A file path relative to the picked folder, <c>/</c>-separated (<c>\</c> is accepted too).</param>
 	/// <returns>True when the file or one of its parent directories is excluded.</returns>
@@ -111,6 +112,9 @@ public sealed class IgnoreRules
 			}
 		}
 	}
+
+	private static List<Rule> ParseText(string? text) =>
+		text is null ? [] : Parse(text.TrimStart((char)0xFEFF).Split('\n'));
 
 	private static List<Rule> Parse(IEnumerable<string> lines)
 	{

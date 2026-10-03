@@ -15,11 +15,15 @@ public sealed class AppServer : IAsyncDisposable
 
 	public AppServer()
 	{
+		// A fresh mirror and database per run: project settings and baselines of an earlier run must not leak in.
+		var root = Path.Combine(Path.GetTempPath(), "aicp-e2e", Guid.NewGuid().ToString("N"));
 		_factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
 		{
 			b.UseEnvironment(Environments.Development);
 			b.UseSetting("CloudflareAccess:Enabled", "false");
 			b.UseSetting("Server:Port", "0");
+			b.UseSetting("Mirror:Root", Path.Combine(root, "mirror"));
+			b.UseSetting("Projects:Database", Path.Combine(root, "aicp.db"));
 		});
 		_factory.UseKestrel();
 		_factory.StartServer();

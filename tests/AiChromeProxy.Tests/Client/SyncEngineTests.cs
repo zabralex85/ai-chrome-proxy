@@ -255,7 +255,7 @@ public sealed class SyncEngineTests : IDisposable
 
 		Assert.Equal(SyncPhase.Failed, _engine.Phase);
 		Assert.Contains("more than 20,000 files to sync", _engine.Problem, StringComparison.Ordinal);
-		Assert.Empty(_server.Transport.Sent);
+		Assert.Equal([MessageTypes.SyncOpen], SentTypes());
 		Assert.Empty(_folder.Hashed);
 	}
 
@@ -269,7 +269,7 @@ public sealed class SyncEngineTests : IDisposable
 
 		Assert.Equal(SyncPhase.Failed, _engine.Phase);
 		Assert.Contains("pick a smaller folder", _engine.Problem, StringComparison.Ordinal);
-		Assert.Empty(_server.Transport.Sent);
+		Assert.Equal([MessageTypes.SyncOpen], SentTypes());
 	}
 
 	[Fact]
@@ -440,7 +440,7 @@ public sealed class SyncEngineTests : IDisposable
 
 		Assert.Equal(SyncPhase.Failed, _engine.Phase);
 		Assert.Equal("The folder looks empty; nothing was deleted. Check access or pick the folder again.", _engine.Problem);
-		Assert.Empty(_server.Transport.Sent);
+		Assert.Equal([MessageTypes.SyncOpen], SentTypes());
 		Assert.True(File.Exists(_server.PathOf(Repo, "a.txt")));
 		Assert.True(File.Exists(_server.PathOf(Repo, "b.txt")));
 	}
@@ -664,6 +664,9 @@ public sealed class SyncEngineTests : IDisposable
 		await engine.OpenFolderAsync();
 		await engine.SyncOnceAsync(Ct);
 		File.WriteAllText(_server.PathOf(Repo, "stray.txt"), "s");
+
+		// A version both sides agreed on (deleted in the folder unseen by any delta); a file only the server created would be pushed instead.
+		_server.Projects.SetBases(Repo, [new("stray.txt", Sha("s"))]);
 		_server.Transport.Sent.Clear();
 
 		clock.Advance(SyncEngine.FullManifestInterval - TimeSpan.FromSeconds(1));
@@ -716,7 +719,7 @@ public sealed class SyncEngineTests : IDisposable
 
 		Assert.Equal(SyncPhase.Failed, _engine.Phase);
 		Assert.Contains(".gitignore could not be read", _engine.Problem, StringComparison.Ordinal);
-		Assert.Empty(_server.Transport.Sent);
+		Assert.Equal([MessageTypes.SyncOpen], SentTypes());
 		Assert.Empty(_folder.Hashed);
 	}
 
@@ -828,6 +831,25 @@ public sealed class SyncEngineTests : IDisposable
 		Assert.Equal(0, _engine.UploadTotal);
 		Assert.Equal(64, stored);
 		Assert.Equal("Already in sync (64 files).", _engine.Activity[0].Text);
+	}
+
+	[Fact]
+	public async Task SendFailsWhileDisconnecting_ProblemIsConnectionLost()
+	{
+		_folder.Write("a.txt", "a");
+		await OpenAsync();
+		_server.Transport.Reply = async request =>
+		{
+			// SignalR throws this when the connection drops between the state check and the send.
+			_server.Transport.SetState(TransportState.Reconnecting);
+			throw new InvalidOperationException("The 'SendCoreAsync' method cannot be called if the connection is not active");
+		};
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncEngine.ConnectionLost, _engine.Problem);
+		Assert.Contains(_engine.Activity, a => a.Text == SyncEngine.ConnectionLost);
+		Assert.DoesNotContain(_engine.Activity, a => a.Text.Contains("SendCoreAsync", StringComparison.Ordinal));
 	}
 
 	[Fact]

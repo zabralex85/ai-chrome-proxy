@@ -39,8 +39,8 @@ public sealed class FileSystemMirrorStore(IOptions<MirrorOptions> options) : IMi
 
 	public async Task<string?> GetHashAsync(string repo, string path, CancellationToken ct)
 	{
-		var file = new FileInfo(Resolve(repo, path));
-		if (!file.Exists || file.Attributes.HasFlag(FileAttributes.ReparsePoint))
+		var file = RegularFile(repo, path);
+		if (file is null)
 		{
 			return null;
 		}
@@ -66,19 +66,28 @@ public sealed class FileSystemMirrorStore(IOptions<MirrorOptions> options) : IMi
 		}
 	}
 
-	public IReadOnlyList<string> ListFiles(string repo)
+	public async Task<byte[]?> ReadAsync(string repo, string path, long offset, int count, CancellationToken ct)
 	{
-		var repoRoot = RepoRoot(repo);
-		if (!Directory.Exists(repoRoot) || IsLink(repoRoot))
+		var file = RegularFile(repo, path);
+		if (file is null)
 		{
-			return [];
+			return null;
 		}
 
-		return Directory.EnumerateFiles(repoRoot, "*", Recursive)
-			.Select(f => Path.GetRelativePath(repoRoot, f).Replace(Path.DirectorySeparatorChar, '/'))
-			.Where(SyncPath.IsValid)
-			.ToList();
+		using (var stream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+		{
+			stream.Position = Math.Min(offset, stream.Length);
+			var buffer = new byte[Math.Min(count, stream.Length - stream.Position)];
+			var read = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, ct);
+			return read == buffer.Length ? buffer : buffer[..read];
+		}
 	}
+
+	public long GetSize(string repo, string path) => RegularFile(repo, path)?.Length ?? 0;
+
+	public IReadOnlyList<string> ListFiles(string repo) => [.. Files(repo)];
+
+	public bool HasFiles(string repo, Func<string, bool> excluded) => Files(repo).Any(p => !excluded(p));
 
 	public Stream CreateTemp(string repo, string path, string tag)
 	{
@@ -157,6 +166,27 @@ public sealed class FileSystemMirrorStore(IOptions<MirrorOptions> options) : IMi
 
 	private string RepoRoot(string repo) =>
 		RepoName.IsValid(repo) ? Path.Combine(_root, repo) : throw BadRequest("Invalid repo name.");
+
+	/// <summary>The repo's regular files as protocol paths, enumerated lazily; links and junctions are skipped.</summary>
+	private IEnumerable<string> Files(string repo)
+	{
+		var repoRoot = RepoRoot(repo);
+		if (!Directory.Exists(repoRoot) || IsLink(repoRoot))
+		{
+			return [];
+		}
+
+		return Directory.EnumerateFiles(repoRoot, "*", Recursive)
+			.Select(f => Path.GetRelativePath(repoRoot, f).Replace(Path.DirectorySeparatorChar, '/'))
+			.Where(SyncPath.IsValid);
+	}
+
+	/// <summary>The mirror file at a protocol path; null when it is missing, a folder or a link.</summary>
+	private FileInfo? RegularFile(string repo, string path)
+	{
+		var file = new FileInfo(Resolve(repo, path));
+		return file.Exists && !file.Attributes.HasFlag(FileAttributes.ReparsePoint) ? file : null;
+	}
 
 	/// <summary>The absolute path for a protocol path: valid, inside the repo folder, and no link or junction on the way (the repo folder included).</summary>
 	private string Resolve(string repo, string path)

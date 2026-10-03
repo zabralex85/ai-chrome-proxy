@@ -1,3 +1,4 @@
+using AiChromeProxy.Application.Projects;
 using AiChromeProxy.Application.Sync;
 using AiChromeProxy.Application.Transport;
 using Microsoft.Extensions.DependencyInjection;
@@ -7,7 +8,7 @@ namespace AiChromeProxy.Application;
 
 public static class DependencyInjection
 {
-	/// <summary>Registers the envelope router and its handlers (singletons). Needs an <see cref="IMirrorStore"/> (Infrastructure) and logging (the host).</summary>
+	/// <summary>Registers the envelope router and its handlers (singletons). Needs an <see cref="IMirrorStore"/> and an <see cref="IProjectStore"/> (Infrastructure) and logging (the host).</summary>
 	public static IServiceCollection AddApplication(this IServiceCollection services)
 	{
 		services.TryAddSingleton(TimeProvider.System);
@@ -16,6 +17,11 @@ public static class DependencyInjection
 		foreach (var type in SyncHandler.Types)
 		{
 			services.AddSingleton<IEnvelopeHandler>(sp => new SyncHandler(type, sp.GetRequiredService<SyncSessions>()));
+		}
+
+		foreach (var type in ProjectSettingsHandler.Types)
+		{
+			services.AddSingleton<IEnvelopeHandler>(sp => new ProjectSettingsHandler(type, sp.GetRequiredService<IProjectStore>(), sp.GetRequiredService<SyncSessions>()));
 		}
 
 		services.AddSingleton<EnvelopeRouter>();

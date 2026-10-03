@@ -6,7 +6,7 @@
         @foreach (var id in Tabs.Open)
         {
             var active = id == Tabs.Active;
-            var path = TabSet.PathOf(id);
+            var path = TabSet.SelectedPath(id);
             <div id="@TabId(id)" role="tab" class="tab @(active ? "active" : null)" aria-selected="@(active ? "true" : "false")" aria-controls="tab-panel"
                  data-testid="@TestId(id)" data-path="@path" title="@path" @onclick="() => ChangeAsync(() => Tabs.Show(id))">
                 @switch (id)
@@ -18,6 +18,14 @@
                     case TabSet.Errors:
                         <Icon Name="error" Class="kind-error" />
                         <span class="tab-label">Errors</span>
+                        break;
+                    case TabSet.Settings:
+                        <Icon Name="gear" Class="kind-file" />
+                        <span class="tab-label">Project settings</span>
+                        break;
+                    case var _ when TabSet.IsConflict(id):
+                        <Icon Name="conflict" Class="kind-conflict" />
+                        <span class="tab-label">Conflict: @FileName(path!)</span>
                         break;
                     default:
                         var kind = Format.FileKind(path!);
@@ -79,6 +87,12 @@
                         </ul>
                     }
                 </section>
+                break;
+            case TabSet.Settings:
+                <ProjectSettingsView Engine="Engine" />
+                break;
+            case var conflictTab when TabSet.IsConflict(conflictTab):
+                <ConflictView Engine="Engine" Path="@(TabSet.ConflictPath(conflictTab)!)" />
                 break;
             default:
                 var activePath = TabSet.PathOf(Tabs.Active)!;
@@ -142,6 +156,8 @@
     {
         TabSet.Welcome => "Welcome",
         TabSet.Errors => "Errors",
+        TabSet.Settings => "Project settings",
+        _ when TabSet.IsConflict(id) => "Conflict: " + FileName(TabSet.ConflictPath(id)!),
         _ => FileName(TabSet.PathOf(id)!),
     };
 
@@ -150,6 +166,8 @@
     {
         TabSet.Welcome => "tab-welcome",
         TabSet.Errors => "tab-errors",
+        TabSet.Settings => "tab-settings",
+        _ when TabSet.IsConflict(id) => "tab-conflict",
         _ => "tab-file",
     };
 

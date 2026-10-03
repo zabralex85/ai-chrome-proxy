@@ -308,5 +308,77 @@ public sealed class ShellTests
 		Assert.DoesNotContain('<', Format.Attention(FolderStatus.Ready, 2)!);
 	}
 
+	[Theory]
+	[InlineData(1, "1 server change")]
+	[InlineData(2, "2 server changes")]
+	[InlineData(1234, "1 234 server changes")]
+	public void ServerChanges_SingularAndGrouped(int count, string expected)
+	{
+		Assert.Equal(expected, Format.ServerChanges(count));
+	}
+
+	[Fact]
+	public void Tabs_ConflictAndSettingsTabs_HaveOwnIds()
+	{
+		var id = TabSet.ConflictTab("src/a.cs");
+
+		Assert.Equal("conflict:src/a.cs", id);
+		Assert.True(TabSet.IsConflict(id));
+		Assert.Equal("src/a.cs", TabSet.ConflictPath(id));
+		Assert.False(TabSet.IsFile(id));
+		Assert.Null(TabSet.PathOf(id));
+		Assert.False(TabSet.IsConflict(TabSet.FileTab("conflict:x")));
+		Assert.Null(TabSet.ConflictPath(TabSet.Settings));
+		Assert.Equal(":settings", TabSet.Settings);
+		Assert.Equal("src/a.cs", TabSet.SelectedPath(id));
+		Assert.Equal("src/a.cs", TabSet.SelectedPath(TabSet.FileTab("src/a.cs")));
+		Assert.Null(TabSet.SelectedPath(TabSet.Settings));
+	}
+
+	[Fact]
+	public void Tabs_CloseResolved_ClosesConflictTabsWithoutConflict()
+	{
+		var tabs = new TabSet();
+		tabs.Show(TabSet.FileTab("a.cs"));
+		tabs.Show(TabSet.ConflictTab("a.cs"));
+		tabs.Show(TabSet.ConflictTab("b.cs"));
+		tabs.Show(TabSet.Settings);
+
+		tabs.CloseResolved(["b.cs"]);
+
+		Assert.Equal([TabSet.Welcome, TabSet.FileTab("a.cs"), TabSet.ConflictTab("b.cs"), TabSet.Settings], tabs.Open);
+		Assert.Equal(TabSet.Settings, tabs.Active);
+
+		tabs.Show(TabSet.ConflictTab("b.cs"));
+		tabs.CloseResolved([]);
+		Assert.Equal([TabSet.Welcome, TabSet.FileTab("a.cs"), TabSet.Settings], tabs.Open);
+		Assert.NotEqual(TabSet.ConflictTab("b.cs"), tabs.Active);
+	}
+
+	[Fact]
+	public void ProjectSettingsForm_DirtyUntilSavedValuesMatch_KeepsUnknownKeys()
+	{
+		var extra = new Dictionary<string, System.Text.Json.JsonElement> { ["model"] = System.Text.Json.JsonDocument.Parse("\"x\"").RootElement };
+		var saved = new AiChromeProxy.Domain.Sync.ProjectSettings { Excludes = "*.log", ApplyServerChanges = false, Extra = extra };
+		var form = new ProjectSettingsForm(saved);
+
+		Assert.Equal(("*.log", false, false), (form.Excludes, form.Apply, form.IsDirty));
+
+		form.Apply = true;
+		Assert.True(form.IsDirty);
+		form.Apply = false;
+		Assert.False(form.IsDirty);
+
+		form.Excludes = "  \n";
+		form.Apply = true;
+		var result = form.ToSettings();
+		Assert.Null(result.Excludes);
+		Assert.True(result.ApplyServerChanges);
+		Assert.Same(extra, result.Extra);
+
+		Assert.False(new ProjectSettingsForm(AiChromeProxy.Domain.Sync.ProjectSettings.Default).IsDirty);
+		Assert.True(new ProjectSettingsForm(AiChromeProxy.Domain.Sync.ProjectSettings.Default).Apply);
+	}
+
 	private static string Id(string tab) => tab.StartsWith(':') ? tab : TabSet.FileTab(tab);
 }

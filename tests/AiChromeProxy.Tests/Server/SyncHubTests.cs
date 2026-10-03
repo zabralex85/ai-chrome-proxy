@@ -25,11 +25,15 @@ public sealed class SyncHubTests : IAsyncDisposable
 	private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
 
 	private readonly TestAccessIssuer _issuer = new();
-	private readonly string _mirror = Path.Combine(TempRootCleanup.Root, Guid.NewGuid().ToString("N"));
+	private readonly string _testRoot = Path.Combine(TempRootCleanup.Root, Guid.NewGuid().ToString("N"));
+	private readonly string _mirror;
+	private readonly string _database;
 	private readonly WebApplicationFactory<Program> _factory;
 
 	public SyncHubTests()
 	{
+		_mirror = Path.Combine(_testRoot, "mirror");
+		_database = Path.Combine(_testRoot, "aicp.db");
 		_factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
 		{
 			b.UseEnvironment(Environments.Production);
@@ -37,6 +41,7 @@ public sealed class SyncHubTests : IAsyncDisposable
 			b.UseSetting("CloudflareAccess:TeamDomain", TestAccessIssuer.TeamDomain);
 			b.UseSetting("CloudflareAccess:Audience", TestAccessIssuer.Audience);
 			b.UseSetting("Mirror:Root", _mirror);
+			b.UseSetting("Projects:Database", _database);
 			b.ConfigureServices(s => s.AddHttpClient(CloudflareAccessTokenValidator.JwksHttpClient)
 				.ConfigurePrimaryHttpMessageHandler(() => _issuer.Handler()));
 		});
@@ -125,12 +130,64 @@ public sealed class SyncHubTests : IAsyncDisposable
 		await WaitUntilAsync(() => Directory.GetFiles(Path.Combine(_mirror, "r"), "*.aicp-tmp").Length == 0, ct);
 	}
 
+	[Fact]
+	public async Task ServerEdit_PushedFetchedAcked_OverSignalR()
+	{
+		var ct = TestContext.Current.CancellationToken;
+		var original = Encoding.UTF8.GetBytes("v1");
+		var edited = Encoding.UTF8.GetBytes("v2 edited on the server");
+		var pushed = new TaskCompletionSource<SyncRemotePayload>(TaskCreationOptions.RunContinuationsAsynchronously);
+		var pushes = 0;
+
+		await using (var transport = new SignalRTransport(Connection()))
+		{
+			transport.Received += e =>
+			{
+				if (e.Type != MessageTypes.SyncRemote)
+				{
+					return;
+				}
+
+				var payload = Read<SyncRemotePayload>(e);
+				if (payload.Changes.Any(c => c.Sha256 == Sha(edited)))
+				{
+					Interlocked.Increment(ref pushes);
+					pushed.TrySetResult(payload);
+				}
+			};
+			await transport.ConnectAsync(ct);
+
+			var repo = Read<SyncOpenPayload>(await transport.RequestAsync(Envelope.Create(MessageTypes.SyncOpen, new SyncOpenPayload("r")), Timeout, ct)).Repo;
+			var need = await transport.RequestAsync(Envelope.Create(MessageTypes.SyncManifest, new SyncManifestPayload(repo, [new("a.txt", original.Length, Sha(original))], Final: true)), Timeout, ct);
+			Assert.Equal(["a.txt"], Read<SyncNeedPayload>(need).Paths);
+			await transport.RequestAsync(Envelope.Create(MessageTypes.SyncChunk, new SyncChunkPayload(repo, "a.txt", 0, SyncData.Encode(original), true, Sha(original))), Timeout, ct);
+
+			await File.WriteAllBytesAsync(Path.Combine(_mirror, repo, "a.txt"), edited, ct);
+			var remote = await pushed.Task.WaitAsync(Timeout, ct);
+			var change = Assert.Single(remote.Changes);
+			Assert.Equal(new RemoteChange("a.txt", Sha(edited), edited.Length, Sha(original)), change);
+
+			var data = Read<SyncDataPayload>(await transport.RequestAsync(Envelope.Create(MessageTypes.SyncFetch, new SyncFetchPayload(repo, "a.txt", 0)), Timeout, ct));
+			Assert.True(data.Last);
+			Assert.Equal(edited, SyncData.Decode(data.Data));
+			Assert.Equal(Sha(edited), data.Sha256);
+
+			var ack = Read<SyncAckPayload>(await transport.RequestAsync(Envelope.Create(MessageTypes.SyncAck, new SyncAckPayload(repo, "a.txt", Sha(edited))), Timeout, ct));
+			Assert.Equal(new SyncAckPayload(repo, "a.txt", Sha(edited)), ack);
+
+			var again = await transport.RequestAsync(Envelope.Create(MessageTypes.SyncManifest, new SyncManifestPayload(repo, [new("a.txt", edited.Length, Sha(edited))], Final: true)), Timeout, ct);
+			Assert.Empty(Read<SyncNeedPayload>(again).Paths);
+			Assert.Equal(1, Volatile.Read(ref pushes));
+		}
+	}
+
 	public async ValueTask DisposeAsync()
 	{
 		await _factory.DisposeAsync();
-		if (Directory.Exists(_mirror))
+		Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+		if (Directory.Exists(_testRoot))
 		{
-			Directory.Delete(_mirror, recursive: true);
+			Directory.Delete(_testRoot, recursive: true);
 		}
 	}
 

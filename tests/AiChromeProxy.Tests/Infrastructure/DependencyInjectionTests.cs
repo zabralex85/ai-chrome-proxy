@@ -1,6 +1,8 @@
 using AiChromeProxy.Application;
+using AiChromeProxy.Application.Sync;
 using AiChromeProxy.Application.Transport;
 using AiChromeProxy.Infrastructure;
+using AiChromeProxy.Infrastructure.Projects;
 using AiChromeProxy.Infrastructure.Security;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -17,6 +19,7 @@ public sealed class DependencyInjectionTests
 		using (var provider = new ServiceCollection().AddInfrastructure(Config()).BuildServiceProvider(Strict))
 		{
 			Assert.NotNull(provider.GetRequiredService<CloudflareAccessTokenValidator>());
+			Assert.IsType<SqliteProjectStore>(provider.GetRequiredService<IProjectStore>());
 		}
 	}
 
@@ -37,6 +40,7 @@ public sealed class DependencyInjectionTests
 			["CloudflareAccess:TeamDomain"] = "team.cloudflareaccess.com",
 			["CloudflareAccess:Audience"] = "aud",
 			["Mirror:Root"] = Path.Combine(TempRootCleanup.Root, "di-mirror"),
+			["Projects:Database"] = Path.Combine(TempRootCleanup.Root, "di-projects", "aicp.db"),
 		})
 		.Build();
 }

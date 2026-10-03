@@ -45,10 +45,26 @@
                     </div>
                 }
             </div>
+            @if (RemoteBanner.Of(Engine) is { } banner)
+            {
+                <div class="banner" role="status" data-testid="server-changes">
+                    <Icon Name="sync" />
+                    <span>@banner.Text</span>
+                    @if (banner.Button == RemoteBanner.AllowWriting)
+                    {
+                        @* Straight from the click: the browser asks for write access only on a user activation. *@
+                        <button type="button" class="button link" data-testid="allow-writing" @onclick="Engine.AllowWritingAsync">@banner.Button</button>
+                    }
+                    else
+                    {
+                        <button type="button" class="button link" data-testid="apply-all" @onclick="() => Engine.ApplyAsync(null)">@banner.Button</button>
+                    }
+                </div>
+            }
             <FileTreeView Engine="Engine" Selected="@Selected" OnSelect="OnSelect" />
         }
     </div>
-    <SyncStatus Engine="Engine" OnShowErrors="OnShowErrors" />
+    <SyncStatus Engine="Engine" OnShowErrors="OnShowErrors" OnShowConflict="OnShowConflict" />
 </aside>
 
 @code {
@@ -68,5 +84,9 @@
 
     [Parameter]
     public EventCallback OnShowErrors { get; set; }
+
+    /// <summary>The status-bar conflict count was clicked.</summary>
+    [Parameter]
+    public EventCallback OnShowConflict { get; set; }
 }
 
