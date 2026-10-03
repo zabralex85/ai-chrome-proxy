@@ -240,7 +240,7 @@ public sealed class RemoteAccessViewModelTests : IDisposable
 	public async Task SetUp_ProvisioningFails_ErrorAndBack_NoSettingsWritten()
 	{
 		RemoteAccessProvisionerTests.FreshAccount(_handler)
-			.On("GET", "zones/z1/dns_records?name=code.example.com&page=1&per_page=50", """[{"id":"d9","type":"A","content":"203.0.113.10","proxied":true}]""", totalPages: 1);
+			.On("GET", "zones/z1/dns_records?name.exact=code.example.com&page=1&per_page=50", """[{"id":"d9","type":"A","content":"203.0.113.10","proxied":true}]""", totalPages: 1);
 		var vm = await DetailsAsync();
 		vm.Emails = "jane@example.com";
 
@@ -249,7 +249,7 @@ public sealed class RemoteAccessViewModelTests : IDisposable
 		Assert.Equal(["code.example.com already has a DNS record; choose another subdomain or delete it."], vm.Errors);
 		Assert.True(vm.Failed);
 		Assert.False(vm.Succeeded);
-		Assert.Equal(3, vm.Steps.Count);
+		Assert.Single(vm.Steps);
 		Assert.False(File.Exists(_dataDir.SettingsFile));
 		Assert.Equal("api-token", vm.ApiToken);
 

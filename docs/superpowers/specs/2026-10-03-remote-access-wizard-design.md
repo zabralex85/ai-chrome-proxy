@@ -31,13 +31,13 @@ The tray uses it; the Server does not. `HttpClient` injected (tests pass a fake 
   - `VerifyTokenAsync` → `GET /user/tokens/verify` (`result.status` must be `active`).
   - `ListZonesAsync` → `GET /zones?status=active` → `{ id, name, account { id, name } }`. Accounts are taken from the zones (no "Account Settings Read" permission needed).
   - Tunnels: `GET /accounts/{a}/cfd_tunnel?name=&is_deleted=false`, `POST /accounts/{a}/cfd_tunnel {name, config_src:"cloudflare"}`, `GET /accounts/{a}/cfd_tunnel/{id}/token`, `PUT /accounts/{a}/cfd_tunnel/{id}/configurations {config:{ingress:[{hostname, service:"http://127.0.0.1:<port>"},{service:"http_status:404"}]}}`.
-  - DNS: `GET /zones/{z}/dns_records?name=<fqdn>`, `POST /zones/{z}/dns_records {type:"CNAME", name:<fqdn>, content:"<tunnelId>.cfargotunnel.com", proxied:true, ttl:1}`, `PATCH /zones/{z}/dns_records/{id} {proxied:true}` when our CNAME exists unproxied.
+  - DNS: `GET /zones/{z}/dns_records?name.exact=<fqdn>`, `POST /zones/{z}/dns_records {type:"CNAME", name:<fqdn>, content:"<tunnelId>.cfargotunnel.com", proxied:true, ttl:1}`, `PATCH /zones/{z}/dns_records/{id} {proxied:true}` when our CNAME exists unproxied.
   - Access: `GET /accounts/{a}/access/organizations` (`auth_domain`); policies `GET/POST/PUT /accounts/{a}/access/policies[/{id}]` `{name, decision:"allow", include:[{email:{email}}…]}`; apps `GET/POST/PUT /accounts/{a}/access/apps[/{id}]` `{name, type:"self_hosted", domain:<fqdn>, session_duration:"24h", policies:[{id, precedence:1}]}`, `aud` read from the result.
 - `RemoteAccessProvisioner.ProvisionAsync(RemoteAccessRequest, IProgress<string>, ct)` → `RemoteAccessResult { TeamDomain, Audience, PublicHost, TunnelToken }`. Steps, each reported as one progress line:
   1. Team domain from the organisation (stop if Access is not enabled — error code `access.api.error.not_enabled` or 4xx on that call).
   2. Tunnel `ai-chrome-proxy-<machine name, lower-case>`: reuse or create; fetch its token.
   3. Ingress: `<fqdn>` → `http://127.0.0.1:<Server:Port>`, then the 404 catch-all (full replace — the tunnel is ours).
-  4. DNS CNAME (create / keep / make proxied / conflict error as above).
+  4. DNS CNAME (create / keep / make proxied / conflict error as above). The records are looked up together with the tunnel, before step 2 creates anything, so a conflict refuses with no change to the account.
   5. Access policy `AI Chrome Proxy — <fqdn>`: create or replace its `include` with the given emails.
   6. Access application for `<fqdn>`: create or update (name `AI Chrome Proxy`, the policy above); read `aud`.
 - Input validation (pure, tested): subdomain is one DNS label (`[a-z0-9-]`, 1–63, no leading/trailing `-`); at least one email, each `local@domain` with a dot in the domain; the resulting FQDN passes `HostName` validation.

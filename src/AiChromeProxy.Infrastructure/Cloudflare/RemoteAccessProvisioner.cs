@@ -15,7 +15,7 @@ public sealed class RemoteAccessProvisioner(CloudflareApi api)
 
 	public static string PolicyName(string publicHost) => $"AI Chrome Proxy — {publicHost}";
 
-	/// <summary>Runs the six steps in order, reporting one line per finished step.</summary>
+	/// <summary>Runs the six steps in order, reporting one line per finished step. Lookups come first: a refusal (a foreign DNS record) changes nothing.</summary>
 	/// <exception cref="CloudflareApiException">A step failed (Access not enabled, a foreign DNS record, or an API error); later steps did not run.</exception>
 	public async Task<RemoteAccessResult> ProvisionAsync(RemoteAccessRequest request, IProgress<string> progress, CancellationToken ct)
 	{
@@ -25,16 +25,25 @@ public sealed class RemoteAccessProvisioner(CloudflareApi api)
 		var teamDomain = await GetTeamDomainAsync(account, ct);
 		progress.Report($"Zero Trust team domain: {teamDomain}");
 
-		var (tunnel, tunnelCreated) = await FindOrCreateTunnelAsync(account, TunnelName(request.MachineName), ct);
+		var name = TunnelName(request.MachineName);
+		var tunnels = await api.ListAsync<Tunnel>($"accounts/{account}/cfd_tunnel?name={Uri.EscapeDataString(name)}&is_deleted=false", ct);
+		var existing = tunnels.FirstOrDefault(t => t.Name == name);
+		var records = await api.ListAsync<DnsRecord>($"zones/{request.Zone.Id}/dns_records?name.exact={Uri.EscapeDataString(host)}", ct);
+		if (records.Any(r => existing is null || !IsCnameTo(r, existing.Id)))
+		{
+			throw new CloudflareApiException($"{host} already has a DNS record; choose another subdomain or delete it.");
+		}
+
+		var tunnel = existing ?? await api.SendAsync<Tunnel>(HttpMethod.Post, $"accounts/{account}/cfd_tunnel", new { Name = name, ConfigSrc = "cloudflare" }, ct);
 		var tunnelToken = await api.SendAsync<string>(HttpMethod.Get, $"accounts/{account}/cfd_tunnel/{tunnel.Id}/token", null, ct);
-		progress.Report($"Tunnel {tunnel.Name}: {(tunnelCreated ? "created" : "reused")}");
+		progress.Report($"Tunnel {tunnel.Name}: {(existing is null ? "created" : "reused")}");
 
 		var service = $"http://127.0.0.1:{request.Port}";
 		var ingress = new { Config = new { Ingress = new object[] { new { Hostname = host, Service = service }, new { Service = "http_status:404" } } } };
 		await api.SendAsync<JsonElement>(HttpMethod.Put, $"accounts/{account}/cfd_tunnel/{tunnel.Id}/configurations", ingress, ct);
 		progress.Report($"Tunnel route: {host} → {service}");
 
-		progress.Report($"DNS record {host}: {await EnsureCnameAsync(request.Zone.Id, host, tunnel.Id, ct)}");
+		progress.Report($"DNS record {host}: {await EnsureCnameAsync(request.Zone.Id, host, tunnel.Id, records.FirstOrDefault(), ct)}");
 
 		var (policy, policyCreated) = await UpsertPolicyAsync(account, PolicyName(host), request.Emails, ct);
 		progress.Report($"Access policy {policy.Name}: {(policyCreated ? "created" : "updated")} ({string.Join(", ", request.Emails)})");
@@ -44,6 +53,9 @@ public sealed class RemoteAccessProvisioner(CloudflareApi api)
 
 		return new RemoteAccessResult(teamDomain, app.Aud, host, tunnelToken);
 	}
+
+	private static bool IsCnameTo(DnsRecord record, string tunnelId) =>
+		record.Type == "CNAME" && string.Equals(record.Content, $"{tunnelId}.cfargotunnel.com", StringComparison.OrdinalIgnoreCase);
 
 	private async Task<string> GetTeamDomainAsync(string account, CancellationToken ct)
 	{
@@ -62,33 +74,13 @@ public sealed class RemoteAccessProvisioner(CloudflareApi api)
 			: organization.AuthDomain;
 	}
 
-	private async Task<(Tunnel Tunnel, bool Created)> FindOrCreateTunnelAsync(string account, string name, CancellationToken ct)
-	{
-		var tunnels = await api.ListAsync<Tunnel>($"accounts/{account}/cfd_tunnel?name={Uri.EscapeDataString(name)}&is_deleted=false", ct);
-		if (tunnels.FirstOrDefault(t => t.Name == name) is { } existing)
-		{
-			return (existing, false);
-		}
-
-		var created = await api.SendAsync<Tunnel>(HttpMethod.Post, $"accounts/{account}/cfd_tunnel", new { Name = name, ConfigSrc = "cloudflare" }, ct);
-		return (created, true);
-	}
-
+	/// <param name="ours">The existing CNAME to this tunnel (already checked to be the only record for the name), or null.</param>
 	/// <returns>What happened, for the progress line.</returns>
-	private async Task<string> EnsureCnameAsync(string zone, string host, string tunnelId, CancellationToken ct)
+	private async Task<string> EnsureCnameAsync(string zone, string host, string tunnelId, DnsRecord? ours, CancellationToken ct)
 	{
-		var target = $"{tunnelId}.cfargotunnel.com";
-		var records = await api.ListAsync<DnsRecord>($"zones/{zone}/dns_records?name={Uri.EscapeDataString(host)}", ct);
-		bool IsOurs(DnsRecord r) => r.Type == "CNAME" && string.Equals(r.Content, target, StringComparison.OrdinalIgnoreCase);
-
-		if (records.Any(r => !IsOurs(r)))
+		if (ours is null)
 		{
-			throw new CloudflareApiException($"{host} already has a DNS record; choose another subdomain or delete it.");
-		}
-
-		if (records.FirstOrDefault() is not { } ours)
-		{
-			var record = new { Type = "CNAME", Name = host, Content = target, Proxied = true, Ttl = 1 };
+			var record = new { Type = "CNAME", Name = host, Content = $"{tunnelId}.cfargotunnel.com", Proxied = true, Ttl = 1 };
 			await api.SendAsync<JsonElement>(HttpMethod.Post, $"zones/{zone}/dns_records", record, ct);
 			return "CNAME created";
 		}

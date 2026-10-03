@@ -26,7 +26,7 @@ public sealed class RemoteAccessProvisionerTests : IDisposable
 		.On("POST", "accounts/a1/cfd_tunnel", $$"""{"id":"{{TunnelId}}","name":"ai-chrome-proxy-homepc"}""")
 		.On("GET", $"accounts/a1/cfd_tunnel/{TunnelId}/token", $"\"{TunnelToken}\"")
 		.On("PUT", $"accounts/a1/cfd_tunnel/{TunnelId}/configurations", """{"tunnel_id":"t","version":1}""")
-		.On("GET", "zones/z1/dns_records?name=code.example.com&page=1&per_page=50", "[]", totalPages: 0)
+		.On("GET", "zones/z1/dns_records?name.exact=code.example.com&page=1&per_page=50", "[]", totalPages: 0)
 		.On("POST", "zones/z1/dns_records", """{"id":"d1"}""")
 		.On("GET", "accounts/a1/access/policies?page=1&per_page=50", """[{"id":"other","name":"Somebody else's"}]""", totalPages: 1)
 		.On("POST", "accounts/a1/access/policies", $$"""{"id":"p1","name":"{{Policy}}"}""")
@@ -45,10 +45,10 @@ public sealed class RemoteAccessProvisionerTests : IDisposable
 			[
 				"GET accounts/a1/access/organizations",
 				"GET accounts/a1/cfd_tunnel?name=ai-chrome-proxy-homepc&is_deleted=false&page=1&per_page=50",
+				"GET zones/z1/dns_records?name.exact=code.example.com&page=1&per_page=50",
 				"POST accounts/a1/cfd_tunnel",
 				$"GET accounts/a1/cfd_tunnel/{TunnelId}/token",
 				$"PUT accounts/a1/cfd_tunnel/{TunnelId}/configurations",
-				"GET zones/z1/dns_records?name=code.example.com&page=1&per_page=50",
 				"POST zones/z1/dns_records",
 				"GET accounts/a1/access/policies?page=1&per_page=50",
 				"POST accounts/a1/access/policies",
@@ -93,7 +93,7 @@ public sealed class RemoteAccessProvisionerTests : IDisposable
 			.On("GET", "accounts/a1/cfd_tunnel?name=ai-chrome-proxy-homepc&is_deleted=false&page=1&per_page=50", $$"""[{"id":"{{TunnelId}}","name":"ai-chrome-proxy-homepc"}]""", totalPages: 1)
 			.On("GET", $"accounts/a1/cfd_tunnel/{TunnelId}/token", $"\"{TunnelToken}\"")
 			.On("PUT", $"accounts/a1/cfd_tunnel/{TunnelId}/configurations", "{}")
-			.On("GET", "zones/z1/dns_records?name=code.example.com&page=1&per_page=50", $$"""[{"id":"d1","type":"CNAME","content":"{{TunnelId}}.CFARGOTUNNEL.com","proxied":true}]""", totalPages: 1)
+			.On("GET", "zones/z1/dns_records?name.exact=code.example.com&page=1&per_page=50", $$"""[{"id":"d1","type":"CNAME","content":"{{TunnelId}}.CFARGOTUNNEL.com","proxied":true}]""", totalPages: 1)
 			.On("GET", "accounts/a1/access/policies?page=1&per_page=50", "[]", totalPages: 2)
 			.On("GET", "accounts/a1/access/policies?page=2&per_page=50", $$"""[{"id":"p1","name":"{{Policy}}"}]""", totalPages: 2)
 			.On("PUT", "accounts/a1/access/policies/p1", $$"""{"id":"p1","name":"{{Policy}}"}""")
@@ -105,6 +105,10 @@ public sealed class RemoteAccessProvisionerTests : IDisposable
 		Assert.Equal("aud-123", result.Audience);
 		Assert.DoesNotContain(_handler.Requests, r => r.Method is "POST" or "PATCH");
 		AssertBody("PUT", "accounts/a1/access/policies/p1", $$$"""{"name":"{{{Policy}}}","decision":"allow","include":[{"email":{"email":"ann@example.org"}}]}""");
+		AssertBody(
+			"PUT",
+			"accounts/a1/access/apps/app1",
+			"""{"name":"AI Chrome Proxy","type":"self_hosted","domain":"code.example.com","session_duration":"24h","policies":[{"id":"p1","precedence":1}]}""");
 		Assert.Equal(
 			[
 				"Zero Trust team domain: jane.cloudflareaccess.com",
@@ -121,7 +125,8 @@ public sealed class RemoteAccessProvisionerTests : IDisposable
 	public async Task OurCnameUnproxied_PatchedToProxied()
 	{
 		FreshAccount(_handler)
-			.On("GET", "zones/z1/dns_records?name=code.example.com&page=1&per_page=50", $$"""[{"id":"d1","type":"CNAME","content":"{{TunnelId}}.cfargotunnel.com","proxied":false}]""", totalPages: 1)
+			.On("GET", "accounts/a1/cfd_tunnel?name=ai-chrome-proxy-homepc&is_deleted=false&page=1&per_page=50", $$"""[{"id":"{{TunnelId}}","name":"ai-chrome-proxy-homepc"}]""", totalPages: 1)
+			.On("GET", "zones/z1/dns_records?name.exact=code.example.com&page=1&per_page=50", $$"""[{"id":"d1","type":"CNAME","content":"{{TunnelId}}.cfargotunnel.com","proxied":false}]""", totalPages: 1)
 			.On("PATCH", "zones/z1/dns_records/d1", """{"id":"d1"}""");
 
 		await ProvisionAsync();
@@ -134,16 +139,34 @@ public sealed class RemoteAccessProvisionerTests : IDisposable
 	[Theory]
 	[InlineData("A", "203.0.113.10")]
 	[InlineData("CNAME", "other.example.net")]
-	public async Task ForeignDnsRecord_Refused_NothingAfterIt(string type, string content)
+	public async Task ForeignDnsRecord_Refused_BeforeAnyChange(string type, string content)
 	{
 		FreshAccount(_handler)
-			.On("GET", "zones/z1/dns_records?name=code.example.com&page=1&per_page=50", $$"""[{"id":"d9","type":"{{type}}","content":"{{content}}","proxied":true}]""", totalPages: 1);
+			.On("GET", "zones/z1/dns_records?name.exact=code.example.com&page=1&per_page=50", $$"""[{"id":"d9","type":"{{type}}","content":"{{content}}","proxied":true}]""", totalPages: 1);
 
 		var ex = await Assert.ThrowsAsync<CloudflareApiException>(() => ProvisionAsync());
 
 		Assert.Equal("code.example.com already has a DNS record; choose another subdomain or delete it.", ex.Message);
-		Assert.Equal("GET zones/z1/dns_records?name=code.example.com&page=1&per_page=50", _handler.Calls.Last());
-		Assert.DoesNotContain(_handler.Requests, r => r.Path.StartsWith("zones/z1/dns_records", StringComparison.Ordinal) && r.Method != "GET");
+		Assert.Equal("GET zones/z1/dns_records?name.exact=code.example.com&page=1&per_page=50", _handler.Calls.Last());
+		Assert.All(_handler.Requests, r => Assert.Equal("GET", r.Method));
+		Assert.Equal(["Zero Trust team domain: jane.cloudflareaccess.com"], _progress);
+	}
+
+	[Fact]
+	public async Task OurCnameAndAForeignRecord_Refused_BeforeAnyChange()
+	{
+		FreshAccount(_handler)
+			.On("GET", "accounts/a1/cfd_tunnel?name=ai-chrome-proxy-homepc&is_deleted=false&page=1&per_page=50", $$"""[{"id":"{{TunnelId}}","name":"ai-chrome-proxy-homepc"}]""", totalPages: 1)
+			.On(
+				"GET",
+				"zones/z1/dns_records?name.exact=code.example.com&page=1&per_page=50",
+				$$"""[{"id":"d1","type":"CNAME","content":"{{TunnelId}}.cfargotunnel.com","proxied":true},{"id":"d9","type":"TXT","content":"v=spf1 -all","proxied":false}]""",
+				totalPages: 1);
+
+		var ex = await Assert.ThrowsAsync<CloudflareApiException>(() => ProvisionAsync());
+
+		Assert.Equal("code.example.com already has a DNS record; choose another subdomain or delete it.", ex.Message);
+		Assert.All(_handler.Requests, r => Assert.Equal("GET", r.Method));
 	}
 
 	[Fact]
@@ -159,6 +182,8 @@ public sealed class RemoteAccessProvisionerTests : IDisposable
 			ex.Message,
 			StringComparison.Ordinal);
 		Assert.Contains("access.api.error.not_enabled", ex.Message, StringComparison.Ordinal);
+		Assert.Equal(12130, ex.Code);
+		Assert.Equal(HttpStatusCode.NotFound, ex.StatusCode);
 		Assert.Single(_handler.Requests);
 		Assert.Empty(_progress);
 	}
@@ -184,6 +209,18 @@ public sealed class RemoteAccessProvisionerTests : IDisposable
 	}
 
 	[Fact]
+	public async Task OrganizationRateLimited_NotReportedAsNotEnabled()
+	{
+		FreshAccount(_handler).OnError("GET", "accounts/a1/access/organizations", HttpStatusCode.TooManyRequests, 10000, "Rate limited");
+
+		var ex = await Assert.ThrowsAsync<CloudflareApiException>(() => ProvisionAsync());
+
+		Assert.Equal("Cloudflare API error 10000 on GET accounts/a1/access/organizations: Rate limited", ex.Message);
+		Assert.Equal(HttpStatusCode.TooManyRequests, ex.StatusCode);
+		Assert.Equal(2, _handler.Requests.Count);
+	}
+
+	[Fact]
 	public void Names_FromMachineAndHost()
 	{
 		Assert.Equal("ai-chrome-proxy-homepc", RemoteAccessProvisioner.TunnelName("HOMEPC"));
@@ -203,7 +240,7 @@ public sealed class RemoteAccessProvisionerTests : IDisposable
 	public void Dispose() => _http.Dispose();
 
 	private Task<RemoteAccessResult> ProvisionAsync(params string[] emails) =>
-		new RemoteAccessProvisioner(new CloudflareApi(_http, "api-token")).ProvisionAsync(
+		new RemoteAccessProvisioner(new CloudflareApi(_http, "api-token", (_, _) => Task.CompletedTask)).ProvisionAsync(
 			new RemoteAccessRequest(Zone, "code", emails.Length == 0 ? ["jane@example.com", "joe@example.com"] : emails, 5180, "HOMEPC"),
 			new ListProgress(_progress),
 			TestContext.Current.CancellationToken);
