@@ -1,6 +1,41 @@
 // File System Access API glue for the sync engine: the only things C# cannot do in the browser.
 // Read-only in sub-project 3a. Called through JsFolderAccess.cs (IFolderAccess); every other decision is made in C#.
 // IndexedDB (remembered folder, hash cache) is best-effort: when it fails, sync still works, only without the cache.
+// Compiled by MSBuild (Microsoft.TypeScript.MSBuild) to wwwroot/js/fsaccess.js; the output is not committed.
+
+/** AiChromeProxy.Client.Sync.FileMeta */
+interface FileMeta {
+    path: string;
+    size: number;
+    modified: number;
+}
+
+/** AiChromeProxy.Client.Sync.FolderScan */
+interface FolderScan {
+    files: FileMeta[];
+    truncated: boolean;
+    skipped: string[];
+}
+
+/** AiChromeProxy.Client.Sync.FolderGrant */
+interface FolderGrant {
+    name: string;
+    granted: boolean;
+}
+
+/** A DotNetObjectReference marshalled to JS (JsFolderAccess.VisibilityCallback). */
+interface DotNetObject {
+    invokeMethodAsync(methodName: string, ...args: unknown[]): Promise<unknown>;
+}
+
+/** Hash cache entry, per path, in the HASHES store under the folder name. */
+interface HashEntry {
+    size: number;
+    modified: number;
+    sha256: string;
+}
+
+type HashCache = Record<string, HashEntry>;
 
 const DB_NAME = 'aicp-fsaccess';
 const HANDLES = 'handles';
@@ -9,12 +44,12 @@ const ROOT_KEY = 'root';
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // SyncLimits.MaxFileSize
 const MAX_DEPTH = 64;
 
-let root = null;        // FileSystemDirectoryHandle of the picked folder
-let files = new Map();  // path -> FileSystemFileHandle, from the last scan
-let chunkFile = null;   // { path, file } of the upload in progress, so its chunks come from one snapshot
-let unwatch = null;     // removes the listeners added by watchVisibility
+let root: FileSystemDirectoryHandle | null = null;     // the picked folder
+let files = new Map<string, FileSystemFileHandle>();   // path -> handle, from the last scan
+let chunkFile: { path: string; file: File } | null = null; // the upload in progress, so its chunks come from one snapshot
+let unwatch: (() => void) | null = null;               // removes the listeners added by watchVisibility
 
-function openDb() {
+function openDb(): Promise<IDBDatabase> {
     return new Promise((resolve, reject) => {
         if (!globalThis.indexedDB) {
             reject(new Error('IndexedDB is not available.'));
@@ -31,10 +66,10 @@ function openDb() {
     });
 }
 
-async function idb(store, mode, action) {
+async function idb<T>(store: string, mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
     const db = await openDb();
     try {
-        return await new Promise((resolve, reject) => {
+        return await new Promise<T>((resolve, reject) => {
             const tx = db.transaction(store, mode);
             const request = action(tx.objectStore(store));
             tx.oncomplete = () => resolve(request.result);
@@ -47,7 +82,7 @@ async function idb(store, mode, action) {
 }
 
 /** idb() that never throws: returns the fallback when IndexedDB fails. */
-async function tryIdb(store, mode, action, fallback) {
+async function tryIdb<T, F>(store: string, mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDBRequest<T>, fallback: F): Promise<T | F> {
     try {
         return await idb(store, mode, action);
     } catch {
@@ -55,35 +90,42 @@ async function tryIdb(store, mode, action, fallback) {
     }
 }
 
-function setRoot(handle) {
+function setRoot(handle: FileSystemDirectoryHandle): void {
     root = handle;
     files = new Map();
     chunkFile = null;
 }
 
-function toHex(buffer) {
+function pickedRoot(): FileSystemDirectoryHandle {
+    if (root === null) {
+        throw new Error('No folder is picked.');
+    }
+    return root;
+}
+
+function toHex(buffer: ArrayBuffer): string {
     return Array.from(new Uint8Array(buffer), b => b.toString(16).padStart(2, '0')).join('');
 }
 
 /** Shows the folder picker; returns the folder name, or null when the user cancelled. The handle is kept in IndexedDB if possible. */
-export async function pick() {
-    let handle;
+export async function pick(): Promise<string | null> {
+    let handle: FileSystemDirectoryHandle;
     try {
         handle = await window.showDirectoryPicker({ id: 'aicp', mode: 'read' });
     } catch (e) {
-        if (e.name === 'AbortError') {
+        if (e instanceof DOMException && e.name === 'AbortError') {
             return null;
         }
         throw e;
     }
     setRoot(handle);
-    await tryIdb(HANDLES, 'readwrite', s => s.put(handle, ROOT_KEY));
+    await tryIdb(HANDLES, 'readwrite', s => s.put(handle, ROOT_KEY), undefined);
     return handle.name;
 }
 
 /** The folder picked on an earlier visit: { name, granted }, or null (also when IndexedDB fails). After a reload Chrome usually answers "prompt". */
-export async function restore() {
-    const handle = await tryIdb(HANDLES, 'readonly', s => s.get(ROOT_KEY), null);
+export async function restore(): Promise<FolderGrant | null> {
+    const handle = await tryIdb<FileSystemDirectoryHandle | undefined, null>(HANDLES, 'readonly', s => s.get(ROOT_KEY), null);
     if (!handle) {
         return null;
     }
@@ -92,7 +134,7 @@ export async function restore() {
 }
 
 /** Asks for read access again; must run from a click. */
-export async function requestAccess() {
+export async function requestAccess(): Promise<boolean> {
     return root !== null && (await root.requestPermission({ mode: 'read' })) === 'granted';
 }
 
@@ -102,15 +144,15 @@ export async function requestAccess() {
  * unreadable files by path, and folders that could not be listed (or are deeper than MAX_DEPTH) as a prefix ending in '/'.
  * Throws when the picked folder itself cannot be listed (lost access must never look like an empty folder).
  */
-export async function scan(skipDirectories, maxEntries) {
+export async function scan(skipDirectories: string[], maxEntries: number): Promise<FolderScan> {
     const skip = new Set(skipDirectories.map(d => d.toLowerCase()));
-    const found = new Map();
-    const list = [];
+    const found = new Map<string, FileSystemFileHandle>();
+    const list: FileMeta[] = [];
     let seen = 0;
-    const skipped = [];
+    const skipped: string[] = [];
     let truncated = false;
 
-    async function walk(dir, prefix, depth) {
+    async function walk(dir: FileSystemDirectoryHandle, prefix: string, depth: number): Promise<void> {
         try {
             for await (const [name, handle] of dir.entries()) {
                 if (++seen > maxEntries) {
@@ -148,7 +190,7 @@ export async function scan(skipDirectories, maxEntries) {
         }
     }
 
-    await walk(root, '', 0);
+    await walk(pickedRoot(), '', 0);
     files = found;
     chunkFile = null;
     return { files: list, truncated, skipped };
@@ -158,13 +200,18 @@ export async function scan(skipDirectories, maxEntries) {
  * SHA-256 (lower-case hex) of each path from the last scan, or null for a file that could not be read or is larger than 20 MB.
  * Cached in IndexedDB per folder by size and modification time, so a rescan only hashes changed files (without IndexedDB: no cache).
  */
-export async function hash(paths) {
-    const key = root.name;
-    const cache = (await tryIdb(HASHES, 'readonly', s => s.get(key), null)) ?? {};
-    const result = [];
+export async function hash(paths: string[]): Promise<(string | null)[]> {
+    const key = pickedRoot().name;
+    const cache: HashCache = (await tryIdb<HashCache | undefined, null>(HASHES, 'readonly', s => s.get(key), null)) ?? {};
+    const result: (string | null)[] = [];
     for (const path of paths) {
         try {
-            const file = await files.get(path).getFile();
+            const handle = files.get(path);
+            if (handle === undefined) {
+                result.push(null);
+                continue;
+            }
+            const file = await handle.getFile();
             if (file.size > MAX_FILE_SIZE) {
                 result.push(null);
                 continue;
@@ -186,12 +233,12 @@ export async function hash(paths) {
             delete cache[path];
         }
     }
-    await tryIdb(HASHES, 'readwrite', s => s.put(cache, key));
+    await tryIdb(HASHES, 'readwrite', s => s.put(cache, key), undefined);
     return result;
 }
 
 /** Text of a file from the last scan (used for the root .gitignore), or null when it is not there. */
-export async function readText(path) {
+export async function readText(path: string): Promise<string | null> {
     const handle = files.get(path);
     return handle ? await (await handle.getFile()).text() : null;
 }
@@ -201,7 +248,7 @@ export async function readText(path) {
  * Offset 0 takes a snapshot of the file that later chunks of the same path read: if the file changes meanwhile, reading fails
  * instead of mixing versions.
  */
-export async function readChunk(path, offset, length) {
+export async function readChunk(path: string, offset: number, length: number): Promise<Uint8Array> {
     if (offset === 0 || chunkFile?.path !== path) {
         const handle = files.get(path);
         if (!handle) {
@@ -213,9 +260,9 @@ export async function readChunk(path, offset, length) {
 }
 
 /** Calls callback.Changed(visible) when the tab is shown or hidden and when the window gets focus; replaces an earlier watch. */
-export function watchVisibility(callback) {
+export function watchVisibility(callback: DotNetObject): void {
     unwatchVisibility();
-    const notify = () => callback.invokeMethodAsync('Changed', document.visibilityState === 'visible');
+    const notify = (): Promise<unknown> => callback.invokeMethodAsync('Changed', document.visibilityState === 'visible');
     document.addEventListener('visibilitychange', notify);
     window.addEventListener('focus', notify);
     unwatch = () => {
@@ -225,7 +272,7 @@ export function watchVisibility(callback) {
 }
 
 /** Removes the listeners added by watchVisibility, if any. */
-export function unwatchVisibility() {
+export function unwatchVisibility(): void {
     unwatch?.();
     unwatch = null;
 }

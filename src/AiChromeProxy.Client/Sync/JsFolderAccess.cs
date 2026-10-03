@@ -3,7 +3,7 @@ using Microsoft.JSInterop;
 
 namespace AiChromeProxy.Client.Sync;
 
-/// <summary>Thin interop wrapper over <c>wwwroot/js/fsaccess.js</c>; no logic of its own (checked manually, see docs/sync.md).</summary>
+/// <summary>Thin interop wrapper over <c>Scripts/fsaccess.ts</c> (compiled to <c>wwwroot/js/fsaccess.js</c>); no logic of its own (checked manually, see docs/sync.md).</summary>
 [ExcludeFromCodeCoverage]
 public sealed class JsFolderAccess(IJSRuntime js) : IFolderAccess, IAsyncDisposable
 {

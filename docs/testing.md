@@ -22,6 +22,8 @@ dotnet test --project tests/AiChromeProxy.Tests -c Release --no-build --coverlet
 
 Gate: `>= 85%` line coverage. Gate failed — add tests, don't lower the threshold.
 
+Browser code is strict TypeScript (`src/AiChromeProxy.Client/Scripts`, `tsconfig.json`) that `dotnet build` / `dotnet publish` compile to `wwwroot/js` (gitignored) with `Microsoft.TypeScript.MSBuild`, which bundles the native compiler — no Node.js needed. A type error fails the build; `Architecture/BrowserScriptTests.cs` fails on committed or hand-written `.js` under `src/*/wwwroot` and on `any` in `.ts`.
+
 Architecture rules (`Architecture/LayerDependencyTests.cs`):
 
 - Domain depends on nothing of ours and not on ASP.NET Core.

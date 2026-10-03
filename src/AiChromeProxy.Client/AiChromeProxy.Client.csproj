@@ -6,10 +6,32 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <!-- Browser code: Scripts/*.ts (strict, tsconfig.json) compiled to wwwroot/js on every build; the output is gitignored.
+       The package's defaults are passed as tsc flags and override tsconfig.json, so target and source maps are set here. -->
+  <PropertyGroup>
+    <TypeScriptTarget>ES2022</TypeScriptTarget>
+    <TypeScriptSourceMap>false</TypeScriptSourceMap>
+  </PropertyGroup>
+
+  <!-- Compile before static web assets are collected, and add the output (absent on a clean clone when Content was globbed). -->
+  <Target Name="IncludeCompiledScripts" BeforeTargets="ResolveProjectStaticWebAssets" DependsOnTargets="RunTscCompile">
+    <ItemGroup>
+      <Content Include="wwwroot\js\**\*.js" Exclude="@(Content)" />
+    </ItemGroup>
+  </Target>
+
+  <ItemGroup>
+    <Content Update="tsconfig.json" CopyToOutputDirectory="Never" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.12" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.12" PrivateAssets="all" />
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.12" />
+    <PackageReference Include="Microsoft.TypeScript.MSBuild" Version="7.0.1">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
   </ItemGroup>
 
   <ItemGroup>
