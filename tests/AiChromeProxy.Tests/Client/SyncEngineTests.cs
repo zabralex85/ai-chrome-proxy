@@ -954,6 +954,74 @@ public sealed class SyncEngineTests : IDisposable
 		Assert.Equal("Opened folder 'f1'.", _engine.Activity[^1].Text);
 	}
 
+	[Fact]
+	public async Task Activity_SameSnapshotUntilSomethingIsLogged_IdsUnique()
+	{
+		await _engine.OpenFolderAsync();
+		var snapshot = _engine.Activity;
+
+		Assert.Same(snapshot, _engine.Activity);
+
+		await _engine.OpenFolderAsync();
+
+		Assert.NotSame(snapshot, _engine.Activity);
+		Assert.Single(snapshot);
+		Assert.Equal(2, _engine.Activity.Count);
+		Assert.Equal(2, _engine.Activity.Select(a => a.Id).Distinct().Count());
+	}
+
+	[Fact]
+	public async Task Aggregates_MatchTheFileList_AfterEveryChange()
+	{
+		var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 3, 12, 0, 0, TimeSpan.Zero));
+		var engine = new SyncEngine(_server.Transport, _folder, clock);
+		var mismatches = new List<string>();
+		engine.Changed += () =>
+		{
+			if (AggregateMismatch(engine) is { } mismatch)
+			{
+				mismatches.Add(mismatch);
+			}
+		};
+		_folder.Write("ok.txt", "ok");
+		_folder.Write("b.txt", "bbb");
+		_folder.Write("trailing.", "x");
+		_folder.SizeOnly["video.mp4"] = SyncLimits.MaxFileSize + 1;
+		_folder.ReadFailures.Add("b.txt");
+		await engine.OpenFolderAsync();
+
+		await engine.SyncOnceAsync(Ct);
+
+		Assert.Equal((1, 2L, 3, 2), (engine.SyncedCount, engine.SyncedBytes, engine.SyncableCount, engine.ErrorCount));
+
+		_folder.ReadFailures.Clear();
+		clock.Advance(SyncEngine.FailureBackoff);
+		await engine.SyncOnceAsync(Ct);
+
+		Assert.Equal((2, 5L, 3, 1), (engine.SyncedCount, engine.SyncedBytes, engine.SyncableCount, engine.ErrorCount));
+
+		_folder.Files.Remove("ok.txt");
+		await engine.SyncOnceAsync(Ct);
+
+		Assert.Equal((1, 3L, 2, 1), (engine.SyncedCount, engine.SyncedBytes, engine.SyncableCount, engine.ErrorCount));
+
+		RefuseWhen(e => e.Type == MessageTypes.SyncDelta, ErrorCodes.Internal, "Server is restarting.");
+		_folder.Write("c.txt", "c");
+		await engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(2, engine.ErrorCount);
+		Assert.Null(AggregateMismatch(engine));
+		Assert.Empty(mismatches);
+	}
+
+	private static string? AggregateMismatch(SyncEngine engine)
+	{
+		var synced = engine.Files.Where(f => f.State == FileSyncState.Synced).ToList();
+		var expected = (synced.Count, synced.Sum(f => f.Size), engine.Files.Count(f => f.State != FileSyncState.TooLarge), engine.Errors.Count);
+		var actual = (engine.SyncedCount, engine.SyncedBytes, engine.SyncableCount, engine.ErrorCount);
+		return expected == actual ? null : $"expected {expected}, got {actual}";
+	}
+
 	private static async Task WaitUntilAsync(Func<bool> condition)
 	{
 		for (var i = 0; i < 200 && !condition(); i++)

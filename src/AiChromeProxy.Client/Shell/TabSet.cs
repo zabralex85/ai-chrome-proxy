@@ -1,13 +1,15 @@
 namespace AiChromeProxy.Client.Shell;
 
 /// <summary>
-/// The centre tabs: the permanent Welcome tab, the Errors tab and one tab per opened file (its id is the file path;
-/// the built-in ids start with <c>:</c>, which no synced path can).
+/// The centre tabs: the permanent Welcome tab, the Errors tab and one tab per opened file (its id is <see cref="FileTab"/>
+/// of the path, so a file named like a built-in tab never takes its place).
 /// </summary>
 public sealed class TabSet
 {
 	public const string Welcome = ":welcome";
 	public const string Errors = ":errors";
+
+	private const string FilePrefix = "file:";
 
 	private readonly List<string> _open = [Welcome];
 
@@ -16,7 +18,12 @@ public sealed class TabSet
 
 	public string Active { get; private set; } = Welcome;
 
-	public static bool IsFile(string id) => !id.StartsWith(':');
+	public static string FileTab(string path) => FilePrefix + path;
+
+	public static bool IsFile(string id) => id.StartsWith(FilePrefix, StringComparison.Ordinal);
+
+	/// <summary>The file path of a file tab; null for the built-in tabs.</summary>
+	public static string? PathOf(string id) => IsFile(id) ? id[FilePrefix.Length..] : null;
 
 	/// <summary>Focuses the tab, opening it at the end of the strip first when needed.</summary>
 	public void Show(string id)

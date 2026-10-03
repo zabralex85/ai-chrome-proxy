@@ -70,6 +70,16 @@ public static class Format
 		};
 	}
 
+	/// <summary>What the collapsed file tree hides that needs the user: "Access needed", "3 errors", or null when nothing does.</summary>
+	public static string? Attention(FolderStatus folder, int errors) => folder == FolderStatus.NeedsPermission
+		? "Access needed"
+		: errors switch
+		{
+			0 => null,
+			1 => "1 error",
+			_ => $"{Count(errors)} errors",
+		};
+
 	/// <summary>Icon kind for a file name (drives the icon colour): code, web, data, doc, image or file.</summary>
 	public static string FileKind(string name) => Path.GetExtension(name).ToLowerInvariant() switch
 	{

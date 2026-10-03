@@ -1,6 +1,6 @@
 @using AiChromeProxy.Client.Sync
 
-<aside class="panel panel-left" data-testid="file-tree" aria-label="Files">
+<aside class="panel panel-left @(Collapsed ? "collapsed" : null)" data-testid="file-tree" aria-label="Files">
     <header class="panel-header"><span class="panel-title">Explorer</span></header>
     <div class="panel-body" data-testid="explorer">
         @if (Engine.Folder == FolderStatus.None)
@@ -36,7 +36,7 @@
                 </div>
             }
             <div class="sync-summary" data-testid="sync-summary">
-                <div><strong>@Format.Count(SyncedCount)</strong> / @Format.Count(Syncable) files synced · @Format.Bytes(SyncedBytes)</div>
+                <div><strong>@Format.Count(Engine.SyncedCount)</strong> / @Format.Count(Engine.SyncableCount) files synced · @Format.Bytes(Engine.SyncedBytes)</div>
                 <div class="muted">Last sync: @Format.Ago(Engine.LastSync, DateTimeOffset.Now)</div>
                 @if (Engine.Phase == SyncPhase.Uploading && Engine.UploadTotal > 0)
                 {
@@ -55,6 +55,10 @@
     [Parameter, EditorRequired]
     public SyncEngine Engine { get; set; } = null!;
 
+    /// <summary>Hidden by CSS but still rendered, so the tree keeps its state.</summary>
+    [Parameter]
+    public bool Collapsed { get; set; }
+
     /// <summary>The file of the active tab, highlighted in the tree.</summary>
     [Parameter]
     public string? Selected { get; set; }
@@ -64,10 +68,5 @@
 
     [Parameter]
     public EventCallback OnShowErrors { get; set; }
-
-    private int SyncedCount => Engine.Files.Count(f => f.State == FileSyncState.Synced);
-
-    private long SyncedBytes => Engine.Files.Where(f => f.State == FileSyncState.Synced).Sum(f => f.Size);
-
-    private int Syncable => Engine.Files.Count(f => f.State != FileSyncState.TooLarge);
 }
+

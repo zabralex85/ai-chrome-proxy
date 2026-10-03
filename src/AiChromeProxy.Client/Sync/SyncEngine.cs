@@ -57,7 +57,7 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 	private const string Unreadable = "Could not read the file.";
 	private const string Unlisted = "Could not list this folder; its files are neither uploaded nor deleted.";
 
-	private readonly List<SyncActivity> _activity = [];
+	private readonly Lock _activityGate = new();
 
 	/// <summary>Upload failures by path: the same size and hash is not tried again before <c>Until</c>, and its failure is logged once.</summary>
 	private readonly Dictionary<string, (ManifestEntry Entry, string Error, DateTimeOffset Until)> _failures = new(StringComparer.Ordinal);
@@ -69,6 +69,14 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 	private IReadOnlyList<string> _unlistedDirectories = [];
 	private IReadOnlyList<string>? _errors;
 	private string? _problem;
+	private IReadOnlyList<SyncActivity> _activity = [];
+	private long _activityCount;
+
+	// Kept up to date by SetFiles and SetFileState, so the UI reads them without scanning Files on every render.
+	private int _syncedCount;
+	private long _syncedBytes;
+	private int _syncableCount;
+	private int _fileErrorCount;
 
 	/// <summary>Bumped by every folder change: a cycle started for an earlier folder stops at its next check and writes nothing.</summary>
 	private int _generation;
@@ -133,17 +141,23 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 		.. Files.Where(f => f.State == FileSyncState.Error).Select(f => $"{f.Path}: {f.Error}"),
 	];
 
-	/// <summary>The "Actions history": newest first, at most <see cref="MaxActivity"/> entries; <see cref="Changed"/> fires when it grows.</summary>
-	public IReadOnlyList<SyncActivity> Activity
-	{
-		get
-		{
-			lock (_activity)
-			{
-				return [.. _activity];
-			}
-		}
-	}
+	/// <summary>Files in <see cref="FileSyncState.Synced"/>.</summary>
+	public int SyncedCount => _syncedCount;
+
+	/// <summary>Total size of the synced files.</summary>
+	public long SyncedBytes => _syncedBytes;
+
+	/// <summary>Files that are not too large to sync.</summary>
+	public int SyncableCount => _syncableCount;
+
+	/// <summary><c>Errors.Count</c> without building the list.</summary>
+	public int ErrorCount => (Problem is null ? 0 : 1) + _unlistedDirectories.Count + _fileErrorCount;
+
+	/// <summary>
+	/// The "Actions history": newest first, at most <see cref="MaxActivity"/> entries. An immutable snapshot, replaced when
+	/// something is logged (<see cref="Changed"/> fires then).
+	/// </summary>
+	public IReadOnlyList<SyncActivity> Activity => Volatile.Read(ref _activity);
 
 	/// <summary>Restores the remembered folder and starts listening to the connection and the tab's visibility.</summary>
 	public async Task InitializeAsync()
@@ -398,13 +412,10 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 
 	private void Log(SyncActivityKind kind, string text)
 	{
-		lock (_activity)
+		lock (_activityGate)
 		{
-			_activity.Insert(0, new SyncActivity(time.GetUtcNow(), kind, text));
-			if (_activity.Count > MaxActivity)
-			{
-				_activity.RemoveAt(MaxActivity);
-			}
+			var entry = new SyncActivity(time.GetUtcNow(), kind, text, ++_activityCount);
+			Volatile.Write(ref _activity, [entry, .. _activity.Take(MaxActivity - 1)]);
 		}
 	}
 
@@ -705,6 +716,11 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 		_files = [.. files];
 		_fileIndex = files.Select((f, i) => (f.Path, i)).ToDictionary(x => x.Path, x => x.i, StringComparer.Ordinal);
 		_errors = null;
+		(_syncedCount, _syncedBytes, _syncableCount, _fileErrorCount) = (0, 0, 0, 0);
+		foreach (var file in _files)
+		{
+			Tally(file, 1);
+		}
 	}
 
 	/// <summary>No-op for a path no longer listed (a folder change replaced the list while the cycle ran).</summary>
@@ -713,8 +729,23 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 		if (_fileIndex.TryGetValue(path, out var i) && _files[i] is var file && (file.State != state || file.Error != error))
 		{
 			_files[i] = file with { State = state, Error = error };
-			_errors = null;
+			Tally(file, -1);
+			Tally(_files[i], 1);
+			if (file.State == FileSyncState.Error || state == FileSyncState.Error)
+			{
+				_errors = null;
+			}
 		}
+	}
+
+	/// <summary>Adds (<paramref name="sign"/> 1) or removes (-1) a file's share of the cached counts.</summary>
+	private void Tally(SyncFile file, int sign)
+	{
+		var synced = file.State == FileSyncState.Synced ? sign : 0;
+		_syncedCount += synced;
+		_syncedBytes += synced * file.Size;
+		_syncableCount += file.State == FileSyncState.TooLarge ? 0 : sign;
+		_fileErrorCount += file.State == FileSyncState.Error ? sign : 0;
 	}
 
 	/// <summary>Sessions live per connection: after a reconnect the next cycle opens again and sends the full manifest.</summary>

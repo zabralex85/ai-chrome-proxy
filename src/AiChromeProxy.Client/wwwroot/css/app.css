@@ -1,119 +1,48 @@
-/* Design tokens: dark by default, light from the system preference or the theme toggle (data-theme on .shell).
-   Text/background pairs meet WCAG AA (>= 4.5:1) in both themes. */
-:root,
-.shell,
-.shell[data-theme="dark"] {
-    color-scheme: dark;
-    --bg: #1f1f1f;
-    --bg-panel: #181818;
-    --bg-top: #181818;
-    --bg-tab: #181818;
-    --bg-tab-active: #1f1f1f;
-    --bg-hover: #2a2d2e;
-    --bg-active: #37373d;
-    --bg-selected: #04395e;
-    --bg-input: #2a2a2a;
-    --bg-elevated: #252526;
-    --bg-notice: #3b2f12;
-    --fg: #cccccc;
-    --fg-strong: #ffffff;
-    --fg-muted: #9d9d9d;
-    --border: #2b2b2b;
-    --border-strong: #3c3c3c;
-    --accent: #3794ff;
-    --accent-bg: #0078d4;
-    --focus: #0078d4;
-    --button-bg: #0078d4;
-    --button-bg-hover: #026ec1;
-    --button-fg: #ffffff;
-    --ok: #89d185;
-    --warn: #cca700;
-    --error: #f48771;
-    --info: #75beff;
-    --kind-code: #569cd6;
-    --kind-web: #e37933;
-    --kind-data: #cbcb41;
-    --kind-doc: #9cdcfe;
-    --kind-image: #c586c0;
-    --kind-folder: #dcb67a;
-    --shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
-}
-
-@media (prefers-color-scheme: light) {
-    :root,
-    .shell:not([data-theme]) {
-        color-scheme: light;
-        --bg: #ffffff;
-        --bg-panel: #f8f8f8;
-        --bg-top: #f8f8f8;
-        --bg-tab: #f8f8f8;
-        --bg-tab-active: #ffffff;
-        --bg-hover: #ebebeb;
-        --bg-active: #e4e6f1;
-        --bg-selected: #cce4f7;
-        --bg-input: #ffffff;
-        --bg-elevated: #ffffff;
-        --bg-notice: #fff4ce;
-        --fg: #3b3b3b;
-        --fg-strong: #1f1f1f;
-        --fg-muted: #6e6e6e;
-        --border: #e5e5e5;
-        --border-strong: #cecece;
-        --accent: #005fb8;
-        --accent-bg: #005fb8;
-        --focus: #005fb8;
-        --button-bg: #005fb8;
-        --button-bg-hover: #0258a8;
-        --button-fg: #ffffff;
-        --ok: #2e7d32;
-        --warn: #8a6100;
-        --error: #c72e0f;
-        --info: #1a5f8a;
-        --kind-code: #0451a5;
-        --kind-web: #a6460c;
-        --kind-data: #7a6a00;
-        --kind-doc: #1a5f8a;
-        --kind-image: #8a2f8a;
-        --kind-folder: #8a6100;
-        --shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-    }
+/* Design tokens, each as light-dark(light, dark): the shell follows the system unless the theme toggle forces a scheme
+   (color-scheme on .shell; the tokens resolve where they are used). Text/background pairs meet WCAG AA (>= 4.5:1) in both themes, muted text on hover/selected rows included. */
+:root {
+    color-scheme: light dark;
+    --bg: light-dark(#ffffff, #1f1f1f);
+    --bg-panel: light-dark(#f8f8f8, #181818);
+    --bg-top: light-dark(#f8f8f8, #181818);
+    --bg-tab: light-dark(#f8f8f8, #181818);
+    --bg-tab-active: light-dark(#ffffff, #1f1f1f);
+    --bg-hover: light-dark(#ebebeb, #2a2d2e);
+    --bg-active: light-dark(#e4e6f1, #37373d);
+    --bg-selected: light-dark(#cce4f7, #04395e);
+    --bg-input: light-dark(#ffffff, #2a2a2a);
+    --bg-elevated: light-dark(#ffffff, #252526);
+    --bg-notice: light-dark(#fff4ce, #3b2f12);
+    --fg: light-dark(#3b3b3b, #cccccc);
+    --fg-strong: light-dark(#1f1f1f, #ffffff);
+    --fg-muted: light-dark(#5f5f5f, #a6a6a6);
+    --border: light-dark(#e5e5e5, #2b2b2b);
+    --border-strong: light-dark(#cecece, #3c3c3c);
+    --accent: light-dark(#005fb8, #3794ff);
+    --accent-bg: light-dark(#005fb8, #0078d4);
+    --focus: light-dark(#005fb8, #0078d4);
+    --button-bg: light-dark(#005fb8, #0078d4);
+    --button-bg-hover: light-dark(#0258a8, #026ec1);
+    --button-fg: light-dark(#ffffff, #ffffff);
+    --ok: light-dark(#2e7d32, #89d185);
+    --warn: light-dark(#8a6100, #cca700);
+    --error: light-dark(#c72e0f, #f48771);
+    --info: light-dark(#1a5f8a, #75beff);
+    --kind-code: light-dark(#0451a5, #569cd6);
+    --kind-web: light-dark(#a6460c, #e37933);
+    --kind-data: light-dark(#7a6a00, #cbcb41);
+    --kind-doc: light-dark(#1a5f8a, #9cdcfe);
+    --kind-image: light-dark(#8a2f8a, #c586c0);
+    --kind-folder: light-dark(#8a6100, #dcb67a);
+    --shadow: 0 4px 16px light-dark(rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.45));
 }
 
 .shell[data-theme="light"] {
     color-scheme: light;
-    --bg: #ffffff;
-    --bg-panel: #f8f8f8;
-    --bg-top: #f8f8f8;
-    --bg-tab: #f8f8f8;
-    --bg-tab-active: #ffffff;
-    --bg-hover: #ebebeb;
-    --bg-active: #e4e6f1;
-    --bg-selected: #cce4f7;
-    --bg-input: #ffffff;
-    --bg-elevated: #ffffff;
-    --bg-notice: #fff4ce;
-    --fg: #3b3b3b;
-    --fg-strong: #1f1f1f;
-    --fg-muted: #6e6e6e;
-    --border: #e5e5e5;
-    --border-strong: #cecece;
-    --accent: #005fb8;
-    --accent-bg: #005fb8;
-    --focus: #005fb8;
-    --button-bg: #005fb8;
-    --button-bg-hover: #0258a8;
-    --button-fg: #ffffff;
-    --ok: #2e7d32;
-    --warn: #8a6100;
-    --error: #c72e0f;
-    --info: #1a5f8a;
-    --kind-code: #0451a5;
-    --kind-web: #a6460c;
-    --kind-data: #7a6a00;
-    --kind-doc: #1a5f8a;
-    --kind-image: #8a2f8a;
-    --kind-folder: #8a6100;
-    --shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+.shell[data-theme="dark"] {
+    color-scheme: dark;
 }
 
 :root {
@@ -144,7 +73,8 @@ body {
     position: relative;
     display: grid;
     grid-template-rows: 40px minmax(0, 1fr);
-    grid-template-columns: var(--left-width, 280px) minmax(0, 1fr) var(--right-width, 300px);
+    /* The side panels give way first so the centre keeps 360 px when the window shrinks (C# clamps the widths on drag). */
+    grid-template-columns: minmax(0, var(--left-width, 280px)) minmax(360px, 1fr) minmax(0, var(--right-width, 300px));
     height: 100vh;
     min-width: 1024px;
     background: var(--bg);
@@ -307,6 +237,13 @@ code {
     border-left: 1px solid var(--border);
 }
 
+/* Collapsed: still rendered (the tree keeps its state), but takes no width and is out of the tab order and the accessibility tree. */
+.panel.collapsed {
+    visibility: hidden;
+    overflow: hidden;
+    border: 0;
+}
+
 .panel-header {
     display: flex;
     align-items: center;
@@ -414,23 +351,27 @@ code {
     transition: width 200ms linear;
 }
 
-/* Resizers sit on the panel edges, above the grid. */
+/* Resizers share the panel's grid cell and straddle its inner edge, so they follow the width the grid actually gives it. */
 .resizer {
-    position: absolute;
-    top: 40px;
-    bottom: 0;
+    position: relative;
+    grid-row: 2;
     width: 6px;
     cursor: col-resize;
+    touch-action: none;
     z-index: 3;
     transition: background-color var(--ease);
 }
 
 .resizer-left {
-    left: calc(var(--left-width) - 3px);
+    grid-column: 1;
+    justify-self: end;
+    margin-right: -3px;
 }
 
 .resizer-right {
-    right: calc(var(--right-width) - 3px);
+    grid-column: 3;
+    justify-self: start;
+    margin-left: -3px;
 }
 
 .resizer:hover,
@@ -476,11 +417,16 @@ code {
     color: var(--fg-strong);
 }
 
-.tree:focus-visible .tree-row.selected {
+.tree:focus-within .tree-row.selected {
     background: var(--bg-selected);
 }
 
-.tree:focus-visible .tree-row.active {
+/* A keyboard-focused row is a scroll container that does not chain: the arrow key's default scroll stops there, so only
+   focus() scrolls the tree (WASM moves focus before the default action, which would otherwise scroll 40 px more per key). */
+.tree-row:focus-visible {
+    overflow: hidden;
+    overscroll-behavior: contain;
+    outline: none;
     border-color: var(--focus);
 }
 
@@ -1006,7 +952,24 @@ dd .state-error {
     color: var(--fg);
 }
 
+.icon-button.has-attention {
+    width: auto;
+    gap: 6px;
+    padding: 0 8px 0 6px;
+    grid-auto-flow: column;
+    color: var(--warn);
+}
+
+.attention {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
 .icon-button[aria-pressed="true"] {
+
     color: var(--fg-strong);
 }
 

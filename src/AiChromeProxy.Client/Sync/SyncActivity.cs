@@ -24,4 +24,5 @@ public enum SyncActivityKind
 }
 
 /// <summary>One entry of the "Actions history" panel.</summary>
-public sealed record SyncActivity(DateTimeOffset At, SyncActivityKind Kind, string Text);
+/// <param name="Id">Unique per engine (the render key: two entries may have the same time, kind and text).</param>
+public sealed record SyncActivity(DateTimeOffset At, SyncActivityKind Kind, string Text, long Id);

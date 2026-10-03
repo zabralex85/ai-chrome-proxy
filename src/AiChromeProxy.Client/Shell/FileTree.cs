@@ -28,6 +28,10 @@ public static class FileTree
 		return rows;
 	}
 
+	/// <summary>The row that takes the Tab stop (roving tabindex): the active row while it is visible, else the first row.</summary>
+	public static string? TabStop(IReadOnlyList<TreeRow> rows, string? active) =>
+		active is not null && rows.Any(r => r.Node.Path == active) ? active : rows.Count > 0 ? rows[0].Node.Path : null;
+
 	/// <summary>
 	/// Tree keyboard handling (WAI-ARIA tree pattern): Up/Down move, Home/End jump, Right expands or enters a folder,
 	/// Left collapses or goes to the parent, Enter/Space toggles a folder or opens a file. Updates <paramref name="expanded"/>.

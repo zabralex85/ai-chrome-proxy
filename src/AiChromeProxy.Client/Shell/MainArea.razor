@@ -6,9 +6,9 @@
         @foreach (var id in Tabs.Open)
         {
             var active = id == Tabs.Active;
-            var kind = TabSet.IsFile(id) ? Format.FileKind(id) : null;
+            var path = TabSet.PathOf(id);
             <div id="@TabId(id)" role="tab" class="tab @(active ? "active" : null)" aria-selected="@(active ? "true" : "false")" aria-controls="tab-panel"
-                 data-testid="@TestId(id)" data-path="@(kind is null ? null : id)" title="@(kind is null ? null : id)" @onclick="() => ChangeAsync(() => Tabs.Show(id))">
+                 data-testid="@TestId(id)" data-path="@path" title="@path" @onclick="() => ChangeAsync(() => Tabs.Show(id))">
                 @switch (id)
                 {
                     case TabSet.Welcome:
@@ -20,8 +20,9 @@
                         <span class="tab-label">Errors</span>
                         break;
                     default:
+                        var kind = Format.FileKind(path!);
                         <Icon Name="@("file-" + kind)" Class="@("kind-" + kind)" />
-                        <span class="tab-label">@FileName(id)</span>
+                        <span class="tab-label">@FileName(path!)</span>
                         break;
                 }
                 @if (id != TabSet.Welcome)
@@ -80,13 +81,14 @@
                 </section>
                 break;
             default:
-                var file = Engine.FileAt(Tabs.Active);
+                var activePath = TabSet.PathOf(Tabs.Active)!;
+                var file = Engine.FileAt(activePath);
                 <section class="file-details" data-testid="file-details">
                     <div class="file-heading">
-                        <Icon Name="@("file-" + Format.FileKind(Tabs.Active))" Size="32" Class="@("kind-" + Format.FileKind(Tabs.Active))" />
+                        <Icon Name="@("file-" + Format.FileKind(activePath))" Size="32" Class="@("kind-" + Format.FileKind(activePath))" />
                         <div>
-                            <h1>@FileName(Tabs.Active)</h1>
-                            <div class="mono muted">@Tabs.Active</div>
+                            <h1>@FileName(activePath)</h1>
+                            <div class="mono muted">@activePath</div>
                         </div>
                     </div>
                     @if (file is null)
@@ -140,8 +142,9 @@
     {
         TabSet.Welcome => "Welcome",
         TabSet.Errors => "Errors",
-        _ => FileName(id),
+        _ => FileName(TabSet.PathOf(id)!),
     };
+
 
     private static string TestId(string id) => id switch
     {

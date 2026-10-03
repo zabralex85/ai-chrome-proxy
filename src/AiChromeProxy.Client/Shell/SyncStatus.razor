@@ -1,14 +1,17 @@
 @using AiChromeProxy.Client.Sync
 @implements IDisposable
 
+@{
+    var errors = Engine.ErrorCount;
+}
 <footer class="status-box" data-testid="sync-status">
     <span class="status-line status-@Tone" role="status">
         <Icon Name="@IconName" Class="@(Engine.Phase is SyncPhase.Scanning or SyncPhase.Uploading ? "spin" : null)" />
         <span class="status-text" data-testid="status-sync">@SyncText</span>
     </span>
-    <button type="button" class="error-count @(Engine.Errors.Count > 0 ? "has-errors" : null)" data-testid="status-errors"
-            title="Show the errors" aria-label="@($"{Engine.Errors.Count} errors, show the list")" @onclick="OnShowErrors">
-        <Icon Name="error" Size="14" />@Engine.Errors.Count
+    <button type="button" class="error-count @(errors > 0 ? "has-errors" : null)" data-testid="status-errors"
+            title="Show the errors" aria-label="@($"{errors} errors, show the list")" @onclick="OnShowErrors">
+        <Icon Name="error" Size="14" />@errors
     </button>
 </footer>
 
@@ -24,7 +27,8 @@
     private string SyncText => Format.SyncStatus(
         Engine.Folder,
         Engine.Phase,
-        Engine.Files.Count(f => f.State == FileSyncState.Synced),
+        Engine.SyncedCount,
+
         Engine.UploadDone,
         Engine.UploadTotal,
         Engine.NextScan - DateTimeOffset.UtcNow);

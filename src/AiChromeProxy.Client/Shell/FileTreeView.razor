@@ -1,15 +1,19 @@
 @using AiChromeProxy.Client.Sync
 
-@* One focusable tree with aria-activedescendant: arrows move the active row without moving DOM focus.
+@* Roving tabindex: the active row is the tree's one Tab stop and gets DOM focus on keyboard moves (the browser scrolls it into view).
    ponytail: every visible row is rendered; switch to <Virtualize> if expanded folders with thousands of files feel slow. *@
-<div class="tree" role="tree" tabindex="0" aria-label="Files" data-testid="tree" aria-activedescendant="@ActiveId" @onkeydown="OnKeyDownAsync">
-    @for (var i = 0; i < _rows.Count; i++)
+@{
+    var tabStop = FileTree.TabStop(_rows, _active);
+}
+<div class="tree" role="tree" aria-label="Files" data-testid="tree" @onkeydown="OnKeyDownAsync">
+    @foreach (var row in _rows)
     {
-        var node = _rows[i].Node;
-        var depth = _rows[i].Depth;
-        <div id="tree-row-@i" role="treeitem" aria-level="@(depth + 1)" aria-expanded="@ExpandedAttribute(node)"
-             aria-selected="@(node.Path == Selected ? "true" : "false")"
-             class="tree-row @(node.Path == _active ? "active" : null) @(node.Path == Selected ? "selected" : null)"
+        var node = row.Node;
+        var depth = row.Depth;
+        @* Keyed by path: a row keeps its element (and so its captured reference) when rows above it appear or vanish. *@
+        <div @key="node.Path" @ref="_rowElements[node.Path]" role="treeitem" tabindex="@(node.Path == tabStop ? 0 : -1)"
+             aria-level="@(depth + 1)" aria-expanded="@ExpandedAttribute(node)" aria-selected="@(node.Path == Selected ? "true" : "false")"
+             class="tree-row @(node.Path == Selected ? "selected" : null)"
              style="padding-left: @(8 + (depth * 14))px" title="@node.Path" @onclick="() => ClickAsync(node)">
             @if (node.IsFolder)
             {
@@ -35,10 +39,12 @@
 
 @code {
     private readonly HashSet<string> _expanded = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ElementReference> _rowElements = new(StringComparer.Ordinal);
     private IReadOnlyList<SyncFile>? _files;
     private IReadOnlyList<TreeNode> _roots = [];
     private IReadOnlyList<TreeRow> _rows = [];
     private string? _active;
+    private bool _focusActive;
 
     [Parameter, EditorRequired]
     public SyncEngine Engine { get; set; } = null!;
@@ -48,8 +54,6 @@
 
     [Parameter]
     public EventCallback<string> OnSelect { get; set; }
-
-    private string? ActiveId => _rows.ToList().FindIndex(r => r.Node.Path == _active) is var i and >= 0 ? $"tree-row-{i}" : null;
 
     protected override void OnParametersSet()
     {
@@ -61,6 +65,15 @@
         }
 
         _rows = FileTree.Rows(_roots, _expanded);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusActive && _active is not null && _rowElements.TryGetValue(_active, out var row))
+        {
+            _focusActive = false;
+            await row.FocusAsync();
+        }
     }
 
     private static string BadgeText(FileSyncState state) => state switch
@@ -101,7 +114,10 @@
     private async Task OnKeyDownAsync(KeyboardEventArgs e)
     {
         var (active, open) = FileTree.OnKey(e.Key, _rows, _active, _expanded);
+        // Only moves take focus: refocusing on Tab would pull focus back from where the browser just moved it.
+        _focusActive = e.Key is "ArrowUp" or "ArrowDown" or "Home" or "End" or "ArrowLeft" or "ArrowRight";
         _active = active;
+
         _rows = FileTree.Rows(_roots, _expanded);
         if (open is not null)
         {

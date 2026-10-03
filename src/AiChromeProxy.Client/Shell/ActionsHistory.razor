@@ -2,7 +2,7 @@
 @using AiChromeProxy.Client.Sync
 @using AiChromeProxy.Client.Transport
 
-<aside class="panel panel-right" data-testid="actions-history" aria-label="Actions history">
+<aside class="panel panel-right @(Collapsed ? "collapsed" : null)" data-testid="actions-history" aria-label="Actions history">
     <header class="panel-header"><span class="panel-title">Actions history</span></header>
     <div class="panel-body">
         @{
@@ -20,7 +20,7 @@
             <ol class="history">
                 @foreach (var entry in entries)
                 {
-                    <li class="history-entry tone-@Tone(entry.Kind)" data-testid="history-entry">
+                    <li @key="entry.Id" class="history-entry tone-@Tone(entry.Kind)" data-testid="history-entry">
                         <Icon Name="@IconName(entry.Kind)" Size="14" />
                         <div class="history-body">
                             <div class="history-text">@entry.Text</div>
@@ -43,6 +43,11 @@
 @code {
     [Parameter, EditorRequired]
     public SyncEngine Engine { get; set; } = null!;
+
+    /// <summary>Hidden by CSS but still rendered (the history keeps its scroll position).</summary>
+    [Parameter]
+    public bool Collapsed { get; set; }
+
 
     [Parameter]
     public TransportState State { get; set; }

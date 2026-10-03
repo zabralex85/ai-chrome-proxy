@@ -159,31 +159,31 @@ public sealed class ShellTests
 		Assert.Equal([TabSet.Welcome], tabs.Open);
 		Assert.Equal(TabSet.Welcome, tabs.Active);
 
-		tabs.Show("a.cs");
-		tabs.Show("b.cs");
-		tabs.Show("a.cs");
+		tabs.Show(Id("a.cs"));
+		tabs.Show(Id("b.cs"));
+		tabs.Show(Id("a.cs"));
 
-		Assert.Equal([TabSet.Welcome, "a.cs", "b.cs"], tabs.Open);
-		Assert.Equal("a.cs", tabs.Active);
+		Assert.Equal([TabSet.Welcome, Id("a.cs"), Id("b.cs")], tabs.Open);
+		Assert.Equal(Id("a.cs"), tabs.Active);
 	}
 
 	[Fact]
 	public void Tabs_CloseActive_NextOrPreviousBecomesActive_WelcomeStays()
 	{
 		var tabs = new TabSet();
-		tabs.Show("a.cs");
+		tabs.Show(Id("a.cs"));
 		tabs.Show(TabSet.Errors);
-		tabs.Show("b.cs");
+		tabs.Show(Id("b.cs"));
 
-		tabs.Close("b.cs");
+		tabs.Close(Id("b.cs"));
 		Assert.Equal(TabSet.Errors, tabs.Active);
 
-		tabs.Show("a.cs");
-		tabs.Close("a.cs");
+		tabs.Show(Id("a.cs"));
+		tabs.Close(Id("a.cs"));
 		Assert.Equal(TabSet.Errors, tabs.Active);
 
 		tabs.Close(TabSet.Welcome);
-		tabs.Close("missing.cs");
+		tabs.Close(Id("missing.cs"));
 		Assert.Equal([TabSet.Welcome, TabSet.Errors], tabs.Open);
 		Assert.Equal(TabSet.Errors, tabs.Active);
 
@@ -204,21 +204,91 @@ public sealed class ShellTests
 	public void Tabs_OnKey_MovesWithWrap(string key, string active, string expected)
 	{
 		var tabs = new TabSet();
-		tabs.Show("a.cs");
-		tabs.Show("b.cs");
-		tabs.Show(active);
+		tabs.Show(Id("a.cs"));
+		tabs.Show(Id("b.cs"));
+		tabs.Show(Id(active));
 
 		tabs.OnKey(key);
 
-		Assert.Equal(expected, tabs.Active);
+		Assert.Equal(Id(expected), tabs.Active);
 	}
 
 	[Theory]
 	[InlineData(TabSet.Welcome, false)]
 	[InlineData(TabSet.Errors, false)]
-	[InlineData("src/app.cs", true)]
+	[InlineData("src/app.cs", false)]
+	[InlineData("file:src/app.cs", true)]
 	public void Tabs_IsFile(string id, bool isFile)
 	{
 		Assert.Equal(isFile, TabSet.IsFile(id));
+		Assert.Equal(isFile ? "src/app.cs" : null, TabSet.PathOf(id));
 	}
+
+	[Theory]
+	[InlineData(":errors")]
+	[InlineData(":welcome")]
+	public void Tabs_FileNamedLikeABuiltInTab_GetsItsOwnTab(string path)
+	{
+		var tabs = new TabSet();
+		tabs.Show(TabSet.Errors);
+
+		tabs.Show(TabSet.FileTab(path));
+
+		Assert.Equal([TabSet.Welcome, TabSet.Errors, TabSet.FileTab(path)], tabs.Open);
+		Assert.True(TabSet.IsFile(tabs.Active));
+		Assert.Equal(path, TabSet.PathOf(tabs.Active));
+	}
+
+	[Theory]
+	[InlineData(null, "docs")]
+	[InlineData("src/b.cs", "src/b.cs")]
+	[InlineData("src/App/a.cs", "docs")]
+	public void TabStop_ActiveRowWhileVisible_ElseTheFirst(string? active, string expected)
+	{
+		var rows = FileTree.Rows(Tree, new HashSet<string> { "src" });
+
+		Assert.Equal(expected, FileTree.TabStop(rows, active));
+		Assert.Null(FileTree.TabStop([], active));
+	}
+
+	[Theory]
+	[InlineData(FolderStatus.NeedsPermission, 0, "Access needed")]
+	[InlineData(FolderStatus.NeedsPermission, 3, "Access needed")]
+	[InlineData(FolderStatus.Ready, 0, null)]
+	[InlineData(FolderStatus.Ready, 1, "1 error")]
+	[InlineData(FolderStatus.Ready, 1234, "1 234 errors")]
+	public void Attention_AccessFirstThenErrors(FolderStatus folder, int errors, string? expected)
+	{
+		Assert.Equal(expected, Format.Attention(folder, errors));
+	}
+
+	[Theory]
+	[InlineData(280, 300, 1440, 280)]
+	[InlineData(100, 300, 1440, PanelWidth.Min)]
+	[InlineData(900, 300, 1440, PanelWidth.Max)]
+	[InlineData(600, 300, 1200, 540)]
+	[InlineData(500, 600, 1024, PanelWidth.Min)]
+	[InlineData(500, 0, 1024, 500)]
+	[InlineData(500, 300, 800, 364)]
+	public void PanelWidth_KeepsTheCentreAtLeast360(int width, int other, int viewport, int expected)
+	{
+		Assert.Equal(expected, PanelWidth.Clamp(width, other, viewport));
+	}
+
+	[Theory]
+	[InlineData("<img src=x onerror=alert(1)>.cs")]
+	[InlineData("\"><script>alert(1)<\\script>.html")]
+	[InlineData("<svg onload=alert(1)>")]
+	public void HostileNames_StayPlainData_NeverMarkup(string name)
+	{
+		var node = Assert.Single(Assert.Single(FileTree.Build([$"dir/{name}"])).Children);
+
+		Assert.Equal(name, node.Name);
+		Assert.Equal($"dir/{name}", node.Path);
+		Assert.Equal($"dir/{name}", TabSet.PathOf(TabSet.FileTab(node.Path)));
+		Assert.Contains(Format.FileKind(name), new[] { "code", "web", "data", "doc", "image", "file" });
+		Assert.DoesNotContain('<', Format.Attention(FolderStatus.Ready, 2)!);
+	}
+
+	private static string Id(string tab) => tab.StartsWith(':') ? tab : TabSet.FileTab(tab);
 }

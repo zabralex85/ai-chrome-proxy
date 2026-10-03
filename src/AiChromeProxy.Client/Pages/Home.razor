@@ -7,6 +7,7 @@
 @inject SyncEngine Engine
 @inject HttpClient Http
 @inject IJSRuntime JS
+@inject TimeProvider Time
 @implements IDisposable
 
 <PageTitle>@(Engine.FolderName is null ? "ai-chrome-proxy" : $"{Engine.FolderName} — ai-chrome-proxy")</PageTitle>
@@ -15,22 +16,25 @@
      style="--left-width: @(_filesOpen ? _leftWidth : 0)px; --right-width: @(_historyOpen ? _rightWidth : 0)px">
     <TopBar FolderName="@Engine.FolderName" State="@Transport.State" PingMs="@_pingMs" Theme="@_theme" OnToggleTheme="ToggleThemeAsync" User="@_user"
             FilesOpen="@_filesOpen" OnToggleFiles="() => _filesOpen = !_filesOpen"
+            FilesAttention="@(_filesOpen ? null : Format.Attention(Engine.Folder, Engine.ErrorCount))"
             HistoryOpen="@_historyOpen" OnToggleHistory="() => _historyOpen = !_historyOpen" />
+    @* Collapsed panels stay rendered (hidden by CSS) so the tree keeps its expanded folders and active row. *@
+    <Explorer Engine="Engine" Collapsed="@(!_filesOpen)" Selected="@TabSet.PathOf(_tabs.Active)" OnSelect="path => _tabs.Show(TabSet.FileTab(path))"
+              OnShowErrors="() => _tabs.Show(TabSet.Errors)" />
     @if (_filesOpen)
     {
-        <Explorer Engine="Engine" Selected="@(TabSet.IsFile(_tabs.Active) ? _tabs.Active : null)" OnSelect="path => _tabs.Show(path)"
-                  OnShowErrors="() => _tabs.Show(TabSet.Errors)" />
         <div class="resizer resizer-left" data-testid="sidebar-resizer" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize the file tree"
-             aria-valuenow="@_leftWidth" aria-valuemin="@MinWidth" aria-valuemax="@MaxWidth"
-             @onpointerdown="e => StartDrag(Side.Left, e)" @onkeydown="e => ResizeByKey(Side.Left, e)"></div>
+             aria-valuenow="@_leftWidth" aria-valuemin="@PanelWidth.Min" aria-valuemax="@PanelWidth.Max"
+             @onpointerdown="e => StartDragAsync(Side.Left, e)" @onkeydown="e => ResizeByKeyAsync(Side.Left, e)"></div>
     }
-    <MainArea Engine="Engine" Tabs="_tabs" OnChanged="() => { }" />
+    @* An EventCallback re-renders the component that created it once the handler ran: the tree then highlights the active tab's file. *@
+    <MainArea Engine="Engine" Tabs="_tabs" OnChanged="StateHasChanged" />
+    <ActionsHistory Engine="Engine" Collapsed="@(!_historyOpen)" State="@Transport.State" PingMs="@_pingMs" />
     @if (_historyOpen)
     {
-        <ActionsHistory Engine="Engine" State="@Transport.State" PingMs="@_pingMs" />
         <div class="resizer resizer-right" data-testid="history-resizer" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize the actions history"
-             aria-valuenow="@_rightWidth" aria-valuemin="@MinWidth" aria-valuemax="@MaxWidth"
-             @onpointerdown="e => StartDrag(Side.Right, e)" @onkeydown="e => ResizeByKey(Side.Right, e)"></div>
+             aria-valuenow="@_rightWidth" aria-valuemin="@PanelWidth.Min" aria-valuemax="@PanelWidth.Max"
+             @onpointerdown="e => StartDragAsync(Side.Right, e)" @onkeydown="e => ResizeByKeyAsync(Side.Right, e)"></div>
     }
     @if (_dragging is not null)
     {
@@ -41,8 +45,9 @@
 
 @code {
     private const string ThemeKey = "aicp-theme";
-    private const int MinWidth = 180;
-    private const int MaxWidth = 600;
+
+    /// <summary>Engine changes (one per file state during a sync) re-render the page at most this often.</summary>
+    private static readonly TimeSpan RenderInterval = TimeSpan.FromMilliseconds(150);
 
     private readonly CancellationTokenSource _stop = new();
     private readonly TabSet _tabs = new();
@@ -56,6 +61,8 @@
     private double _dragStartX;
     private int _dragStartWidth;
     private long? _pingMs;
+    private int _viewport;
+    private RenderCoalescer? _render;
 
     private enum Side
     {
@@ -67,15 +74,18 @@
     {
         Transport.StateChanged -= OnStateChanged;
         Engine.Changed -= OnEngineChanged;
+        _render?.Dispose();
         _stop.Cancel();
         _stop.Dispose();
     }
 
     protected override async Task OnInitializedAsync()
     {
+        _render = new RenderCoalescer(Time, RenderInterval, () => _ = InvokeAsync(StateHasChanged));
         Transport.StateChanged += OnStateChanged;
         Engine.Changed += OnEngineChanged;
         _theme = await ReadThemeAsync();
+        await ReadViewportAsync();
         if (Transport.State == TransportState.Disconnected)
         {
             _ = Transport.ConnectForeverAsync(Task.Delay, _stop.Token);
@@ -87,11 +97,12 @@
         _ = PingEveryAsync(TimeSpan.FromSeconds(15));
     }
 
-    private void StartDrag(Side side, PointerEventArgs e)
+    private async Task StartDragAsync(Side side, PointerEventArgs e)
     {
         _dragging = side;
         _dragStartX = e.ClientX;
         _dragStartWidth = side == Side.Left ? _leftWidth : _rightWidth;
+        await ReadViewportAsync();
     }
 
     private void OnDrag(PointerEventArgs e)
@@ -101,7 +112,7 @@
     }
 
     /// <summary>Arrow keys on a focused panel edge move it by 16 px (towards the arrow).</summary>
-    private void ResizeByKey(Side side, KeyboardEventArgs e)
+    private async Task ResizeByKeyAsync(Side side, KeyboardEventArgs e)
     {
         var step = e.Key switch
         {
@@ -109,19 +120,35 @@
             "ArrowRight" => 16,
             _ => 0,
         };
-        Resize(side, side == Side.Left ? _leftWidth + step : _rightWidth - step);
+        if (step != 0)
+        {
+            await ReadViewportAsync();
+            Resize(side, side == Side.Left ? _leftWidth + step : _rightWidth - step);
+        }
     }
 
+    /// <summary>Keeps the centre at least <see cref="PanelWidth.MinCenter"/> wide (on a window resize, CSS keeps it so).</summary>
     private void Resize(Side side, int width)
     {
-        width = Math.Clamp(width, MinWidth, MaxWidth);
         if (side == Side.Left)
         {
-            _leftWidth = width;
+            _leftWidth = PanelWidth.Clamp(width, _historyOpen ? _rightWidth : 0, _viewport);
         }
         else
         {
-            _rightWidth = width;
+            _rightWidth = PanelWidth.Clamp(width, _filesOpen ? _leftWidth : 0, _viewport);
+        }
+    }
+
+    private async Task ReadViewportAsync()
+    {
+        try
+        {
+            _viewport = (int)await JS.GetValueAsync<double>("window.innerWidth");
+        }
+        catch (JSException)
+        {
+            // Keep the last known width.
         }
     }
 
@@ -138,7 +165,7 @@
         }
     }
 
-    private void OnEngineChanged() => InvokeAsync(StateHasChanged);
+    private void OnEngineChanged() => _render?.Request();
 
     private void OnStateChanged(TransportState state)
     {
@@ -181,10 +208,16 @@
             await Transport.RequestAsync(Envelope.Create(MessageTypes.Ping, new { }), TimeSpan.FromSeconds(5), _stop.Token);
             _pingMs = watch.ElapsedMilliseconds;
         }
-        catch (Exception) when (!_stop.IsCancellationRequested)
+        catch (Exception) when (_stop.IsCancellationRequested)
+        {
+            // Disposed: nothing to show.
+            return;
+        }
+        catch (Exception)
         {
             _pingMs = null;
         }
+
 
         await InvokeAsync(StateHasChanged);
     }
