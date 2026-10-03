@@ -29,7 +29,14 @@ public static class TransportExtensions
 	/// <summary>Sends <paramref name="request"/> under a fresh correlation id and waits for the reply that carries it.</summary>
 	/// <exception cref="RequestFailedException">The server answered with <c>error</c>.</exception>
 	/// <exception cref="TimeoutException">No reply within <paramref name="timeout"/>.</exception>
-	public static async Task<Envelope> RequestAsync(this ITransport transport, Envelope request, TimeSpan timeout, CancellationToken ct = default)
+	public static Task<Envelope> RequestAsync(this ITransport transport, Envelope request, TimeSpan timeout, CancellationToken ct = default) =>
+		transport.SendRequestAsync(request, timeout, ct).Unwrap();
+
+	/// <summary>
+	/// Like <see cref="RequestAsync"/>, but completes as soon as the request is sent, with the task of its reply: the next message can
+	/// go out (after this one) before this reply arrives.
+	/// </summary>
+	public static async Task<Task<Envelope>> SendRequestAsync(this ITransport transport, Envelope request, TimeSpan timeout, CancellationToken ct = default)
 	{
 		var id = Guid.NewGuid().ToString("N");
 		var reply = new TaskCompletionSource<Envelope>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -45,18 +52,32 @@ public static class TransportExtensions
 		try
 		{
 			await transport.SendAsync(request with { CorrelationId = id }, ct);
-			var envelope = await reply.Task.WaitAsync(timeout, ct);
-			if (envelope.Type == MessageTypes.Error)
-			{
-				var error = envelope.Payload.Deserialize<ErrorPayload>(JsonSerializerOptions.Web);
-				throw new RequestFailedException(error?.Code ?? ErrorCodes.Internal, error?.Message);
-			}
-
-			return envelope;
 		}
-		finally
+		catch
 		{
 			transport.Received -= OnReceived;
+			throw;
+		}
+
+		return ReplyAsync();
+
+		async Task<Envelope> ReplyAsync()
+		{
+			try
+			{
+				var envelope = await reply.Task.WaitAsync(timeout, ct);
+				if (envelope.Type == MessageTypes.Error)
+				{
+					var error = envelope.Payload.Deserialize<ErrorPayload>(JsonSerializerOptions.Web);
+					throw new RequestFailedException(error?.Code ?? ErrorCodes.Internal, error?.Message);
+				}
+
+				return envelope;
+			}
+			finally
+			{
+				transport.Received -= OnReceived;
+			}
 		}
 	}
 }

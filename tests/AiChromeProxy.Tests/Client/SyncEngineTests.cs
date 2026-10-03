@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using AiChromeProxy.Client.Sync;
@@ -756,6 +757,79 @@ public sealed class SyncEngineTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Uploads_Pipelined_ManyRepliesAwaitedAtOnce_FailuresStillPerFile()
+	{
+		var delay = TimeSpan.FromMilliseconds(50);
+		WriteFiles(64);
+		await OpenAsync();
+		RefuseWhen(e => e.Type == MessageTypes.SyncChunk && Read<SyncChunkPayload>(e).Path == "f10.txt", ErrorCodes.TooLarge, "Refused.");
+		_server.Transport.ReplyDelay = delay;
+		var watch = new Stopwatch();
+		_engine.Changed += () =>
+		{
+			if (_engine.Phase == SyncPhase.Uploading && !watch.IsRunning)
+			{
+				watch.Start();
+			}
+		};
+
+		await _engine.SyncOnceAsync(Ct);
+
+		watch.Stop();
+		Assert.Equal(SyncPhase.Synced, _engine.Phase);
+		Assert.Equal((64, 64, 63), (_engine.UploadTotal, _engine.UploadDone, _engine.SyncedCount));
+		Assert.Equal(FileSyncState.Error, _engine.FileAt("f10.txt")!.State);
+		Assert.Equal("Refused.", _engine.FileAt("f10.txt")!.Error);
+		Assert.Contains(_engine.Activity, a => a.Text == "Could not upload 1 file: f10.txt: Refused.");
+		Assert.All(Enumerable.Range(0, 64).Where(i => i != 10), i => Assert.Equal($"file {i}", File.ReadAllText(_server.PathOf(Repo, $"f{i:00}.txt"))));
+
+		// The uploads: one file at a time waits a round trip per file (64 × 50 ms); pipelined, up to MaxUploadsInFlight replies are awaited together.
+		Assert.InRange(_server.Transport.MaxPendingReplies, 8, SyncEngine.MaxUploadsInFlight);
+		Assert.True(watch.Elapsed < 20 * delay, $"The pass took {watch.Elapsed}.");
+	}
+
+	[Fact]
+	public async Task ConnectionDropsWhileRepliesPending_PassFailsAtOnce_NothingCountedTwice()
+	{
+		WriteFiles(64);
+		await OpenAsync();
+		await _engine.InitializeAsync();
+		var real = _server.Transport.Reply!;
+		var stored = 0;
+		_server.Transport.Reply = async e =>
+		{
+			var reply = await real(e);
+			if (reply?.Type == MessageTypes.SyncStored && ++stored == 64)
+			{
+				// The server stored every file, but the replies still on their way are lost with the connection.
+				_server.Reconnect();
+			}
+
+			return reply;
+		};
+		_server.Transport.ReplyDelay = TimeSpan.FromMilliseconds(50);
+		var watch = Stopwatch.StartNew();
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.True(watch.Elapsed < SyncEngine.RequestTimeout / 3, $"The pass took {watch.Elapsed}; it waited for lost replies.");
+		Assert.Equal(SyncPhase.Failed, _engine.Phase);
+		Assert.Contains("connection was lost", _engine.Problem, StringComparison.Ordinal);
+		Assert.InRange(_engine.UploadDone, 1, 63);
+		Assert.Equal(_engine.UploadDone, _engine.SyncedCount);
+		Assert.DoesNotContain(_engine.Activity, a => a.Kind == SyncActivityKind.PassFinished);
+
+		await _engine.SyncOnceAsync(Ct);
+
+		// The server has every file: none is sent again.
+		Assert.Equal(SyncPhase.Synced, _engine.Phase);
+		Assert.Equal(64, _engine.SyncedCount);
+		Assert.Equal(0, _engine.UploadTotal);
+		Assert.Equal(64, stored);
+		Assert.Equal("Already in sync (64 files).", _engine.Activity[0].Text);
+	}
+
+	[Fact]
 	public async Task FolderChangedWhileOpening_OldCycleStops_NewFolderSyncedUnderItsName()
 	{
 		_folder.Write("a.txt", "a");
@@ -1255,6 +1329,8 @@ public sealed class SyncEngineTests : IDisposable
 		Assert.True(condition());
 	}
 
+	private static T Read<T>(Envelope envelope) => envelope.Payload.Deserialize<T>(JsonSerializerOptions.Web)!;
+
 	private static string Sha(string text) => Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(text)));
 
 	private SyncManifestPayload LastManifest() =>
@@ -1285,6 +1361,15 @@ public sealed class SyncEngineTests : IDisposable
 		_server.Transport.Reply = e => refuse(e)
 			? Task.FromResult<Envelope?>(Envelope.Create(MessageTypes.Error, new ErrorPayload(code, message), e.CorrelationId))
 			: real(e);
+	}
+
+	/// <summary>f00.txt … with the content "file 0" ….</summary>
+	private void WriteFiles(int count)
+	{
+		for (var i = 0; i < count; i++)
+		{
+			_folder.Write($"f{i:00}.txt", $"file {i}");
+		}
 	}
 
 	private async Task OpenAsync()

@@ -29,7 +29,7 @@ public enum SyncPhase
 
 /// <summary>
 /// One-way sync of the picked folder to the server's mirror: scan → (first time, after a reconnect, and every
-/// <see cref="FullManifestInterval"/>) the full manifest with its keep list, otherwise a delta → upload what the server needs, one file at a time in chunks. Rescans every <see cref="ScanInterval"/>
+/// <see cref="FullManifestInterval"/>) the full manifest with its keep list, otherwise a delta → upload what the server needs in chunks, in order, with up to <see cref="MaxUploadsInFlight"/> files awaiting their reply. Rescans every <see cref="ScanInterval"/>
 /// while the tab is visible and immediately on focus (ponytail: polling; switch to FileSystemObserver once it is stable).
 /// </summary>
 public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeProvider time)
@@ -39,6 +39,12 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 
 	/// <summary>Entries kept in <see cref="Activity"/>.</summary>
 	public const int MaxActivity = 500;
+
+	/// <summary>
+	/// Files whose upload may await its reply at once: the next file's chunks go out without waiting for the previous one's
+	/// <c>sync.stored</c>, so a first sync is not one round trip per file (the server still stores them one after the other, in order).
+	/// </summary>
+	public const int MaxUploadsInFlight = 16;
 
 	public static readonly TimeSpan ScanInterval = TimeSpan.FromSeconds(10);
 	public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
@@ -656,8 +662,9 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 		_failures.TryGetValue(entry.Path, out var failure) && failure.Entry == entry && time.GetUtcNow() < failure.Until ? failure.Error : null;
 
 	/// <summary>
-	/// Sequential uploads; a file that fails (refused, changed or unreadable) is marked and sent again on the next scan only,
-	/// a lost connection or lost access to the folder ends the cycle.
+	/// Uploads in order, pipelined: up to <see cref="MaxUploadsInFlight"/> files await their reply while the next ones are sent, and the
+	/// replies are handled in upload order. A file that fails (refused, changed or unreadable) is marked and sent again on the next scan
+	/// only; a lost connection or lost access to the folder ends the cycle, and the replies still awaited then are not counted.
 	/// </summary>
 	/// <returns>The stored entries and the failed files as "path: reason".</returns>
 	private async Task<(List<ManifestEntry> Uploaded, List<string> Failed)> UploadAsync(string repo, int generation, List<ManifestEntry> entries, CancellationToken ct)
@@ -668,50 +675,118 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 		UploadTotal = entries.Count;
 		Phase = SyncPhase.Uploading;
 		Raise();
-		foreach (var entry in entries)
+
+		// A dropped connection loses the replies still awaited: the pass ends at once instead of waiting for them to time out.
+		var dropped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		void OnStateChanged(TransportState state)
 		{
-			// A reconnect or a folder change ends the pass here: the remaining files are not attempted.
-			EnsureCurrent(generation, repo);
+			if (state != TransportState.Connected)
+			{
+				dropped.TrySetResult();
+			}
+		}
+
+		using (var abort = CancellationTokenSource.CreateLinkedTokenSource(ct))
+		{
+			var inFlight = new Queue<(ManifestEntry Entry, Task<Envelope> Reply)>();
+			transport.StateChanged += OnStateChanged;
 			try
 			{
-				await UploadFileAsync(repo, generation, entry, ct);
-				_known[entry.Path] = entry;
-				_failures.Remove(entry.Path);
-				SetFileState(entry.Path, FileSyncState.Synced, null);
-				uploaded.Add(entry);
-			}
-			catch (Exception ex) when (ex is RequestFailedException or IOException or JSException)
-			{
-				if (ex is JSException && !await folder.HasAccessAsync())
+				foreach (var entry in entries)
 				{
-					// Every remaining file would fail the same way: the pass ends, nothing is backed off.
-					Folder = FolderStatus.NeedsPermission;
-					throw new InvalidOperationException(AccessLost, ex);
+					// A reconnect or a folder change ends the pass here: the remaining files are not attempted.
+					EnsureCurrent(generation, repo);
+					if (inFlight.Count == MaxUploadsInFlight)
+					{
+						await CompleteUploadAsync(generation, inFlight.Dequeue(), dropped.Task, uploaded, failed);
+					}
+
+					Task<Envelope> reply;
+					var accessLost = false;
+					try
+					{
+						reply = await SendFileAsync(repo, generation, entry, abort.Token);
+					}
+					catch (Exception ex) when (ex is IOException or JSException)
+					{
+						// Handled in order, after the replies before it; without access to the folder no further file is read.
+						reply = Task.FromException<Envelope>(ex);
+						accessLost = ex is JSException && !await folder.HasAccessAsync();
+					}
+
+					inFlight.Enqueue((entry, reply));
+					if (accessLost)
+					{
+						break;
+					}
 				}
 
-				// The same size and hash waits FailureBackoff before it is tried again, except after an internal server error (transient,
-				// retried on the next pass); the same failure is logged once.
-				var repeated = _failures.TryGetValue(entry.Path, out var earlier) && earlier.Entry == entry && earlier.Error == ex.Message;
-				var backoff = ex is RequestFailedException { Code: ErrorCodes.Internal } ? TimeSpan.Zero : FailureBackoff;
-				_failures[entry.Path] = (entry, ex.Message, time.GetUtcNow() + backoff);
-				SetFileState(entry.Path, FileSyncState.Error, ex.Message);
-				if (!repeated)
+				while (inFlight.TryDequeue(out var upload))
 				{
-					failed.Add($"{entry.Path}: {ex.Message}");
+					await CompleteUploadAsync(generation, upload, dropped.Task, uploaded, failed);
 				}
 			}
-
-			UploadDone++;
-			if (time.GetElapsedTime(_lastRaise) >= ProgressInterval)
+			finally
 			{
-				Raise();
+				transport.StateChanged -= OnStateChanged;
+
+				// Replies nobody handles any more (the pass ended early) stop being awaited.
+				abort.Cancel();
 			}
 		}
 
 		return (uploaded, failed);
 	}
 
-	private async Task UploadFileAsync(string repo, int generation, ManifestEntry entry, CancellationToken ct)
+	/// <summary>Records the outcome of one upload once its reply (or its local failure) is in; ends the pass when the connection dropped first.</summary>
+	private async Task CompleteUploadAsync(int generation, (ManifestEntry Entry, Task<Envelope> Reply) upload, Task dropped, List<ManifestEntry> uploaded, List<string> failed)
+	{
+		var entry = upload.Entry;
+		if (await Task.WhenAny(upload.Reply, dropped) != upload.Reply)
+		{
+			throw new InvalidOperationException(PassAborted);
+		}
+
+		try
+		{
+			await upload.Reply;
+			EnsureFolder(generation);
+			_known[entry.Path] = entry;
+			_failures.Remove(entry.Path);
+			SetFileState(entry.Path, FileSyncState.Synced, null);
+			uploaded.Add(entry);
+		}
+		catch (Exception ex) when (ex is RequestFailedException or IOException or JSException)
+		{
+			EnsureFolder(generation);
+			if (ex is JSException && !await folder.HasAccessAsync())
+			{
+				// Every remaining file would fail the same way: the pass ends, nothing is backed off.
+				Folder = FolderStatus.NeedsPermission;
+				throw new InvalidOperationException(AccessLost, ex);
+			}
+
+			// The same size and hash waits FailureBackoff before it is tried again, except after an internal server error (transient,
+			// retried on the next pass); the same failure is logged once.
+			var repeated = _failures.TryGetValue(entry.Path, out var earlier) && earlier.Entry == entry && earlier.Error == ex.Message;
+			var backoff = ex is RequestFailedException { Code: ErrorCodes.Internal } ? TimeSpan.Zero : FailureBackoff;
+			_failures[entry.Path] = (entry, ex.Message, time.GetUtcNow() + backoff);
+			SetFileState(entry.Path, FileSyncState.Error, ex.Message);
+			if (!repeated)
+			{
+				failed.Add($"{entry.Path}: {ex.Message}");
+			}
+		}
+
+		UploadDone++;
+		if (time.GetElapsedTime(_lastRaise) >= ProgressInterval)
+		{
+			Raise();
+		}
+	}
+
+	/// <summary>Sends the file's chunks in order and returns once the last one is sent, with the task of its <c>sync.stored</c> reply.</summary>
+	private async Task<Task<Envelope>> SendFileAsync(string repo, int generation, ManifestEntry entry, CancellationToken ct)
 	{
 		for (long offset = 0; ; offset += SyncLimits.ChunkSize)
 		{
@@ -727,8 +802,7 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 			EnsureCurrent(generation, repo);
 			if (last)
 			{
-				await RequestAsync(MessageTypes.SyncChunk, chunk, ct);
-				return;
+				return await transport.SendRequestAsync(Envelope.Create(MessageTypes.SyncChunk, chunk), RequestTimeout, ct);
 			}
 
 			// Not awaited for a reply: the server answers only the last chunk (or an error, which the last chunk then gets too).
