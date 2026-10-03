@@ -1,6 +1,6 @@
 namespace AiChromeProxy.Client.Sync;
 
-/// <summary>The picked folder in the browser (File System Access API, read-only); <see cref="JsFolderAccess"/> in the app, a fake in tests.</summary>
+/// <summary>The picked folder in the browser (File System Access API; read access, write access only once granted); <see cref="JsFolderAccess"/> in the app, a fake in tests.</summary>
 public interface IFolderAccess
 {
 	/// <summary>Shows the folder picker; the folder name, or null when the user cancelled.</summary>
@@ -34,6 +34,21 @@ public interface IFolderAccess
 	/// Offset 0 snapshots the file for the following chunks; fails when the path is not in the last scan or the file changed since.
 	/// </summary>
 	Task<byte[]> ReadChunkAsync(string path, long offset, int length);
+
+	/// <summary>SHA-256 of the file as it is now (not from the last scan); null when there is no such file. Throws when it cannot be read.</summary>
+	Task<string?> HashNowAsync(string path);
+
+	/// <summary>Whether the folder may be written (queryPermission readwrite; asks nothing).</summary>
+	Task<bool> HasWriteAccessAsync();
+
+	/// <summary>Asks for write access (must run from a click).</summary>
+	Task<bool> RequestWriteAccessAsync();
+
+	/// <summary>Replaces (or creates, with its folders) the file atomically (createWritable).</summary>
+	Task WriteAsync(string path, byte[] content);
+
+	/// <summary>Deletes the file; no-op when it is not there.</summary>
+	Task DeleteAsync(string path);
 
 	/// <summary>Calls <paramref name="changed"/> with true when the tab becomes visible or gets focus, false when it is hidden.</summary>
 	Task WatchVisibilityAsync(Action<bool> changed);

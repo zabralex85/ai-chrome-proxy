@@ -64,13 +64,15 @@
         SyncActivityKind.PassFinished => "check",
         SyncActivityKind.Reconnected => "plug",
         SyncActivityKind.AccessLost => "lock",
+        SyncActivityKind.Received => "sync",
+        SyncActivityKind.Conflict => "warning",
         _ => "error",
     };
 
     private static string Tone(SyncActivityKind kind) => kind switch
     {
         SyncActivityKind.Error => "error",
-        SyncActivityKind.AccessLost => "warn",
+        SyncActivityKind.AccessLost or SyncActivityKind.Conflict => "warn",
         SyncActivityKind.PassFinished => "ok",
         _ => "info",
     };

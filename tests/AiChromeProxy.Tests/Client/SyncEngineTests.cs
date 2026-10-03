@@ -255,7 +255,7 @@ public sealed class SyncEngineTests : IDisposable
 
 		Assert.Equal(SyncPhase.Failed, _engine.Phase);
 		Assert.Contains("more than 20,000 files to sync", _engine.Problem, StringComparison.Ordinal);
-		Assert.Empty(_server.Transport.Sent);
+		Assert.Equal([MessageTypes.SyncOpen], SentTypes());
 		Assert.Empty(_folder.Hashed);
 	}
 
@@ -269,7 +269,7 @@ public sealed class SyncEngineTests : IDisposable
 
 		Assert.Equal(SyncPhase.Failed, _engine.Phase);
 		Assert.Contains("pick a smaller folder", _engine.Problem, StringComparison.Ordinal);
-		Assert.Empty(_server.Transport.Sent);
+		Assert.Equal([MessageTypes.SyncOpen], SentTypes());
 	}
 
 	[Fact]
@@ -440,7 +440,7 @@ public sealed class SyncEngineTests : IDisposable
 
 		Assert.Equal(SyncPhase.Failed, _engine.Phase);
 		Assert.Equal("The folder looks empty; nothing was deleted. Check access or pick the folder again.", _engine.Problem);
-		Assert.Empty(_server.Transport.Sent);
+		Assert.Equal([MessageTypes.SyncOpen], SentTypes());
 		Assert.True(File.Exists(_server.PathOf(Repo, "a.txt")));
 		Assert.True(File.Exists(_server.PathOf(Repo, "b.txt")));
 	}
@@ -719,7 +719,7 @@ public sealed class SyncEngineTests : IDisposable
 
 		Assert.Equal(SyncPhase.Failed, _engine.Phase);
 		Assert.Contains(".gitignore could not be read", _engine.Problem, StringComparison.Ordinal);
-		Assert.Empty(_server.Transport.Sent);
+		Assert.Equal([MessageTypes.SyncOpen], SentTypes());
 		Assert.Empty(_folder.Hashed);
 	}
 

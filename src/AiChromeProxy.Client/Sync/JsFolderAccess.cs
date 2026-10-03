@@ -32,6 +32,16 @@ public sealed class JsFolderAccess(IJSRuntime js) : IFolderAccess, IAsyncDisposa
 	public async Task<byte[]> ReadChunkAsync(string path, long offset, int length) =>
 		await (await ModuleAsync()).InvokeAsync<byte[]>("readChunk", path, offset, length);
 
+	public async Task<string?> HashNowAsync(string path) => await (await ModuleAsync()).InvokeAsync<string?>("hashNow", path);
+
+	public async Task<bool> HasWriteAccessAsync() => await (await ModuleAsync()).InvokeAsync<bool>("hasWriteAccess");
+
+	public async Task<bool> RequestWriteAccessAsync() => await (await ModuleAsync()).InvokeAsync<bool>("requestWriteAccess");
+
+	public async Task WriteAsync(string path, byte[] content) => await (await ModuleAsync()).InvokeVoidAsync("write", path, content);
+
+	public async Task DeleteAsync(string path) => await (await ModuleAsync()).InvokeVoidAsync("remove", path);
+
 	/// <summary>Replaces an earlier watch.</summary>
 	public async Task WatchVisibilityAsync(Action<bool> changed)
 	{

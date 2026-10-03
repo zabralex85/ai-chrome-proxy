@@ -23,7 +23,7 @@ public sealed class LoopbackServer : IDisposable
 	public LoopbackServer()
 	{
 		var store = new FileSystemMirrorStore(Options.Create(new MirrorOptions { Root = MirrorRoot }));
-		_sessions = new SyncSessions(store, Projects, new ListLogger<SyncSession>(), TimeProvider.System, new FakeMirrorWatcher());
+		_sessions = new SyncSessions(store, Projects, new ListLogger<SyncSession>(), TimeProvider.System, Watcher);
 		_router = new EnvelopeRouter([.. SyncHandler.Types.Select(t => (IEnvelopeHandler)new SyncHandler(t, _sessions)), .. ProjectSettingsHandler.Types.Select(t => new ProjectSettingsHandler(t, Projects, _sessions))]);
 		Transport.Reply = ReplyAsync;
 		Transport.SetState(TransportState.Connected);
@@ -32,6 +32,9 @@ public sealed class LoopbackServer : IDisposable
 	public string MirrorRoot { get; } = Path.Combine(TempRootCleanup.Root, Guid.NewGuid().ToString("N"));
 
 	public FakeTransport Transport { get; } = new();
+
+	/// <summary>The server's mirror watcher: <c>RaiseAsync</c> stands for an edit seen on the mirror (its pushes reach <see cref="Transport"/>).</summary>
+	public FakeMirrorWatcher Watcher { get; } = new();
 
 	/// <summary>The server's bases, baseline flags and project settings.</summary>
 	public MemoryProjectStore Projects { get; } = new();
@@ -61,11 +64,18 @@ public sealed class LoopbackServer : IDisposable
 		}
 	}
 
+	/// <summary>Pushes (<c>sync.remote</c>) reach the client at once, like a reply.</summary>
+	private Task PushAsync(Envelope envelope, CancellationToken ct)
+	{
+		Transport.Push(envelope);
+		return Task.CompletedTask;
+	}
+
 	private async Task<Envelope?> ReplyAsync(Envelope request)
 	{
 		try
 		{
-			return await _router.RouteAsync(request, new EnvelopeContext(ConnectionId, null, (_, _) => Task.CompletedTask), CancellationToken.None);
+			return await _router.RouteAsync(request, new EnvelopeContext(ConnectionId, null, PushAsync), CancellationToken.None);
 		}
 		catch (Exception)
 		{
