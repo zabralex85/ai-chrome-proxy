@@ -4,7 +4,7 @@
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
     <security>
       <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
-        <!-- Never elevated by default: only the "--admin" relaunch asks for UAC (Verb = runas). -->
+        <!-- Never elevated by default: only the elevated admin relaunch asks for UAC (Verb = runas). No double hyphen in comments: Windows rejects the whole manifest. -->
         <requestedExecutionLevel level="asInvoker" uiAccess="false" />
       </requestedPrivileges>
     </security>

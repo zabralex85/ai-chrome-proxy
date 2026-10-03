@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <None Update="testconfig.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\AiChromeProxy.Tray\app.manifest" Link="Tray\app.manifest" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
