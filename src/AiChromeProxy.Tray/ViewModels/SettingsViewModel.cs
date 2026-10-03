@@ -33,10 +33,10 @@ public sealed partial class SettingsViewModel : ObservableObject
 			Errors = [$"Could not read {dataDir.SettingsFile}: {ex.Message} Saving replaces the file."];
 		}
 
-		TeamDomain = (string?)settings[CloudflareAccessOptions.Section]?[nameof(CloudflareAccessOptions.TeamDomain)] ?? string.Empty;
-		Audience = (string?)settings[CloudflareAccessOptions.Section]?[nameof(CloudflareAccessOptions.Audience)] ?? string.Empty;
-		PublicHost = (string?)settings[ServerOptions.Section]?[nameof(ServerOptions.PublicHost)] ?? string.Empty;
-		Port = settings[ServerOptions.Section]?[nameof(ServerOptions.Port)]?.ToString() ?? ServerOptions.DefaultPort.ToString(CultureInfo.InvariantCulture);
+		TeamDomain = SettingsFile.Read(settings, CloudflareAccessOptions.Section, nameof(CloudflareAccessOptions.TeamDomain)) ?? string.Empty;
+		Audience = SettingsFile.Read(settings, CloudflareAccessOptions.Section, nameof(CloudflareAccessOptions.Audience)) ?? string.Empty;
+		PublicHost = SettingsFile.Read(settings, ServerOptions.Section, nameof(ServerOptions.PublicHost)) ?? string.Empty;
+		Port = SettingsFile.Read(settings, ServerOptions.Section, nameof(ServerOptions.Port)) ?? ServerOptions.DefaultPort.ToString(CultureInfo.InvariantCulture);
 		StartWithWindows = autoStart.IsEnabled;
 
 		var overriding = OverridingVariables(Environment.GetEnvironmentVariables());
@@ -93,8 +93,8 @@ public sealed partial class SettingsViewModel : ObservableObject
 	public static Uri UiAddress(DataDirectory dataDir)
 	{
 		var settings = SettingsFile.LoadOrEmpty(dataDir);
-		var publicHost = (string?)settings[ServerOptions.Section]?[nameof(ServerOptions.PublicHost)];
-		var port = settings[ServerOptions.Section]?[nameof(ServerOptions.Port)]?.ToString() ?? ServerOptions.DefaultPort.ToString(CultureInfo.InvariantCulture);
+		var publicHost = SettingsFile.Read(settings, ServerOptions.Section, nameof(ServerOptions.PublicHost));
+		var port = SettingsFile.Read(settings, ServerOptions.Section, nameof(ServerOptions.Port)) ?? ServerOptions.DefaultPort.ToString(CultureInfo.InvariantCulture);
 		return string.IsNullOrWhiteSpace(publicHost) ? new Uri($"http://127.0.0.1:{port}/") : new Uri($"https://{publicHost}/");
 	}
 

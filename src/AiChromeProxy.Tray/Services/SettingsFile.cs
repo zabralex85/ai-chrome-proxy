@@ -11,8 +11,20 @@ public static class SettingsFile
 
 	/// <summary>The settings file as a JSON object (empty when it does not exist yet).</summary>
 	/// <exception cref="JsonException">The file is not a JSON object.</exception>
-	public static JsonObject Load(DataDirectory dataDir) =>
-		File.Exists(dataDir.SettingsFile) ? JsonNode.Parse(File.ReadAllText(dataDir.SettingsFile))?.AsObject() ?? [] : [];
+	public static JsonObject Load(DataDirectory dataDir)
+	{
+		if (!File.Exists(dataDir.SettingsFile))
+		{
+			return [];
+		}
+
+		return JsonNode.Parse(File.ReadAllText(dataDir.SettingsFile)) switch
+		{
+			JsonObject settings => settings,
+			null => [],
+			_ => throw new JsonException("The root of the file is not a JSON object."),
+		};
+	}
 
 	/// <summary>As <see cref="Load"/>, but a broken file counts as empty (saving replaces it).</summary>
 	public static JsonObject LoadOrEmpty(DataDirectory dataDir)
@@ -26,6 +38,10 @@ public static class SettingsFile
 			return [];
 		}
 	}
+
+	/// <summary><paramref name="section"/>:<paramref name="key"/> as text (a number as its digits, like the Server's configuration reads it); null when missing or not a value under an object.</summary>
+	public static string? Read(JsonObject settings, string section, string key) =>
+		settings[section] is JsonObject values && values[key] is JsonValue value ? value.ToString() : null;
 
 	/// <summary>The object under <paramref name="name"/>, created (or replacing a non-object value) when missing.</summary>
 	public static JsonObject Section(JsonObject settings, string name)

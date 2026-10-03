@@ -26,6 +26,30 @@ public sealed class SettingsFileTests : IDisposable
 		Assert.Empty(SettingsFile.LoadOrEmpty(_dataDir));
 	}
 
+	[Theory]
+	[InlineData("[]")]
+	[InlineData("5")]
+	[InlineData("\"x\"")]
+	public void Load_RootNotAnObject_ThrowsJsonException_LoadOrEmpty_Empty(string json)
+	{
+		WriteFile(json);
+
+		Assert.ThrowsAny<JsonException>(() => SettingsFile.Load(_dataDir));
+		Assert.Empty(SettingsFile.LoadOrEmpty(_dataDir));
+	}
+
+	[Theory]
+	[InlineData("""{ "Server": { "PublicHost": "code.example.com" } }""", "code.example.com")]
+	[InlineData("""{ "Server": { "Port": 6000 } }""", null)]
+	[InlineData("""{ "Server": "x" }""", null)]
+	[InlineData("""{ "Server": [1] }""", null)]
+	[InlineData("""{ "Server": { "PublicHost": 5 } }""", "5")]
+	[InlineData("""{ "Server": { "PublicHost": { "a": 1 } } }""", null)]
+	public void Read_ValueAsText_NullForMissingOrWrongShape(string json, string? expected)
+	{
+		Assert.Equal(expected, SettingsFile.Read(JsonNode.Parse(json)!.AsObject(), "Server", "PublicHost"));
+	}
+
 	[Fact]
 	public void Section_ExistingKept_MissingOrNotAnObjectCreated()
 	{

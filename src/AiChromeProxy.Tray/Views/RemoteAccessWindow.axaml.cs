@@ -8,6 +8,12 @@ public partial class RemoteAccessWindow : Window
 {
 	public RemoteAccessWindow() => InitializeComponent();
 
+	protected override void OnClosed(EventArgs e)
+	{
+		(DataContext as RemoteAccessViewModel)?.ForgetToken();
+		base.OnClosed(e);
+	}
+
 	private void OnCreateToken(object? sender, RoutedEventArgs e) => App.Open(new Uri(RemoteAccessViewModel.CreateTokenUrl));
 
 	private void OnOpen(object? sender, RoutedEventArgs e)

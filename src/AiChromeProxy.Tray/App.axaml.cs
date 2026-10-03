@@ -126,12 +126,6 @@ public partial class App : Avalonia.Application
 		TrayIcon.SetIcons(this, [icon]);
 		_ = vm.RunUpdateChecksAsync(TimeProvider.System, CancellationToken.None);
 
-		// First run: nothing is published yet, so lead with the wizard.
-		if (RemoteAccessViewModel.NeedsSetup(dataDir))
-		{
-			ShowRemoteAccess();
-		}
-
 		// ponytail: polls the SCM every 2 s for the tray's lifetime (one cheap query); restrict to "menu open" via NativeMenu.Opening/Closed if it ever matters.
 		DispatcherTimer.Run(
 			() =>
@@ -140,5 +134,19 @@ public partial class App : Avalonia.Application
 				return true;
 			},
 			StatusPollInterval);
+
+		// First run: nothing is published yet, so lead with the wizard. Best effort after the tray is fully up: a failure here
+		// must not take the tray down (the menu item still opens the wizard).
+		try
+		{
+			if (RemoteAccessViewModel.NeedsSetup(dataDir))
+			{
+				ShowRemoteAccess();
+			}
+		}
+		catch (Exception)
+		{
+			// No auto-open.
+		}
 	}
 }

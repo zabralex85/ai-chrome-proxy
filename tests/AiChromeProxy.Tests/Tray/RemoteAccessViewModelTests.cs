@@ -274,6 +274,97 @@ public sealed class RemoteAccessViewModelTests : IDisposable
 		Assert.False(NeedsSetup(_dataDir));
 	}
 
+	[Theory]
+	[InlineData("[]")]
+	[InlineData("""{ "Server": "x" }""")]
+	[InlineData("""{ "Server": { "PublicHost": { "a": 1 } } }""")]
+	public void NeedsSetup_SettingsOfTheWrongShape_True(string json)
+	{
+		WriteSettings(json);
+
+		Assert.True(NeedsSetup(_dataDir));
+	}
+
+	[Theory]
+	[InlineData("[]")]
+	[InlineData("""{ "Server": "x" }""")]
+	[InlineData("""{ "Server": { "Port": [6000] } }""")]
+	public async Task SetUp_SettingsOfTheWrongShape_DefaultPort_FileReplaced(string json)
+	{
+		WriteSettings(json);
+		RemoteAccessProvisionerTests.FreshAccount(_handler);
+		var vm = await DetailsAsync();
+		vm.Emails = "jane@example.com";
+
+		await vm.SetUpCommand.ExecuteAsync(null);
+
+		Assert.Empty(vm.Errors);
+		Assert.True(vm.Succeeded);
+		Assert.Equal("http://127.0.0.1:5180", (string?)_handler.Body("PUT", $"accounts/a1/cfd_tunnel/{RemoteAccessProvisionerTests.TunnelId}/configurations")!["config"]!["ingress"]![0]!["service"]);
+		Assert.Equal("code.example.com", (string?)ReadSettings()["Server"]!["PublicHost"]);
+	}
+
+	[Fact]
+	public async Task Secrets_NeverInStepsStatusOrErrors()
+	{
+		RemoteAccessProvisionerTests.FreshAccount(_handler);
+		var vm = await DetailsAsync();
+		vm.Emails = "jane@example.com";
+
+		await vm.SetUpCommand.ExecuteAsync(null);
+
+		Assert.True(vm.Succeeded);
+		var shown = vm.Steps.Concat(vm.Errors).Append(vm.Status ?? string.Empty).ToList();
+		Assert.DoesNotContain(shown, line => line.Contains("api-token", StringComparison.Ordinal));
+		Assert.DoesNotContain(shown, line => line.Contains(RemoteAccessProvisionerTests.TunnelToken, StringComparison.Ordinal));
+	}
+
+	[Fact]
+	public async Task Continue_NetworkFailure_ErrorShown_NotBusy()
+	{
+		_handler.OnResponse("GET", "user/tokens/verify", () => throw new HttpRequestException("No such host is known. (api.cloudflare.com:443)"));
+		var vm = Create();
+		vm.ApiToken = "api-token";
+
+		await vm.ContinueCommand.ExecuteAsync(null);
+
+		Assert.Equal(["No such host is known. (api.cloudflare.com:443)"], vm.Errors);
+		Assert.False(vm.IsBusy);
+		Assert.True(vm.IsTokenStage);
+	}
+
+	[Fact]
+	public async Task Continue_AgainWithARejectedToken_ForgetsTheEarlierClient()
+	{
+		var vm = await DetailsAsync();
+		vm.BackCommand.Execute(null);
+		_handler.OnError("GET", "user/tokens/verify", HttpStatusCode.Unauthorized, 1000, "Invalid API Token");
+		vm.ApiToken = "bad";
+		await vm.ContinueCommand.ExecuteAsync(null);
+		vm.Emails = "jane@example.com";
+		var requests = _handler.Requests.Count;
+
+		await vm.SetUpCommand.ExecuteAsync(null);
+
+		Assert.Equal(requests, _handler.Requests.Count);
+		Assert.False(vm.IsProgressStage);
+	}
+
+	[Fact]
+	public async Task ForgetToken_ClearsTokenAndClient()
+	{
+		var vm = await DetailsAsync();
+		vm.Emails = "jane@example.com";
+		var requests = _handler.Requests.Count;
+
+		vm.ForgetToken();
+		await vm.SetUpCommand.ExecuteAsync(null);
+
+		Assert.Equal(string.Empty, vm.ApiToken);
+		Assert.Equal(requests, _handler.Requests.Count);
+		Assert.False(vm.IsProgressStage);
+	}
+
 	[Fact]
 	public void NeedsSetup_UnreadableFile_False()
 	{

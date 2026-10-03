@@ -106,7 +106,7 @@ public sealed partial class RemoteAccessViewModel(
 	{
 		try
 		{
-			return string.IsNullOrWhiteSpace((string?)SettingsFile.LoadOrEmpty(dataDir)[ServerOptions.Section]?[nameof(ServerOptions.PublicHost)]);
+			return string.IsNullOrWhiteSpace(SettingsFile.Read(SettingsFile.LoadOrEmpty(dataDir), ServerOptions.Section, nameof(ServerOptions.PublicHost)));
 		}
 		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 		{
@@ -114,10 +114,18 @@ public sealed partial class RemoteAccessViewModel(
 		}
 	}
 
+	/// <summary>The window closed: drop the API token and its client so an abandoned setup does not keep them.</summary>
+	public void ForgetToken()
+	{
+		ApiToken = string.Empty;
+		_api = null;
+	}
+
 	/// <summary>Token → Details: verifies the token and loads the zones it can see.</summary>
 	[RelayCommand(CanExecute = nameof(IsIdle))]
 	private async Task ContinueAsync()
 	{
+		_api = null;
 		Errors = [];
 		if (string.IsNullOrWhiteSpace(ApiToken))
 		{
@@ -262,7 +270,7 @@ public sealed partial class RemoteAccessViewModel(
 
 	private int ReadPort() =>
 		int.TryParse(
-			SettingsFile.LoadOrEmpty(dataDir)[ServerOptions.Section]?[nameof(ServerOptions.Port)]?.ToString(),
+			SettingsFile.Read(SettingsFile.LoadOrEmpty(dataDir), ServerOptions.Section, nameof(ServerOptions.Port)),
 			NumberStyles.None,
 			CultureInfo.InvariantCulture,
 			out var port) && port is >= 1 and <= 65535

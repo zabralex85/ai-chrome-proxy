@@ -60,6 +60,31 @@ public sealed class SettingsViewModelTests : IDisposable
 	}
 
 	[Fact]
+	public void RootNotAnObject_ErrorShown_Defaults()
+	{
+		WriteFile("[]");
+
+		var vm = Create();
+
+		Assert.StartsWith($"Could not read {_dataDir.SettingsFile}: ", Assert.Single(vm.Errors), StringComparison.Ordinal);
+		Assert.Equal("5180", vm.Port);
+		Assert.Equal(string.Empty, vm.PublicHost);
+	}
+
+	[Fact]
+	public void SectionsOfTheWrongShape_ReadAsText_OrDefaults()
+	{
+		WriteFile("""{ "CloudflareAccess": "x", "Server": { "PublicHost": 5, "Port": "6000" } }""");
+
+		var vm = Create();
+
+		Assert.Empty(vm.Errors);
+		Assert.Equal(string.Empty, vm.TeamDomain);
+		Assert.Equal("5", vm.PublicHost);
+		Assert.Equal("6000", vm.Port);
+	}
+
+	[Fact]
 	public void BrokenFile_ErrorShown_SaveReplacesIt()
 	{
 		WriteFile("{ not json");
@@ -186,6 +211,8 @@ public sealed class SettingsViewModelTests : IDisposable
 	[Theory]
 	[InlineData("""{ "Server": { "Port": 6000 } }""", "http://127.0.0.1:6000/")]
 	[InlineData("{ broken", "http://127.0.0.1:5180/")]
+	[InlineData("[]", "http://127.0.0.1:5180/")]
+	[InlineData("""{ "Server": "x" }""", "http://127.0.0.1:5180/")]
 	public void UiAddress_NoPublicHost_Loopback(string json, string expected)
 	{
 		WriteFile(json);
