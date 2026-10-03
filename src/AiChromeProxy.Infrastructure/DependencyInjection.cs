@@ -1,4 +1,6 @@
+using AiChromeProxy.Application.Chat;
 using AiChromeProxy.Application.Sync;
+using AiChromeProxy.Infrastructure.Chat;
 using AiChromeProxy.Infrastructure.Projects;
 using AiChromeProxy.Infrastructure.Security;
 using AiChromeProxy.Infrastructure.Sync;
@@ -25,6 +27,7 @@ public static class DependencyInjection
 		services.AddSingleton<IMirrorWatcher, MirrorWatcher>();
 		services.Configure<ProjectsOptions>(configuration.GetSection(ProjectsOptions.Section));
 		services.AddSingleton<IProjectStore, SqliteProjectStore>();
+		services.AddSingleton<IChatStore, SqliteChatStore>();
 		return services;
 	}
 }

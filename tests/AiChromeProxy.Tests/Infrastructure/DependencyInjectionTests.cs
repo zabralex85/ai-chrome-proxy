@@ -1,7 +1,9 @@
 using AiChromeProxy.Application;
+using AiChromeProxy.Application.Chat;
 using AiChromeProxy.Application.Sync;
 using AiChromeProxy.Application.Transport;
 using AiChromeProxy.Infrastructure;
+using AiChromeProxy.Infrastructure.Chat;
 using AiChromeProxy.Infrastructure.Projects;
 using AiChromeProxy.Infrastructure.Security;
 using Microsoft.Extensions.Configuration;
@@ -20,6 +22,7 @@ public sealed class DependencyInjectionTests
 		{
 			Assert.NotNull(provider.GetRequiredService<CloudflareAccessTokenValidator>());
 			Assert.IsType<SqliteProjectStore>(provider.GetRequiredService<IProjectStore>());
+			Assert.IsType<SqliteChatStore>(provider.GetRequiredService<IChatStore>());
 		}
 	}
 
