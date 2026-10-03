@@ -94,8 +94,9 @@ public sealed partial class SettingsViewModel : ObservableObject
 	{
 		var settings = SettingsFile.LoadOrEmpty(dataDir);
 		var publicHost = SettingsFile.Read(settings, ServerOptions.Section, nameof(ServerOptions.PublicHost));
-		var port = SettingsFile.Read(settings, ServerOptions.Section, nameof(ServerOptions.Port)) ?? ServerOptions.DefaultPort.ToString(CultureInfo.InvariantCulture);
-		return string.IsNullOrWhiteSpace(publicHost) ? new Uri($"http://127.0.0.1:{port}/") : new Uri($"https://{publicHost}/");
+		return string.IsNullOrWhiteSpace(publicHost)
+			? new Uri($"http://127.0.0.1:{SettingsFile.ReadPort(settings).ToString(CultureInfo.InvariantCulture)}/")
+			: new Uri($"https://{publicHost}/");
 	}
 
 	/// <returns>The messages the Server would fail with for these values (empty when valid).</returns>

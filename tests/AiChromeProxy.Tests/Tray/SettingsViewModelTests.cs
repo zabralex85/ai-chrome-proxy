@@ -213,6 +213,9 @@ public sealed class SettingsViewModelTests : IDisposable
 	[InlineData("{ broken", "http://127.0.0.1:5180/")]
 	[InlineData("[]", "http://127.0.0.1:5180/")]
 	[InlineData("""{ "Server": "x" }""", "http://127.0.0.1:5180/")]
+	[InlineData("""{ "Server": { "Port": "x y" } }""", "http://127.0.0.1:5180/")]
+	[InlineData("""{ "Server": { "Port": true } }""", "http://127.0.0.1:5180/")]
+	[InlineData("""{ "Server": { "Port": 70000 } }""", "http://127.0.0.1:5180/")]
 	public void UiAddress_NoPublicHost_Loopback(string json, string expected)
 	{
 		WriteFile(json);

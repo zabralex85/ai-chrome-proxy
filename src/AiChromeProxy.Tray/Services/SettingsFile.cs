@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AiChromeProxy.Infrastructure.Hosting;
@@ -9,8 +10,11 @@ public static class SettingsFile
 {
 	private static readonly JsonSerializerOptions Indented = new() { WriteIndented = true };
 
+	// Comments and trailing commas as the Server's JSON configuration accepts them; a duplicate key is broken there too.
+	private static readonly JsonDocumentOptions Lenient = new() { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true, AllowDuplicateProperties = false };
+
 	/// <summary>The settings file as a JSON object (empty when it does not exist yet).</summary>
-	/// <exception cref="JsonException">The file is not a JSON object.</exception>
+	/// <exception cref="JsonException">The file is not a JSON object, or has a duplicate key.</exception>
 	public static JsonObject Load(DataDirectory dataDir)
 	{
 		if (!File.Exists(dataDir.SettingsFile))
@@ -18,7 +22,7 @@ public static class SettingsFile
 			return [];
 		}
 
-		return JsonNode.Parse(File.ReadAllText(dataDir.SettingsFile)) switch
+		return JsonNode.Parse(File.ReadAllText(dataDir.SettingsFile), documentOptions: Lenient) switch
 		{
 			JsonObject settings => settings,
 			null => [],
@@ -42,6 +46,12 @@ public static class SettingsFile
 	/// <summary><paramref name="section"/>:<paramref name="key"/> as text (a number as its digits, like the Server's configuration reads it); null when missing or not a value under an object.</summary>
 	public static string? Read(JsonObject settings, string section, string key) =>
 		settings[section] is JsonObject values && values[key] is JsonValue value ? value.ToString() : null;
+
+	/// <summary><c>Server:Port</c> when it is a port number (1-65535), else the default.</summary>
+	public static int ReadPort(JsonObject settings) =>
+		int.TryParse(Read(settings, ServerOptions.Section, nameof(ServerOptions.Port)), NumberStyles.None, CultureInfo.InvariantCulture, out var port) && port is >= 1 and <= 65535
+			? port
+			: ServerOptions.DefaultPort;
 
 	/// <summary>The object under <paramref name="name"/>, created (or replacing a non-object value) when missing.</summary>
 	public static JsonObject Section(JsonObject settings, string name)

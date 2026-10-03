@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.Globalization;
 using AiChromeProxy.Infrastructure.Cloudflare;
 using AiChromeProxy.Infrastructure.Hosting;
 using AiChromeProxy.Infrastructure.Security;
@@ -268,14 +267,7 @@ public sealed partial class RemoteAccessViewModel(
 		};
 	}
 
-	private int ReadPort() =>
-		int.TryParse(
-			SettingsFile.Read(SettingsFile.LoadOrEmpty(dataDir), ServerOptions.Section, nameof(ServerOptions.Port)),
-			NumberStyles.None,
-			CultureInfo.InvariantCulture,
-			out var port) && port is >= 1 and <= 65535
-			? port
-			: ServerOptions.DefaultPort;
+	private int ReadPort() => SettingsFile.ReadPort(SettingsFile.LoadOrEmpty(dataDir));
 
 	/// <summary>Adds lines synchronously (the BCL <c>Progress</c> would post them to the thread pool).</summary>
 	private sealed class StepProgress(ICollection<string> steps) : IProgress<string>

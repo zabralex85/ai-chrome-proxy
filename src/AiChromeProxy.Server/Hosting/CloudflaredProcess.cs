@@ -73,8 +73,9 @@ public sealed class CloudflaredProcess : ICloudflaredProcess
 		{
 			// Already exited.
 		}
-		catch (Win32Exception)
+		catch (Exception ex) when (ex is Win32Exception or AggregateException)
 		{
+			// Kill(entireProcessTree) reports a failed terminate as AggregateException.
 			// Access denied or already terminating: the kill-on-close job still ends it with the Server.
 		}
 	}

@@ -28,7 +28,7 @@ public sealed class CloudflaredSupervisorTests
 	[InlineData(" ")]
 	public async Task NoToken_NeverStarts_LogsOnce(string token)
 	{
-		await Create(token).RunAsync(TestContext.Current.CancellationToken);
+		await Create(token).RunAsync(TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
 
 		Assert.Empty(_starts);
 		Assert.Equal(["Cloudflare Tunnel not configured (Tunnel:Token is empty); cloudflared is not started."], _logger.Messages);
@@ -144,7 +144,7 @@ public sealed class CloudflaredSupervisorTests
 	[Fact]
 	public async Task AccessCheckDisabled_NeverStarts_LogsOnce()
 	{
-		await Create(accessEnabled: false).RunAsync(TestContext.Current.CancellationToken);
+		await Create(accessEnabled: false).RunAsync(TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
 
 		Assert.Empty(_starts);
 		Assert.Equal(["Cloudflare Access check is disabled; cloudflared is not started (never expose a Server without it)."], _logger.Messages);

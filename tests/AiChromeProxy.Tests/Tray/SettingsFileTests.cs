@@ -26,6 +26,28 @@ public sealed class SettingsFileTests : IDisposable
 		Assert.Empty(SettingsFile.LoadOrEmpty(_dataDir));
 	}
 
+	[Fact]
+	public void Load_DuplicateKeys_ThrowsJsonException_LoadOrEmpty_Empty()
+	{
+		WriteFile("""{ "Server": {}, "Server": { "Port": 6000 } }""");
+
+		Assert.ThrowsAny<JsonException>(() => SettingsFile.Load(_dataDir));
+		Assert.Empty(SettingsFile.LoadOrEmpty(_dataDir));
+	}
+
+	[Fact]
+	public void Load_CommentsAndTrailingCommas_LikeTheServer()
+	{
+		WriteFile("""
+			{
+				// written by hand
+				"Server": { "Port": 6000, },
+			}
+			""");
+
+		Assert.Equal("6000", SettingsFile.Read(SettingsFile.Load(_dataDir), "Server", "Port"));
+	}
+
 	[Theory]
 	[InlineData("[]")]
 	[InlineData("5")]
