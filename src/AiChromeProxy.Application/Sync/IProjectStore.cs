@@ -15,8 +15,8 @@ public interface IProjectStore
 	/// <summary>Sets (sha256 not null) or removes (null) bases in one transaction.</summary>
 	void SetBases(string repo, IReadOnlyCollection<KeyValuePair<string, string?>> changes);
 
-	/// <summary>Forgets the repo's bases and its baseline in one transaction (its settings stay): the next full manifest starts over.</summary>
-	void Reset(string repo);
+	/// <summary>Forgets every base of the repo (its baseline flag and settings stay): each path is then decided as never agreed.</summary>
+	void ForgetBases(string repo);
 
 	ProjectSettings GetSettings(string repo);
 

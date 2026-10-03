@@ -142,7 +142,8 @@ public sealed partial class SyncSession
 
 	/// <summary>
 	/// Starts a decision batch. A mirror without any synced file while bases are kept (the mirror root moved, the mirror or the repo folder
-	/// deleted, an old database restored) starts the repo over: deciding with those bases would delete every file of the browser's folder.
+	/// deleted, an old database restored) forgets the bases: deciding with them would delete every file of the browser's folder. The baseline
+	/// stays, so without bases the browser's files are uploaded and files the server creates afterwards are pushed, not deleted.
 	/// </summary>
 	private async Task<Batch> BeginAsync(string repo, CancellationToken ct)
 	{
@@ -151,11 +152,11 @@ public sealed partial class SyncSession
 		if (bases.Count > 0 && !store.HasFiles(repo, rules.IsIgnored))
 		{
 			logger.LogWarning(
-				"Mirror of {Repo} is empty while {Files} files were synced; starting over: the browser's files are uploaded again",
+				"Mirror of {Repo} is empty while {Files} files were synced; forgetting their bases: the browser's files are uploaded again",
 				repo,
 				bases.Count);
-			projects.Reset(repo);
-			return new(repo, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase), baselined: false, rules);
+			projects.ForgetBases(repo);
+			bases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 		}
 
 		return new(repo, bases, projects.IsBaselined(repo), rules);

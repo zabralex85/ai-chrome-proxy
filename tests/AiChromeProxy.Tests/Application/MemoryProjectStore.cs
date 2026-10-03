@@ -37,11 +37,7 @@ public sealed class MemoryProjectStore : IProjectStore
 		}
 	}
 
-	public void Reset(string repo)
-	{
-		_baselined.Remove(repo);
-		_bases.Remove(repo);
-	}
+	public void ForgetBases(string repo) => _bases.Remove(repo);
 
 	public ProjectSettings GetSettings(string repo) => _settings.GetValueOrDefault(repo) ?? ProjectSettings.Default;
 

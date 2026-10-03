@@ -58,7 +58,7 @@ public sealed class SqliteProjectStoreTests : IDisposable
 	}
 
 	[Fact]
-	public void Reset_RemovesBasesAndBaseline_KeepsSettingsAndOtherRepos()
+	public void ForgetBases_RemovesBases_KeepsBaselineSettingsAndOtherRepos()
 	{
 		var store = Create();
 		store.SetBaselined("r");
@@ -67,10 +67,10 @@ public sealed class SqliteProjectStoreTests : IDisposable
 		store.SetBaselined("other");
 		store.SetBases("other", [new("a.txt", "9")]);
 
-		store.Reset("r");
-		Create().Reset("never-synced");
+		store.ForgetBases("r");
+		Create().ForgetBases("never-synced");
 
-		Assert.False(Create().IsBaselined("r"));
+		Assert.True(Create().IsBaselined("r"));
 		Assert.Empty(Create().GetBases("r"));
 		Assert.Equal("docs/", Create().GetSettings("r").Excludes);
 		Assert.True(Create().IsBaselined("other"));

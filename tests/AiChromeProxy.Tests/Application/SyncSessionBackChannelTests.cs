@@ -363,7 +363,7 @@ public sealed class SyncSessionBackChannelTests : IDisposable
 	}
 
 	[Fact]
-	public async Task EmptyMirror_WithBases_StartsOver_EveryFileUploaded_NothingPushed()
+	public async Task EmptyMirror_WithBases_ForgetsBases_EveryFileUploaded_NothingPushed()
 	{
 		Baseline(("a.txt", "a"), ("d/b.txt", "b"));
 		Write("bin/app.dll", "server only, excluded: does not count");
@@ -371,7 +371,7 @@ public sealed class SyncSessionBackChannelTests : IDisposable
 
 		Assert.Equal(["a.txt"], await NeedAsync(Manifest(false, Entry("a.txt", "a"))));
 
-		Assert.False(_projects.IsBaselined(Repo));
+		Assert.True(_projects.IsBaselined(Repo));
 		Assert.Empty(_projects.GetBases(Repo));
 
 		Assert.Equal(["d/b.txt"], await NeedAsync(Manifest(true, Entry("d/b.txt", "b"))));
@@ -381,13 +381,13 @@ public sealed class SyncSessionBackChannelTests : IDisposable
 		Assert.True(File.Exists(PathOf("bin/app.dll")));
 		Assert.Single(
 			_logger.Entries,
-			e => e is (LogLevel.Warning, "Mirror of repo is empty while 2 files were synced; starting over: the browser's files are uploaded again"));
+			e => e is (LogLevel.Warning, "Mirror of repo is empty while 2 files were synced; forgetting their bases: the browser's files are uploaded again"));
 	}
 
 	[Theory]
 	[InlineData(false)]
 	[InlineData(true)]
-	public async Task MirrorEmptied_MirrorChanged_PushesNoDeletes_StartsOver(bool folderDeleted)
+	public async Task MirrorEmptied_MirrorChanged_PushesNoDeletes_ForgetsBases(bool folderDeleted)
 	{
 		Write("a.txt", "a");
 		Write("d/b.txt", "b");
@@ -407,8 +407,30 @@ public sealed class SyncSessionBackChannelTests : IDisposable
 		await _session.MirrorChangedAsync(null, Ct);
 
 		Assert.Empty(_pushed);
-		Assert.False(_projects.IsBaselined(Repo));
+		Assert.True(_projects.IsBaselined(Repo));
 		Assert.Empty(_projects.GetBases(Repo));
+	}
+
+	[Fact]
+	public async Task MirrorEmptied_ThenServerCreatesFile_PushedWithoutBase_NotDeletedByFullManifest()
+	{
+		Write("a.txt", "a");
+		Baseline(("a.txt", "a"));
+		await OpenAsync();
+		File.Delete(PathOf("a.txt"));
+		await _session.MirrorChangedAsync(["a.txt"], Ct);
+		Assert.Empty(_pushed);
+
+		Write("generated.txt", "g");
+		await _session.MirrorChangedAsync(["generated.txt"], Ct);
+
+		Assert.Equal([new RemoteChange("generated.txt", Sha("g"), 1, null)], Pushes);
+
+		_pushed.Clear();
+		Assert.Equal(["a.txt"], await NeedAsync(Manifest(true, Entry("a.txt", "a"))));
+
+		Assert.True(File.Exists(PathOf("generated.txt")));
+		Assert.Equal([new RemoteChange("generated.txt", Sha("g"), 1, null)], Pushes);
 	}
 
 	[Fact]
