@@ -36,21 +36,21 @@ public sealed partial class SyncSession
 					continue;
 				}
 
-				string? mirror;
-				try
+				if (await TryGetHashAsync(repo, path, ct) is not (true, var mirror))
 				{
-					mirror = await store.GetHashAsync(repo, path, ct);
-				}
-				catch (Exception ex) when (ex is EnvelopeException or IOException or UnauthorizedAccessException)
-				{
-					// Locked by a writer, or behind a link: one path must not hold back the others. A locked file changes again when it is closed.
-					logger.LogDebug(ex, "Sync {Repo}: cannot check {Path}", repo, path);
 					continue;
 				}
 
 				var baseHash = batch.Bases.GetValueOrDefault(path);
 				if (SyncDecision.Decide(baseHash, mirror, baseHash, baselined: true) == SyncAction.Push)
 				{
+					// An upload of it requested earlier, or under way, must not overwrite the server's version.
+					_expected.Remove(path);
+					if (string.Equals(_upload?.Entry.Path, path, StringComparison.OrdinalIgnoreCase))
+					{
+						DiscardUpload();
+					}
+
 					AddPush(batch, path, mirror, baseHash);
 				}
 			}
@@ -87,13 +87,18 @@ public sealed partial class SyncSession
 		return Reply(MessageTypes.SyncData, new SyncDataPayload(repo, path, payload.Offset, SyncData.Encode(data), last, sha256), request);
 	}
 
-	private Envelope Ack(SyncAckPayload payload, Envelope request)
+	private async Task<Envelope> AckAsync(SyncAckPayload payload, Envelope request, CancellationToken ct)
 	{
 		var repo = CheckRepo(payload.Repo);
 		var path = CheckPath(payload.Path);
 		if (payload.Sha256 is not null && !IsSha256(payload.Sha256))
 		{
 			throw BadRequest($"sync.ack of '{path}' needs a SHA-256 as 64 lower-case hex characters, or null.");
+		}
+
+		if ((await RulesAsync(repo, ct)).IsIgnored(path))
+		{
+			throw BadRequest($"'{path}' is excluded from sync.");
 		}
 
 		projects.SetBases(repo, [new(path, payload.Sha256)]);
@@ -119,7 +124,11 @@ public sealed partial class SyncSession
 		var deletes = new List<string>();
 		foreach (var path in paths)
 		{
-			var mirror = await store.GetHashAsync(batch.Repo, path, ct);
+			if (await TryGetHashAsync(batch.Repo, path, ct) is not (true, var mirror))
+			{
+				continue;
+			}
+
 			var baseHash = batch.Bases.GetValueOrDefault(path);
 			switch (SyncDecision.Decide(null, mirror, baseHash, batch.Baselined))
 			{
@@ -136,6 +145,21 @@ public sealed partial class SyncSession
 		}
 
 		return deletes;
+	}
+
+	/// <returns>The mirror's hash, or not checked when the file cannot be read now (locked by a writer, or behind a link): one path must not
+	/// hold back the others, and a locked file changes again when it is closed.</returns>
+	private async Task<(bool Checked, string? Hash)> TryGetHashAsync(string repo, string path, CancellationToken ct)
+	{
+		try
+		{
+			return (true, await store.GetHashAsync(repo, path, ct));
+		}
+		catch (Exception ex) when (ex is EnvelopeException or IOException or UnauthorizedAccessException)
+		{
+			logger.LogDebug(ex, "Sync {Repo}: cannot check {Path}", repo, path);
+			return (false, null);
+		}
 	}
 
 	private void Delete(Batch batch, List<string> paths)
@@ -185,6 +209,11 @@ public sealed partial class SyncSession
 		SaveBases(batch);
 		foreach (var page in SyncPages.Split(batch.Pushes, c => JsonSerializer.SerializeToUtf8Bytes(c, JsonSerializerOptions.Web).Length + 1))
 		{
+			if (_disposed)
+			{
+				return;
+			}
+
 			await _context!.SendAsync(Envelope.Create(MessageTypes.SyncRemote, new SyncRemotePayload(batch.Repo, page)), ct);
 		}
 	}

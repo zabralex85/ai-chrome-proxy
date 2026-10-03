@@ -20,7 +20,8 @@ public sealed partial class SyncSession(IMirrorStore store, IProjectStore projec
 
 	private readonly HashSet<string> _manifestPaths = new(StringComparer.OrdinalIgnoreCase);
 	private readonly HashSet<string> _keep = new(StringComparer.OrdinalIgnoreCase);
-	private readonly Dictionary<string, ManifestEntry> _expected = new(StringComparer.Ordinal);
+	/// <summary>Uploads asked for with <c>sync.need</c>, with the mirror's hash when they were decided (the upload may replace only that version).</summary>
+	private readonly Dictionary<string, (ManifestEntry Entry, string? Mirror)> _expected = new(StringComparer.OrdinalIgnoreCase);
 	private readonly SemaphoreSlim _gate = new(1, 1);
 	private readonly string _tag = Guid.NewGuid().ToString("N")[..SyncPath.TempTagLength];
 	private volatile bool _disposed;
@@ -141,7 +142,7 @@ public sealed partial class SyncSession(IMirrorStore store, IProjectStore projec
 			case MessageTypes.SyncFetch:
 				return await FetchAsync(Read<SyncFetchPayload>(request), request, ct);
 			case MessageTypes.SyncAck:
-				return Ack(Read<SyncAckPayload>(request), request);
+				return await AckAsync(Read<SyncAckPayload>(request), request, ct);
 			default:
 				throw new EnvelopeException(ErrorCodes.UnknownType, $"Not a sync message: {request.Type}");
 		}
@@ -278,7 +279,7 @@ public sealed partial class SyncSession(IMirrorStore store, IProjectStore projec
 	private async Task<List<string>> NeedAsync(Batch batch, IReadOnlyList<ManifestEntry> entries, CancellationToken ct)
 	{
 		var same = new List<string>();
-		var changed = new List<ManifestEntry>();
+		var changed = new List<(ManifestEntry Entry, string? Mirror)>();
 		foreach (var entry in entries)
 		{
 			var mirror = await store.GetHashAsync(batch.Repo, entry.Path, ct);
@@ -286,7 +287,14 @@ public sealed partial class SyncSession(IMirrorStore store, IProjectStore projec
 			switch (SyncDecision.Decide(entry.Sha256, mirror, baseHash, batch.Baselined))
 			{
 				case SyncAction.Upload:
-					changed.Add(entry);
+					changed.Add((entry, mirror));
+					if (!batch.Baselined && baseHash != mirror)
+					{
+						// Before the baseline the mirror's version counts as agreed: an upload still pending when the connection drops is
+						// then a client change on the next (baselined) pass, not a conflict.
+						batch.BaseChanges[entry.Path] = mirror;
+					}
+
 					break;
 				case SyncAction.InSync:
 					same.Add(entry.Path);
@@ -304,14 +312,14 @@ public sealed partial class SyncSession(IMirrorStore store, IProjectStore projec
 			}
 		}
 
-		if (_expected.Count + changed.Select(e => e.Path).Distinct().Count(p => !_expected.ContainsKey(p)) > SyncLimits.MaxFiles)
+		if (_expected.Count + changed.Select(e => e.Entry.Path).Distinct(StringComparer.OrdinalIgnoreCase).Count(p => !_expected.ContainsKey(p)) > SyncLimits.MaxFiles)
 		{
 			throw new EnvelopeException(ErrorCodes.TooLarge, $"At most {SyncLimits.MaxFiles} files may wait for upload.");
 		}
 
 		same.ForEach(p => _expected.Remove(p));
-		changed.ForEach(e => _expected[e.Path] = e);
-		return [.. changed.Select(e => e.Path)];
+		changed.ForEach(e => _expected[e.Entry.Path] = e);
+		return [.. changed.Select(e => e.Entry.Path)];
 	}
 
 	private async Task<Envelope?> ChunkAsync(SyncChunkPayload payload, Envelope request, CancellationToken ct)
@@ -330,10 +338,12 @@ public sealed partial class SyncSession(IMirrorStore store, IProjectStore projec
 
 		_chunkFailure = null;
 
-		if (!_expected.TryGetValue(payload.Path, out var entry))
+		if (!_expected.TryGetValue(payload.Path, out var expected))
 		{
 			throw new EnvelopeException(ErrorCodes.NotFound, $"'{payload.Path}' was not requested with sync.need (or is already stored).");
 		}
+
+		var entry = expected.Entry;
 
 		byte[] data;
 		try
@@ -379,6 +389,21 @@ public sealed partial class SyncSession(IMirrorStore store, IProjectStore projec
 		if (upload.Received != entry.Size || hash != entry.Sha256 || (payload.Sha256 is not null && payload.Sha256 != hash))
 		{
 			throw BadRequest($"'{entry.Path}' arrived with a different size or hash than in its manifest; it is requested again on the next scan.");
+		}
+
+		// The server may have changed the file since the upload was decided: never overwrite that (the next pass decides it again).
+		if (await store.GetHashAsync(repo, entry.Path, ct) is var mirror && mirror != expected.Mirror)
+		{
+			_expected.Remove(entry.Path);
+			var batch = await BeginAsync(repo, ct);
+			var baseHash = batch.Bases.GetValueOrDefault(entry.Path);
+			if (mirror != baseHash)
+			{
+				AddPush(batch, entry.Path, mirror, baseHash);
+			}
+
+			await FinishAsync(batch, ct);
+			throw BadRequest($"'{entry.Path}' changed on the server during its upload; it is decided again on the next scan.");
 		}
 
 		store.Commit(repo, entry.Path, _tag);

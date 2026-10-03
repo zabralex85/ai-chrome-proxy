@@ -60,8 +60,9 @@ public sealed class SyncSessionBackChannelTests : IDisposable
 		Assert.False(File.Exists(PathOf("b.txt")));
 		Assert.True(_projects.IsBaselined(Repo));
 		Assert.Equal(1, _projects.SetBasesCalls);
-		var agreed = Assert.Single(_projects.GetBases(Repo));
-		Assert.Equal(("c.txt", Sha("c")), (agreed.Key, agreed.Value));
+		Assert.Equal(
+			[("a.txt", Sha("old")), ("c.txt", Sha("c"))],
+			_projects.GetBases(Repo).Select(b => (b.Key, b.Value)).OrderBy(b => b.Key, StringComparer.Ordinal));
 		Assert.Empty(_pushed);
 
 		Assert.Equal(MessageTypes.SyncStored, (await HandleAsync(Chunk("a.txt", "new")))!.Type);
@@ -225,6 +226,7 @@ public sealed class SyncSessionBackChannelTests : IDisposable
 	[InlineData("../outside.txt", 0)]
 	[InlineData(".git/config", 0)]
 	[InlineData("", 0)]
+	[InlineData("a.txt.0123abcd.aicp-tmp", 0)]
 	[InlineData("a.txt", -1)]
 	public async Task Fetch_IgnoredOrInvalidPath_BadRequest(string path, long offset)
 	{
@@ -259,8 +261,11 @@ public sealed class SyncSessionBackChannelTests : IDisposable
 	[InlineData("a.txt", "abc")]
 	[InlineData("a.txt", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")]
 	[InlineData("../a.txt", null)]
-	public async Task Ack_BadHash_BadRequest(string path, string? sha256)
+	[InlineData("bin/app.dll", null)]
+	[InlineData("tmp/t.txt", "0000000000000000000000000000000000000000000000000000000000000000")]
+	public async Task Ack_BadHashOrExcludedPath_BadRequest(string path, string? sha256)
 	{
+		_projects.SaveSettings(Repo, new ProjectSettings { Excludes = "tmp/" });
 		await OpenAsync();
 
 		await AssertError(ErrorCodes.BadRequest, Envelope.Create(MessageTypes.SyncAck, new SyncAckPayload(Repo, path, sha256)));
@@ -330,6 +335,94 @@ public sealed class SyncSessionBackChannelTests : IDisposable
 		await AssertError(ErrorCodes.BadRequest, Envelope.Create(MessageTypes.SyncDelta, new SyncDeltaPayload(Repo, [], ["a.txt"])));
 
 		Assert.True(File.Exists(PathOf("a.txt")));
+	}
+
+	[Fact]
+	public async Task ServerEditDuringUpload_NotOverwritten_Pushed()
+	{
+		Baseline(("a.txt", "v1"));
+		Write("a.txt", "v1");
+		await OpenAsync();
+		Assert.Equal(["a.txt"], await NeedAsync(Delta([Entry("a.txt", "client")])));
+		Write("a.txt", "server");
+
+		await AssertError(ErrorCodes.BadRequest, Chunk("a.txt", "client"));
+
+		Assert.Equal("server", File.ReadAllText(PathOf("a.txt")));
+		Assert.Equal([new RemoteChange("a.txt", Sha("server"), 6, Sha("v1"))], Pushes);
+		Assert.Equal(Sha("v1"), _projects.GetBases(Repo)["a.txt"]);
+		Assert.Empty(Directory.GetFiles(_repoRoot, "*.aicp-tmp"));
+		await AssertError(ErrorCodes.NotFound, Chunk("a.txt", "client"));
+	}
+
+	[Fact]
+	public async Task ServerEditDuringUpload_MirrorChanged_UploadDropped_Pushed()
+	{
+		Baseline(("a.txt", "v1"));
+		Write("a.txt", "v1");
+		await OpenAsync();
+		Assert.Equal(["a.txt"], await NeedAsync(Delta([Entry("a.txt", "client")])));
+		Assert.Null(await HandleAsync(Envelope.Create(MessageTypes.SyncChunk, new SyncChunkPayload(Repo, "a.txt", 0, SyncData.Encode("cli"u8.ToArray()), false))));
+		Write("a.txt", "server");
+
+		await _session.MirrorChangedAsync(["A.TXT"], Ct);
+
+		Assert.Empty(Directory.GetFiles(_repoRoot, "*.aicp-tmp"));
+		await AssertError(ErrorCodes.NotFound, Envelope.Create(MessageTypes.SyncChunk, new SyncChunkPayload(Repo, "a.txt", 3, SyncData.Encode("ent"u8.ToArray()), true)));
+		Assert.Equal("server", File.ReadAllText(PathOf("a.txt")));
+		Assert.Equal([new RemoteChange("A.TXT", Sha("server"), 6, Sha("v1"))], Pushes);
+	}
+
+	[Fact]
+	public async Task UploadPendingBeforeBaseline_StillUploadAfterIt()
+	{
+		// The connection drops before the upload: the next (baselined) pass must still see a client change, not a conflict.
+		Write("a.txt", "old");
+		await OpenAsync();
+		Assert.Equal(["a.txt"], await NeedAsync(Manifest(true, Entry("a.txt", "new"))));
+		await OpenAsync();
+
+		Assert.Equal(["a.txt"], await NeedAsync(Manifest(true, Entry("a.txt", "new"))));
+
+		Assert.Empty(_pushed);
+	}
+
+	[Fact]
+	public async Task FinalPage_LockedStaleFile_Skipped_PageSucceeds()
+	{
+		Write("a.txt", "a");
+		Write("locked.txt", "l");
+		await OpenAsync();
+
+		using (new FileStream(PathOf("locked.txt"), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+		{
+			Assert.Empty(await NeedAsync(Manifest(true, Entry("a.txt", "a"))));
+		}
+
+		Assert.True(File.Exists(PathOf("locked.txt")));
+		Assert.Empty(_pushed);
+		Assert.True(_projects.IsBaselined(Repo));
+	}
+
+	[Fact]
+	public async Task Dispose_DuringPush_LaterPagesNotSent()
+	{
+		for (var i = 0; i < SyncLimits.MaxPageEntries + 1; i++)
+		{
+			Write($"f{i}.txt", "x");
+		}
+
+		var sent = 0;
+		await _session.HandleAsync(Envelope.Create(MessageTypes.SyncOpen, new SyncOpenPayload(Repo)), new EnvelopeContext("conn-1", null, (_, _) =>
+		{
+			sent++;
+			_session.Dispose();
+			return Task.CompletedTask;
+		}), Ct);
+
+		await _session.MirrorChangedAsync(null, Ct);
+
+		Assert.Equal(1, sent);
 	}
 
 	[Fact]
