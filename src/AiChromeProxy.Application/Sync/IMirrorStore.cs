@@ -26,6 +26,9 @@ public interface IMirrorStore
 	/// <summary>Paths of the regular files in the repo folder; links and junctions (and what is behind them) are skipped.</summary>
 	IReadOnlyList<string> ListFiles(string repo);
 
+	/// <summary>Whether the repo folder has a regular file (as listed by <see cref="ListFiles"/>) that is not <paramref name="excluded"/>; stops at the first.</summary>
+	bool HasFiles(string repo, Func<string, bool> excluded);
+
 	/// <summary>
 	/// Creates the temporary file <c>&lt;path&gt;.&lt;tag&gt;.aicp-tmp</c> the upload is assembled in (<paramref name="tag"/>: the session's,
 	/// <c>SyncPath.TempTagLength</c> characters, so that sessions never share a temporary file), creating parent folders; an existing entry at that

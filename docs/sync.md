@@ -125,6 +125,7 @@ A synced path may be up to 260 characters (relative to the folder), so on the mi
   icacls C:\m /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "${svc}:(OI)(CI)M"
   ```
   If the folder already exists and you did not create it, pick another name: someone else may own it and keep control of its ACL.
+  Moving or emptying the mirror makes the browser upload everything again (nothing in the folder is deleted).
 - **Not `subst` or mapped network drives:** they exist per logon session, and the service (which runs without anyone logged on) does not see them.
 - **Segment limit:** a single file or folder name stays limited to 237 characters (NTFS allows 255, minus the temp suffix `.<tag>.aicp-tmp`); no setting lifts it.
 

@@ -687,6 +687,8 @@ public sealed class SyncSessionTests : IDisposable
 
 		public IReadOnlyList<string> ListFiles(string repo) => [];
 
+		public bool HasFiles(string repo, Func<string, bool> excluded) => false;
+
 		public Task<byte[]?> ReadAsync(string repo, string path, long offset, int count, CancellationToken ct) => Task.FromResult<byte[]?>(null);
 
 		public long GetSize(string repo, string path) => 0;

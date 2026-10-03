@@ -90,6 +90,26 @@ public sealed class SqliteProjectStore : IProjectStore
 		}
 	}
 
+	public void Reset(string repo)
+	{
+		using (var connection = Open())
+		{
+			using (var transaction = connection.BeginTransaction())
+			{
+				foreach (var sql in (string[])["DELETE FROM base WHERE repo = $repo", "UPDATE repo SET baselined = 0 WHERE name = $repo"])
+				{
+					using (var command = Command(connection, sql, ("$repo", repo)))
+					{
+						command.Transaction = transaction;
+						command.ExecuteNonQuery();
+					}
+				}
+
+				transaction.Commit();
+			}
+		}
+	}
+
 	public ProjectSettings GetSettings(string repo)
 	{
 		var json = new JsonObject();

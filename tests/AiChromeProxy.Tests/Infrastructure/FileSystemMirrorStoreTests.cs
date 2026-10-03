@@ -220,12 +220,15 @@ public sealed class FileSystemMirrorStoreTests : IDisposable
 		var files = _store.ListFiles(Repo).Order(StringComparer.Ordinal).ToList();
 
 		Assert.Equal([".hidden", "a.txt", "src/deep/b.cs"], files);
+		Assert.True(_store.HasFiles(Repo, p => p != "src/deep/b.cs"));
+		Assert.False(_store.HasFiles(Repo, p => p is ".hidden" or "a.txt" or "src/deep/b.cs"));
 	}
 
 	[Fact]
 	public void ListFiles_NoRepoFolder_Empty()
 	{
 		Assert.Empty(_store.ListFiles("not-synced-yet"));
+		Assert.False(_store.HasFiles("not-synced-yet", _ => false));
 	}
 
 	[Fact]

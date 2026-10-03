@@ -58,6 +58,26 @@ public sealed class SqliteProjectStoreTests : IDisposable
 	}
 
 	[Fact]
+	public void Reset_RemovesBasesAndBaseline_KeepsSettingsAndOtherRepos()
+	{
+		var store = Create();
+		store.SetBaselined("r");
+		store.SetBases("r", [new("a.txt", "1"), new("b.txt", "2")]);
+		store.SaveSettings("r", new ProjectSettings { Excludes = "docs/" });
+		store.SetBaselined("other");
+		store.SetBases("other", [new("a.txt", "9")]);
+
+		store.Reset("r");
+		Create().Reset("never-synced");
+
+		Assert.False(Create().IsBaselined("r"));
+		Assert.Empty(Create().GetBases("r"));
+		Assert.Equal("docs/", Create().GetSettings("r").Excludes);
+		Assert.True(Create().IsBaselined("other"));
+		Assert.Equal("9", Assert.Single(Create().GetBases("other")).Value);
+	}
+
+	[Fact]
 	public void Settings_RoundTrip_UnknownKeysKept_NullRemoves()
 	{
 		var store = Create();

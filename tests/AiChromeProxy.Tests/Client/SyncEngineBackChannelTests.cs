@@ -183,6 +183,7 @@ public sealed class SyncEngineBackChannelTests : IDisposable
 		_folder.WriteAccess = true;
 		_folder.Write("a.txt", "a");
 		_folder.Write("b.txt", "b");
+		_folder.Write("c.txt", "c"); // the mirror keeps a file: an empty one starts over instead
 		await SyncedAsync();
 		_folder.Write("a.txt", "a, edited here");
 		_folder.Write("b.txt", "b, edited here");
@@ -338,6 +339,30 @@ public sealed class SyncEngineBackChannelTests : IDisposable
 		Assert.Equal("v2 from the server", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
 		Assert.Equal("v2 from the server", Text("a.txt"));
 		Assert.Empty(_engine.Remote);
+	}
+
+	[Fact]
+	public async Task MirrorWiped_FolderKeepsEveryFile_UploadedAgain()
+	{
+		var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 3, 12, 0, 0, TimeSpan.Zero));
+		_engine = new SyncEngine(_server.Transport, _folder, clock);
+		_folder.WriteAccess = true;
+		_folder.Write("a.txt", "a");
+		_folder.Write("d/b.txt", "b");
+		await SyncedAsync();
+
+		Directory.Delete(Path.Combine(_server.MirrorRoot, Repo), recursive: true);
+		await _server.Watcher.RaiseAsync(Repo, ["a.txt", "d"]);
+		await _engine.SyncOnceAsync(Ct);
+		clock.Advance(SyncEngine.FullManifestInterval);
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Empty(_folder.Writes);
+		Assert.Equal(["a.txt", "d/b.txt"], _folder.Files.Keys.Order(StringComparer.Ordinal));
+		Assert.Empty(_engine.Remote);
+		Assert.Equal("a", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
+		Assert.Equal("b", File.ReadAllText(_server.PathOf(Repo, "d/b.txt")));
+		Assert.True(_server.Projects.IsBaselined(Repo));
 	}
 
 	[Fact]

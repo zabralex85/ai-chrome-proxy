@@ -7,6 +7,7 @@ using AiChromeProxy.Domain;
 using AiChromeProxy.Domain.Sync;
 using AiChromeProxy.Infrastructure.Sync;
 using AiChromeProxy.Tests.Server;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace AiChromeProxy.Tests.Application;
@@ -276,6 +277,7 @@ public sealed class SyncSessionBackChannelTests : IDisposable
 	[Fact]
 	public async Task MirrorChanged_PushesOnlyWhenMirrorDiffersFromBase()
 	{
+		_projects.SetBaselined(Repo);
 		await OpenAsync();
 		Assert.Equal(["a.txt"], await NeedAsync(Delta([Entry("a.txt", "a")])));
 		await HandleAsync(Chunk("a.txt", "a"));
@@ -336,6 +338,7 @@ public sealed class SyncSessionBackChannelTests : IDisposable
 	{
 		Write("locked.txt", "l");
 		Write("b.txt", "b");
+		_projects.SetBaselined(Repo);
 		await OpenAsync();
 
 		using (new FileStream(PathOf("locked.txt"), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
@@ -344,6 +347,68 @@ public sealed class SyncSessionBackChannelTests : IDisposable
 		}
 
 		Assert.Equal(["b.txt"], Pushes.Select(c => c.Path));
+	}
+
+	[Fact]
+	public async Task MirrorChanged_BeforeFirstFullManifest_PushesNothing()
+	{
+		Write("a.txt", "a");
+		Write("d/b.txt", "b");
+		await OpenAsync();
+
+		await _session.MirrorChangedAsync(["a.txt", "d"], Ct);
+		await _session.MirrorChangedAsync(null, Ct);
+
+		Assert.Empty(_pushed);
+	}
+
+	[Fact]
+	public async Task EmptyMirror_WithBases_StartsOver_EveryFileUploaded_NothingPushed()
+	{
+		Baseline(("a.txt", "a"), ("d/b.txt", "b"));
+		Write("bin/app.dll", "server only, excluded: does not count");
+		await OpenAsync();
+
+		Assert.Equal(["a.txt"], await NeedAsync(Manifest(false, Entry("a.txt", "a"))));
+
+		Assert.False(_projects.IsBaselined(Repo));
+		Assert.Empty(_projects.GetBases(Repo));
+
+		Assert.Equal(["d/b.txt"], await NeedAsync(Manifest(true, Entry("d/b.txt", "b"))));
+
+		Assert.Empty(_pushed);
+		Assert.True(_projects.IsBaselined(Repo));
+		Assert.True(File.Exists(PathOf("bin/app.dll")));
+		Assert.Single(
+			_logger.Entries,
+			e => e is (LogLevel.Warning, "Mirror of repo is empty while 2 files were synced; starting over: the browser's files are uploaded again"));
+	}
+
+	[Theory]
+	[InlineData(false)]
+	[InlineData(true)]
+	public async Task MirrorEmptied_MirrorChanged_PushesNoDeletes_StartsOver(bool folderDeleted)
+	{
+		Write("a.txt", "a");
+		Write("d/b.txt", "b");
+		Baseline(("a.txt", "a"), ("d/b.txt", "b"));
+		await OpenAsync();
+		if (folderDeleted)
+		{
+			Directory.Delete(_repoRoot, recursive: true);
+		}
+		else
+		{
+			File.Delete(PathOf("a.txt"));
+			File.Delete(PathOf("d/b.txt"));
+		}
+
+		await _session.MirrorChangedAsync(["a.txt", "d"], Ct);
+		await _session.MirrorChangedAsync(null, Ct);
+
+		Assert.Empty(_pushed);
+		Assert.False(_projects.IsBaselined(Repo));
+		Assert.Empty(_projects.GetBases(Repo));
 	}
 
 	[Fact]
@@ -428,6 +493,7 @@ public sealed class SyncSessionBackChannelTests : IDisposable
 	[Fact]
 	public async Task Dispose_DuringPush_LaterPagesNotSent()
 	{
+		_projects.SetBaselined(Repo);
 		for (var i = 0; i < SyncLimits.MaxPageEntries + 1; i++)
 		{
 			Write($"f{i}.txt", "x");
@@ -455,6 +521,7 @@ public sealed class SyncSessionBackChannelTests : IDisposable
 		}
 
 		Write("small.txt", "s");
+		_projects.SetBaselined(Repo);
 		await OpenAsync();
 
 		await _session.MirrorChangedAsync(null, Ct);
@@ -467,6 +534,7 @@ public sealed class SyncSessionBackChannelTests : IDisposable
 	[Fact]
 	public async Task ManyChanges_PushedInPages()
 	{
+		_projects.SetBaselined(Repo);
 		for (var i = 0; i < SyncLimits.MaxPageEntries + 1; i++)
 		{
 			Write($"f{i}.txt", "x");

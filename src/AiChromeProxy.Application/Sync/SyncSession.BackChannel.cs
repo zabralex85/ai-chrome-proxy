@@ -15,7 +15,7 @@ public sealed partial class SyncSession
 
 	/// <summary>
 	/// Re-decides these mirror paths (null: every mirror file and every base) with the client's last agreed state, the base, and pushes
-	/// those the mirror moved away from. No-op before <c>sync.open</c> and after <see cref="Dispose"/>; pushes go to the context of the last
+	/// those the mirror moved away from. No-op before <c>sync.open</c>, before the repo's first full manifest and after <see cref="Dispose"/>; pushes go to the context of the last
 	/// handled message.
 	/// </summary>
 	public async Task MirrorChangedAsync(IReadOnlyCollection<string>? paths, CancellationToken ct)
@@ -29,6 +29,12 @@ public sealed partial class SyncSession
 			}
 
 			var batch = await BeginAsync(repo, ct);
+			if (!batch.Baselined)
+			{
+				// Before the first full manifest the browser's files win: that manifest decides every path.
+				return;
+			}
+
 			var done = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 			IReadOnlyList<string>? everything = null;
 			IReadOnlyList<string> Everything() => everything ??= [.. store.ListFiles(repo).Union(batch.Bases.Keys, StringComparer.OrdinalIgnoreCase)];
@@ -134,8 +140,26 @@ public sealed partial class SyncSession
 		return IgnoreRules.Create(gitignore is null ? null : Encoding.UTF8.GetString(gitignore), projects.GetSettings(repo).Excludes);
 	}
 
-	private async Task<Batch> BeginAsync(string repo, CancellationToken ct) =>
-		new(repo, projects.GetBases(repo), projects.IsBaselined(repo), await RulesAsync(repo, ct));
+	/// <summary>
+	/// Starts a decision batch. A mirror without any synced file while bases are kept (the mirror root moved, the mirror or the repo folder
+	/// deleted, an old database restored) starts the repo over: deciding with those bases would delete every file of the browser's folder.
+	/// </summary>
+	private async Task<Batch> BeginAsync(string repo, CancellationToken ct)
+	{
+		var rules = await RulesAsync(repo, ct);
+		var bases = projects.GetBases(repo);
+		if (bases.Count > 0 && !store.HasFiles(repo, rules.IsIgnored))
+		{
+			logger.LogWarning(
+				"Mirror of {Repo} is empty while {Files} files were synced; starting over: the browser's files are uploaded again",
+				repo,
+				bases.Count);
+			projects.Reset(repo);
+			return new(repo, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase), baselined: false, rules);
+		}
+
+		return new(repo, bases, projects.IsBaselined(repo), rules);
+	}
 
 	/// <summary>
 	/// Decides paths the client does not have (deleted, or missing from a full manifest): returns those the client deleted (the mirror still
