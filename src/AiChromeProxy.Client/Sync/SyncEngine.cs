@@ -688,7 +688,7 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 
 		using (var abort = CancellationTokenSource.CreateLinkedTokenSource(ct))
 		{
-			var inFlight = new Queue<(ManifestEntry Entry, Task<Envelope> Reply)>();
+			var inFlight = new Queue<(ManifestEntry Entry, Task<Envelope> Reply, bool AccessLost)>();
 			transport.StateChanged += OnStateChanged;
 			try
 			{
@@ -714,7 +714,7 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 						accessLost = ex is JSException && !await folder.HasAccessAsync();
 					}
 
-					inFlight.Enqueue((entry, reply));
+					inFlight.Enqueue((entry, reply, accessLost));
 					if (accessLost)
 					{
 						break;
@@ -730,6 +730,12 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 			{
 				transport.StateChanged -= OnStateChanged;
 
+				// Replies still pending when the pass ended early are observed, so a late failure is not reported as unobserved.
+				foreach (var (_, pending, _) in inFlight)
+				{
+					_ = pending.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+				}
+
 				// Replies nobody handles any more (the pass ended early) stop being awaited.
 				abort.Cancel();
 			}
@@ -739,7 +745,7 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 	}
 
 	/// <summary>Records the outcome of one upload once its reply (or its local failure) is in; ends the pass when the connection dropped first.</summary>
-	private async Task CompleteUploadAsync(int generation, (ManifestEntry Entry, Task<Envelope> Reply) upload, Task dropped, List<ManifestEntry> uploaded, List<string> failed)
+	private async Task CompleteUploadAsync(int generation, (ManifestEntry Entry, Task<Envelope> Reply, bool AccessLost) upload, Task dropped, List<ManifestEntry> uploaded, List<string> failed)
 	{
 		var entry = upload.Entry;
 		if (await Task.WhenAny(upload.Reply, dropped) != upload.Reply)
@@ -759,7 +765,7 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 		catch (Exception ex) when (ex is RequestFailedException or IOException or JSException)
 		{
 			EnsureFolder(generation);
-			if (ex is JSException && !await folder.HasAccessAsync())
+			if (ex is JSException && (upload.AccessLost || !await folder.HasAccessAsync()))
 			{
 				// Every remaining file would fail the same way: the pass ends, nothing is backed off.
 				Folder = FolderStatus.NeedsPermission;

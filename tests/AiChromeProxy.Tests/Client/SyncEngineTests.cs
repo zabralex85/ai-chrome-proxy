@@ -1082,6 +1082,42 @@ public sealed class SyncEngineTests : IDisposable
 	}
 
 	[Fact]
+	public async Task AccessLostDecisionIsCarried_QueuedFailureIsNotCheckedAgain_NothingBackedOff()
+	{
+		_folder.Write("a.txt", "a");
+		_folder.Write("b.txt", "b");
+		await OpenAsync();
+		_folder.ReadFailures.Add("a.txt");
+		_folder.AccessAnswers.Enqueue(false);
+		_folder.AccessAnswers.Enqueue(true);
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(FolderStatus.NeedsPermission, _engine.Folder);
+		Assert.Equal(SyncPhase.Failed, _engine.Phase);
+		Assert.Equal(["a.txt"], _folder.ChunkReads);
+		_folder.ReadFailures.Clear();
+		await _engine.SyncOnceAsync(Ct);
+		Assert.Equal("a", File.ReadAllText(_server.PathOf(Repo, "a.txt")));
+	}
+
+	[Fact]
+	public async Task ReadFailsAfterFirstChunk_FileBackedOff_NextStored_NoTempLeft()
+	{
+		_folder.Files["a.bin"] = new byte[20000];
+		_folder.Write("b.txt", "b");
+		await OpenAsync();
+		_folder.ReadFailuresAt["a.bin"] = 16384;
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal("b", File.ReadAllText(_server.PathOf(Repo, "b.txt")));
+		Assert.False(File.Exists(_server.PathOf(Repo, "a.bin")));
+		Assert.Contains(_engine.Files, f => f.Path == "a.bin" && f.State == FileSyncState.Error);
+		Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(_server.PathOf(Repo, "b.txt"))!, "*.aicp-tmp", SearchOption.AllDirectories));
+	}
+
+	[Fact]
 	public async Task ScanFailsWithAccessStillGranted_CycleFails()
 	{
 		_folder.Write("a.txt", "a");

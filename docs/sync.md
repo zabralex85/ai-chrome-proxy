@@ -92,14 +92,18 @@ A synced path may be up to 260 characters (relative to the folder), so on the mi
   ```powershell
   New-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem -Name LongPathsEnabled -Value 1 -PropertyType DWord -Force
   ```
-  A process reads it when it starts: restart the service (or reboot) so the tools it starts see it. Programs without the long-path opt-in in their manifest still stop at 260.
+  A process reads it when it starts, so no service restart is needed: tools started afterwards (new git processes) see it. Programs without the long-path opt-in in their manifest still stop at 260.
 - **git:** `git config --system core.longpaths true` (as administrator).
-- **A short `Mirror:Root`** such as `C:\m` shortens every path. Set it in `%ProgramData%\AiChromeProxy\appsettings.json` (`"Mirror": { "Root": "C:\\m" }`) or as the machine environment variable `Mirror__Root`, then restart the service. Outside the data directory the mirror gets **no** protected DACL, and standard users may create folders in `C:\`: create the folder yourself first and restrict it, for example (as administrator):
+- **A short `Mirror:Root`** such as `C:\m` shortens every path. Set it in `%ProgramData%\AiChromeProxy\appsettings.json` (`"Mirror": { "Root": "C:\\m" }`) or as the machine environment variable `Mirror__Root`, then restart the service. Prefer the `appsettings.json` file: a machine-level environment variable reaches a Windows service only after a reboot. Outside the data directory the mirror gets **no** protected DACL, and standard users may create folders in `C:\`: create the folder yourself first and restrict it, for example (as administrator):
   ```powershell
-  New-Item -ItemType Directory C:\m
-  icacls C:\m /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "${env:USERDOMAIN}\${env:USERNAME}:(OI)(CI)M"
+  # The service account is the SERVICE_START_NAME of the service, not $env:USERNAME (under over-the-shoulder UAC that is the approving admin).
+  sc.exe qc AiChromeProxy
+  $svc = 'NT AUTHORITY\LocalService'   # replace with the SERVICE_START_NAME value
+  if (Test-Path C:\m) { (Get-Acl C:\m).Owner; throw 'C:\m exists and you did not create it: pick another name' }
+  New-Item -ItemType Directory C:\m -ErrorAction Stop
+  icacls C:\m /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "${svc}:(OI)(CI)M"
   ```
-  (`USERNAME` must be the account the service runs as.) Check `(Get-Acl C:\m).Owner` is you or Administrators.
+  If the folder already exists and you did not create it, pick another name: someone else may own it and keep control of its ACL.
 - **Not `subst` or mapped network drives:** they exist per logon session, and the service (which runs without anyone logged on) does not see them.
 - **Segment limit:** a single file or folder name stays limited to 237 characters (NTFS allows 255, minus the temp suffix `.<tag>.aicp-tmp`); no setting lifts it.
 
