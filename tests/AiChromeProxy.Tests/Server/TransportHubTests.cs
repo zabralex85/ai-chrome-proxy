@@ -81,6 +81,33 @@ public sealed class TransportHubTests : IAsyncDisposable
 		Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
 	}
 
+	/// <summary>The Server serves the Client as published: no build-time placeholder may survive, and the unfingerprinted script name must resolve.</summary>
+	[Theory]
+	[InlineData("/")]
+	[InlineData("/some/client/route")]
+	public async Task Page_WithToken_LoadsBlazorScriptThatExists(string path)
+	{
+		var ct = TestContext.Current.CancellationToken;
+		using var client = _factory.CreateClient();
+
+		var html = await Get(client, path, ct);
+		Assert.Contains("\"_framework/blazor.webassembly.js\"", html, StringComparison.Ordinal);
+		Assert.DoesNotContain("#[", html, StringComparison.Ordinal);
+
+		Assert.Contains("Blazor", await Get(client, "/_framework/blazor.webassembly.js", ct), StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public void ClientIndexHtml_HasNoBuildPlaceholders()
+	{
+		// Placeholders are filled only when a Blazor app is published on its own; the hosting Server serves this file as it is.
+		var html = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Client", "index.html"));
+
+		Assert.DoesNotContain("#[", html, StringComparison.Ordinal);
+		Assert.DoesNotContain("type=\"importmap\"", html, StringComparison.Ordinal);
+		Assert.DoesNotContain("id=\"webassembly\"", html, StringComparison.Ordinal);
+	}
+
 	[Fact]
 	public async Task StaticFile_WithToken_200()
 	{
@@ -133,5 +160,14 @@ public sealed class TransportHubTests : IAsyncDisposable
 				};
 			})
 			.Build();
+	}
+
+	private async Task<string> Get(HttpClient client, string path, CancellationToken ct)
+	{
+		using var request = new HttpRequestMessage(HttpMethod.Get, path);
+		request.Headers.Add(CloudflareAccessMiddleware.HeaderName, _issuer.Token());
+		using var response = await client.SendAsync(request, ct);
+		Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+		return await response.Content.ReadAsStringAsync(ct);
 	}
 }
