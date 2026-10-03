@@ -1,3 +1,4 @@
+using AiChromeProxy.Application.Sync;
 using AiChromeProxy.Application.Transport;
 using AiChromeProxy.Domain;
 using AiChromeProxy.Server.Security;
@@ -5,7 +6,7 @@ using Microsoft.AspNetCore.SignalR;
 
 namespace AiChromeProxy.Server.Transport;
 
-public sealed class TransportHub(EnvelopeRouter router, IHubContext<TransportHub> hub, ILogger<TransportHub> logger) : Hub
+public sealed class TransportHub(EnvelopeRouter router, SyncSessions syncSessions, IHubContext<TransportHub> hub, ILogger<TransportHub> logger) : Hub
 {
 	public const string Path = "/hub";
 	public const string ReceiveMethod = "Receive";
@@ -35,5 +36,11 @@ public sealed class TransportHub(EnvelopeRouter router, IHubContext<TransportHub
 		{
 			await Clients.Caller.SendAsync(ReceiveMethod, reply, Context.ConnectionAborted);
 		}
+	}
+
+	public override Task OnDisconnectedAsync(Exception? exception)
+	{
+		syncSessions.Close(Context.ConnectionId);
+		return base.OnDisconnectedAsync(exception);
 	}
 }
