@@ -9,7 +9,8 @@ using Microsoft.Win32.SafeHandles;
 namespace AiChromeProxy.Tray.Services;
 
 /// <summary>
-/// Thin P/Invoke layer (advapi32: SCM, LSA, LogonUser) for the elevated <c>--admin install|uninstall</c> instance.
+/// Thin P/Invoke layer (advapi32: SCM, LSA, LogonUser) for the elevated <c>--admin install|uninstall</c> instance, plus the
+/// unelevated binary path query and server sync used by the tray and Velopack's hooks.
 /// Excluded from coverage: every call needs elevation and changes the machine; the decisions it applies live in
 /// <see cref="ServiceSetup"/> (tested) and the calls themselves are covered by the manual acceptance checklist.
 /// </summary>
@@ -21,6 +22,7 @@ internal static partial class ServiceInstaller
 	private const uint ScManagerConnect = 0x0001;
 	private const uint ScManagerCreateService = 0x0002;
 	private const uint ServiceChangeConfig = 0x0002;
+	private const uint ServiceQueryConfig = 0x0001;
 	private const uint ServiceQueryStatus = 0x0004;
 	private const uint ServiceStart = 0x0010;
 	private const uint ServiceStop = 0x0020;
@@ -46,7 +48,10 @@ internal static partial class ServiceInstaller
 
 	private static readonly TimeSpan StopTimeout = TimeSpan.FromSeconds(30);
 
-	/// <summary>Creates (or reconfigures) the service to run as <paramref name="account"/>, then starts it.</summary>
+	/// <summary>
+	/// Creates (or reconfigures) the service to run as <paramref name="account"/> from <c>&lt;DataDir&gt;\server</c>, which the tray already
+	/// filled (as the user, before elevating). No file is copied, renamed or deleted here, and the service is not started: the tray starts it.
+	/// </summary>
 	public static void Install(string serviceName, string account, string password, string controlUser, DataDirectory dataDir)
 	{
 		var accountSid = ServiceSetup.Sid(account);
@@ -57,29 +62,83 @@ internal static partial class ServiceInstaller
 		// "Log on as a service" first: LogonUser(LOGON32_LOGON_SERVICE) below then fails only for bad credentials.
 		GrantLogonAsService(accountSid);
 		VerifyPassword(account, password);
+		ServiceSetup.PrepareDataDirectory(dataDir, accountSid, controlSid);
+		ServiceSetup.EnsureServerCopied(dataDir);
 
 		using (var manager = OpenSCManager(null, null, ScManagerConnect | ScManagerCreateService))
 		{
 			ThrowIfInvalid(manager);
-			var binaryPath = ServiceSetup.BinaryPathName(ServiceSetup.ServerExecutable(AppContext.BaseDirectory));
+			var binaryPath = ServiceSetup.BinaryPathName(ServiceSetup.ServerExecutable(dataDir.Root));
 			using (var service = CreateOrReconfigure(manager, serviceName, binaryPath, ServiceSetup.ServiceStartName(account), password))
 			{
 				SetFailureActions(service);
 				GrantUserControl(service, controlSid);
-				ServiceSetup.PrepareDataDirectory(dataDir, accountSid, controlSid);
+			}
+		}
+	}
 
-				using (var controller = new ServiceController(serviceName))
+	/// <summary>
+	/// Not elevated (the tray before <c>--admin install</c>, Velopack's install and after-update hooks): makes the data directory safe as the
+	/// settings save does, then copies this version's <c>server\</c> (next to the running tray) to <c>&lt;DataDir&gt;\server</c>.
+	/// </summary>
+	public static void SyncServer(DataDirectory dataDir)
+	{
+		using (var identity = WindowsIdentity.GetCurrent())
+		{
+			ServiceSetup.PrepareSettingsDirectory(dataDir, identity.User!, DataDirectoryGuard.OwnerOf, identity.Owner);
+			try
+			{
+				ServiceSetup.SyncServerDirectory(Path.Combine(AppContext.BaseDirectory, "server"), dataDir);
+			}
+			catch (UnauthorizedAccessException ex)
+			{
+				// A protected folder made for another account.
+				throw new IOException(ServiceSetup.AskAdministratorToDelete(dataDir.Root, $"cannot be written by you ({ex.Message})"), ex);
+			}
+		}
+	}
+
+	/// <summary>The binary path the SCM has for the service (as stored, quoted), or null when it does not exist.</summary>
+	public static string? QueryBinaryPathName(string serviceName)
+	{
+		using (var manager = OpenSCManager(null, null, ScManagerConnect))
+		{
+			ThrowIfInvalid(manager);
+			using (var service = OpenService(manager, serviceName, ServiceQueryConfig))
+			{
+				if (service.IsInvalid && Marshal.GetLastPInvokeError() == ErrorServiceDoesNotExist)
 				{
-					if (controller.Status == ServiceControllerStatus.Stopped)
+					return null;
+				}
+
+				ThrowIfInvalid(service);
+				if (!QueryServiceConfig(service, IntPtr.Zero, 0, out var needed) && Marshal.GetLastPInvokeError() != ErrorInsufficientBuffer)
+				{
+					throw new Win32Exception();
+				}
+
+				var buffer = Marshal.AllocHGlobal((int)needed);
+				try
+				{
+					if (!QueryServiceConfig(service, buffer, needed, out _))
 					{
-						controller.Start();
+						throw new Win32Exception();
 					}
+
+					return Marshal.PtrToStringUni(Marshal.PtrToStructure<QueryServiceConfigData>(buffer).BinaryPathName);
+				}
+				finally
+				{
+					Marshal.FreeHGlobal(buffer);
 				}
 			}
 		}
 	}
 
-	/// <summary>Marks the service for deletion, then stops it (deletion completes once it has stopped); the data directory is kept.</summary>
+	/// <summary>
+	/// Marks the service for deletion, then stops it (deletion completes once it has stopped). Its copy of the Server is deleted by the
+	/// non-elevated caller afterwards; settings and logs are kept.
+	/// </summary>
 	public static void Uninstall(string serviceName)
 	{
 		using (var manager = OpenSCManager(null, null, ScManagerConnect))
@@ -284,6 +343,10 @@ internal static partial class ServiceInstaller
 	[return: MarshalAs(UnmanagedType.Bool)]
 	private static partial bool ChangeServiceConfig2(ServiceHandle service, uint infoLevel, ref ServiceFailureActions info);
 
+	[LibraryImport("advapi32.dll", EntryPoint = "QueryServiceConfigW", SetLastError = true)]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	private static partial bool QueryServiceConfig(ServiceHandle service, IntPtr serviceConfig, uint bufferSize, out uint bytesNeeded);
+
 	[LibraryImport("advapi32.dll", SetLastError = true)]
 	[return: MarshalAs(UnmanagedType.Bool)]
 	private static partial bool QueryServiceObjectSecurity(ServiceHandle service, uint securityInformation, byte[]? securityDescriptor, uint bufferSize, out uint bytesNeeded);
@@ -347,6 +410,21 @@ internal static partial class ServiceInstaller
 		public IntPtr Command;
 		public uint ActionCount;
 		public IntPtr Actions;
+	}
+
+	/// <summary>QUERY_SERVICE_CONFIGW; the strings point into the same buffer.</summary>
+	[StructLayout(LayoutKind.Sequential)]
+	private struct QueryServiceConfigData
+	{
+		public uint ServiceType;
+		public uint StartType;
+		public uint ErrorControl;
+		public IntPtr BinaryPathName;
+		public IntPtr LoadOrderGroup;
+		public uint TagId;
+		public IntPtr Dependencies;
+		public IntPtr ServiceStartName;
+		public IntPtr DisplayName;
 	}
 
 	[StructLayout(LayoutKind.Sequential)]

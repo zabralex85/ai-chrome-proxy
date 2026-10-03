@@ -8,6 +8,8 @@ namespace AiChromeProxy.Tests.Tray;
 
 public sealed class UpdateOrchestratorTests : IDisposable
 {
+	private const string OldLayout = "\"" + @"C:\Users\Jane Doe\AppData\Local\AiChromeProxy\current\server\AiChromeProxy.Server.exe" + "\"";
+
 	private readonly string _marker = Path.Combine(Path.GetTempPath(), "aicp-tests-" + Guid.NewGuid().ToString("N") + ".update-pending");
 	private readonly FakeServiceControl _service = new(ServiceState.Running);
 	private readonly FakeUpdateSource _source;
@@ -195,11 +197,11 @@ public sealed class UpdateOrchestratorTests : IDisposable
 	}
 
 	[Theory]
-	[InlineData(true, ServiceState.Stopped, true)]
-	[InlineData(false, ServiceState.Stopped, false)]
-	[InlineData(true, ServiceState.Running, false)]
-	[InlineData(true, ServiceState.NotInstalled, false)]
-	public async Task AfterUpdateHook_StartsServiceOnlyWhenTheUpdateStoppedIt(bool marker, ServiceState state, bool started)
+	[InlineData(true, ServiceState.Stopped, "sync start")]
+	[InlineData(false, ServiceState.Stopped, "sync")]
+	[InlineData(true, ServiceState.Running, "")]
+	[InlineData(true, ServiceState.NotInstalled, "")]
+	public async Task AfterUpdateHook_SyncsAStoppedService_StartsOnlyWhenTheUpdateStoppedIt(bool marker, ServiceState state, string calls)
 	{
 		if (marker)
 		{
@@ -208,10 +210,33 @@ public sealed class UpdateOrchestratorTests : IDisposable
 
 		_service.State = state;
 
-		VelopackHooks.AfterUpdate(_service, _marker);
+		VelopackHooks.AfterUpdate(_service, _marker, Sync);
 
-		Assert.Equal(started ? ["start"] : [], _service.Calls);
+		Assert.Equal(calls, string.Join(' ', _service.Calls));
 		Assert.Equal(marker, File.Exists(_marker));
+	}
+
+	[Fact]
+	public async Task AfterUpdateHook_OldLayout_NotSynced_StartedFromTheAppFolderAsBefore()
+	{
+		await File.WriteAllTextAsync(_marker, string.Empty, TestContext.Current.CancellationToken);
+		_service.State = ServiceState.Stopped;
+		_service.BinaryPathName = OldLayout;
+
+		VelopackHooks.AfterUpdate(_service, _marker, Sync);
+
+		Assert.Equal(["start"], _service.Calls);
+	}
+
+	[Fact]
+	public async Task AfterUpdateHook_SyncFails_StillStarted()
+	{
+		await File.WriteAllTextAsync(_marker, string.Empty, TestContext.Current.CancellationToken);
+		_service.State = ServiceState.Stopped;
+
+		VelopackHooks.AfterUpdate(_service, _marker, () => throw new IOException("in use"));
+
+		Assert.Equal(["start"], _service.Calls);
 	}
 
 	[Fact]
@@ -221,9 +246,84 @@ public sealed class UpdateOrchestratorTests : IDisposable
 		_service.State = ServiceState.Stopped;
 		_service.FailStart = new InvalidOperationException("denied");
 
-		VelopackHooks.AfterUpdate(_service, _marker);
+		VelopackHooks.AfterUpdate(_service, _marker, Sync);
 
-		Assert.Equal(["start"], _service.Calls);
+		Assert.Equal(["sync", "start"], _service.Calls);
+	}
+
+	[Theory]
+	[InlineData(ServiceState.Running, "stop sync start")]
+	[InlineData(ServiceState.Starting, "stop sync start")]
+	[InlineData(ServiceState.Stopped, "sync")]
+	[InlineData(ServiceState.NotInstalled, "")]
+	public void AfterInstallHook_StopsSyncsAndRestoresTheState(ServiceState state, string calls)
+	{
+		_service.State = state;
+
+		VelopackHooks.AfterInstall(_service, Sync, _marker);
+
+		Assert.Equal(calls, string.Join(' ', _service.Calls));
+	}
+
+	[Theory]
+	[InlineData(ServiceState.Running, true)]
+	[InlineData(ServiceState.Stopped, false)]
+	public void AfterInstallHook_MarkerWhileStoppedForTheCopy_GoneOnceStartedAgain(ServiceState state, bool marker)
+	{
+		_service.State = state;
+		var seen = false;
+
+		VelopackHooks.AfterInstall(_service, () => seen = File.Exists(_marker), _marker);
+
+		Assert.Equal(marker, seen);
+		Assert.False(File.Exists(_marker));
+	}
+
+	[Fact]
+	public void AfterInstallHook_StopFails_MarkerLeftForTheTrayToResolve()
+	{
+		_service.FailStop = new InvalidOperationException("denied");
+
+		VelopackHooks.AfterInstall(_service, Sync, _marker);
+
+		Assert.True(File.Exists(_marker));
+	}
+
+	[Fact]
+	public void AfterInstallHook_OldLayout_LeftAlone()
+	{
+		_service.BinaryPathName = OldLayout;
+
+		VelopackHooks.AfterInstall(_service, Sync, _marker);
+
+		Assert.Empty(_service.Calls);
+		Assert.Equal(ServiceState.Running, _service.State);
+	}
+
+	[Fact]
+	public void AfterInstallHook_SyncFails_StartedAgain_DoesNotThrow()
+	{
+		VelopackHooks.AfterInstall(
+			_service,
+			() =>
+			{
+				_service.Calls.Add("sync");
+				throw new IOException("in use");
+			},
+			_marker);
+
+		Assert.Equal(["stop", "sync", "start"], _service.Calls);
+		Assert.Equal(ServiceState.Running, _service.State);
+	}
+
+	[Fact]
+	public void AfterInstallHook_StopFails_NotSynced_DoesNotThrow()
+	{
+		_service.FailStop = new InvalidOperationException("denied");
+
+		VelopackHooks.AfterInstall(_service, Sync, _marker);
+
+		Assert.Equal(["stop"], _service.Calls);
 	}
 
 	[Theory]
@@ -259,4 +359,6 @@ public sealed class UpdateOrchestratorTests : IDisposable
 
 	private static async Task<T> NextAsync<T>(Channel<T> channel) =>
 		await channel.Reader.ReadAsync(TestContext.Current.CancellationToken).AsTask().WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+
+	private void Sync() => _service.Calls.Add("sync");
 }

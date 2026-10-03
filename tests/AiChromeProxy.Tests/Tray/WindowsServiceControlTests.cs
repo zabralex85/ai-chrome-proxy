@@ -16,4 +16,16 @@ public sealed class WindowsServiceControlTests
 	{
 		Assert.Equal(ServiceState.Running, new WindowsServiceControl("EventLog").GetState());
 	}
+
+	[Fact]
+	public void BinaryPathName_UnknownService_Null()
+	{
+		Assert.Null(new WindowsServiceControl("AiChromeProxyTests-" + Guid.NewGuid().ToString("N")).GetBinaryPathName());
+	}
+
+	[Fact]
+	public void BinaryPathName_EventLogService_Svchost()
+	{
+		Assert.Contains("svchost.exe", new WindowsServiceControl("EventLog").GetBinaryPathName(), StringComparison.OrdinalIgnoreCase);
+	}
 }
