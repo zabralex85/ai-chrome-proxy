@@ -143,6 +143,7 @@ public sealed class TransportHubTests : IAsyncDisposable
 	[InlineData("GET", "/index.html")]
 	[InlineData("GET", "/_framework/blazor.webassembly.js")]
 	[InlineData("GET", "/css/app.css")]
+	[InlineData("GET", "/js/fsaccess.js")]
 	[InlineData("GET", "/some/client/route")]
 	[InlineData("POST", "/hub/negotiate?negotiateVersion=1")]
 	public async Task NoToken_EveryEntryPoint_401(string method, string path)
@@ -202,6 +203,18 @@ public sealed class TransportHubTests : IAsyncDisposable
 					Assert.Equal("text/css", response.Content.Headers.ContentType?.MediaType);
 				}
 			}
+		}
+	}
+
+	[Fact]
+	public async Task FsAccessScript_WithToken_ServedAsJavaScriptModule()
+	{
+		using (var client = _factory.CreateClient())
+		{
+			var script = await Get(client, "/js/fsaccess.js", TestContext.Current.CancellationToken);
+
+			Assert.Contains("export async function pick()", script, StringComparison.Ordinal);
+			Assert.Contains("showDirectoryPicker({ id: 'aicp', mode: 'read' })", script, StringComparison.Ordinal);
 		}
 	}
 
