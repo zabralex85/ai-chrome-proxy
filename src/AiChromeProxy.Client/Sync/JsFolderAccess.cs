@@ -10,6 +10,9 @@ public sealed class JsFolderAccess(IJSRuntime js) : IFolderAccess, IAsyncDisposa
 	private IJSObjectReference? _module;
 	private DotNetObjectReference<VisibilityCallback>? _callback;
 
+	/// <summary>Imports the module at startup, so a click's <see cref="PickAsync"/> reaches <c>showDirectoryPicker</c> within the click's user activation.</summary>
+	public async Task InitAsync() => await ModuleAsync();
+
 	public async Task<string?> PickAsync() => await (await ModuleAsync()).InvokeAsync<string?>("pick");
 
 	public async Task<FolderGrant?> RestoreAsync() => await (await ModuleAsync()).InvokeAsync<FolderGrant?>("restore");
@@ -27,19 +30,24 @@ public sealed class JsFolderAccess(IJSRuntime js) : IFolderAccess, IAsyncDisposa
 	public async Task<byte[]> ReadChunkAsync(string path, long offset, int length) =>
 		await (await ModuleAsync()).InvokeAsync<byte[]>("readChunk", path, offset, length);
 
+	/// <summary>Replaces an earlier watch.</summary>
 	public async Task WatchVisibilityAsync(Action<bool> changed)
 	{
+		var previous = _callback;
 		_callback = DotNetObjectReference.Create(new VisibilityCallback(changed));
 		await (await ModuleAsync()).InvokeVoidAsync("watchVisibility", _callback);
+		previous?.Dispose();
 	}
 
 	public async ValueTask DisposeAsync()
 	{
-		_callback?.Dispose();
 		if (_module is not null)
 		{
+			await _module.InvokeVoidAsync("unwatchVisibility");
 			await _module.DisposeAsync();
 		}
+
+		_callback?.Dispose();
 	}
 
 	private async Task<IJSObjectReference> ModuleAsync() =>

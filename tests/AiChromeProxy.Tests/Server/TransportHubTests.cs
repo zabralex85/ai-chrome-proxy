@@ -209,12 +209,22 @@ public sealed class TransportHubTests : IAsyncDisposable
 	[Fact]
 	public async Task FsAccessScript_WithToken_ServedAsJavaScriptModule()
 	{
+		var ct = TestContext.Current.CancellationToken;
 		using (var client = _factory.CreateClient())
 		{
-			var script = await Get(client, "/js/fsaccess.js", TestContext.Current.CancellationToken);
+			using (var request = new HttpRequestMessage(HttpMethod.Get, "/js/fsaccess.js"))
+			{
+				request.Headers.Add(CloudflareAccessMiddleware.HeaderName, _issuer.Token());
+				using (var response = await client.SendAsync(request, ct))
+				{
+					var script = await response.Content.ReadAsStringAsync(ct);
 
-			Assert.Contains("export async function pick()", script, StringComparison.Ordinal);
-			Assert.Contains("showDirectoryPicker({ id: 'aicp', mode: 'read' })", script, StringComparison.Ordinal);
+					Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+					Assert.Contains(response.Content.Headers.ContentType?.MediaType, new[] { "text/javascript", "application/javascript" });
+					Assert.Contains("export async function pick()", script, StringComparison.Ordinal);
+					Assert.Contains("showDirectoryPicker({ id: 'aicp', mode: 'read' })", script, StringComparison.Ordinal);
+				}
+			}
 		}
 	}
 
