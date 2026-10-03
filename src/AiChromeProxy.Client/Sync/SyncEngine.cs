@@ -292,14 +292,25 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 
 			// A fresh session (first pass, reconnect, folder change) and then every FullManifestInterval: the full manifest, so nothing
 			// stale stays on the mirror; the keep list protects what this scan could not sync.
-			var full = repo is null || time.GetElapsedTime(_fullManifestAt) >= FullManifestInterval;
+			// Also when only kept files are left: a delta would delete every remaining mirror file, which the server refuses.
+			var full = repo is null || time.GetElapsedTime(_fullManifestAt) >= FullManifestInterval || entries.Count == 0;
+			var periodic = full && repo is not null;
 			repo ??= await OpenAsync(generation, ct);
 			if (full)
 			{
-				pass = true;
-				Log(SyncActivityKind.PassStarted, $"Full sync of {FileCount(entries.Count)}.");
+				// A periodic full manifest that changes nothing stays out of the history (it would flood it every ten minutes).
+				if (!periodic)
+				{
+					Log(SyncActivityKind.PassStarted, $"Full sync of {FileCount(entries.Count)}.");
+				}
+
 				need = await SendManifestAsync(repo, generation, entries, scan.Keep, ct);
 				_fullManifestAt = time.GetTimestamp();
+				pass = !periodic || need.Count > 0;
+				if (periodic && pass)
+				{
+					Log(SyncActivityKind.PassStarted, $"Full sync of {FileCount(entries.Count)}.");
+				}
 			}
 			else
 			{
@@ -598,7 +609,7 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 			}
 			catch (RequestFailedException ex) when (_repo == repo && generation == _generation && ex.Code is ErrorCodes.TooLarge or ErrorCodes.BadRequest)
 			{
-				// The session was just opened (and not lost to a reconnect since) and the server refused the folder itself;
+				// A full manifest (fresh session or periodic, not lost to a reconnect since) and the server refused the folder itself;
 				// anything else (internal error, timeout) is transient and retried on the next pass.
 				Blocked = true;
 				throw;

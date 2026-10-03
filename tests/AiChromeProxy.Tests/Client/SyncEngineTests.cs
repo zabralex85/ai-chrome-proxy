@@ -623,6 +623,38 @@ public sealed class SyncEngineTests : IDisposable
 	}
 
 	[Fact]
+	public async Task PeriodicFullManifest_NothingToDo_AddsNoHistory()
+	{
+		var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 3, 12, 0, 0, TimeSpan.Zero));
+		var engine = new SyncEngine(_server.Transport, _folder, clock);
+		_folder.Write("a.txt", "a");
+		await engine.OpenFolderAsync();
+		await engine.SyncOnceAsync(Ct);
+		var before = engine.Activity.Count;
+
+		clock.Advance(SyncEngine.FullManifestInterval);
+		await engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(before, engine.Activity.Count);
+	}
+
+	[Fact]
+	public async Task OnlyKeptFilesLeft_KnownFileDeleted_NoEmptyFolderError()
+	{
+		_folder.Write("a.txt", "a");
+		await OpenAsync();
+		await _engine.SyncOnceAsync(Ct);
+		_folder.Write("b.txt", "b");
+		_folder.Unreadable.Add("b.txt");
+		_folder.Files.Remove("a.txt");
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.DoesNotContain(_engine.Activity, a => a.Kind == SyncActivityKind.Error);
+		Assert.False(File.Exists(_server.PathOf(Repo, "a.txt")));
+	}
+
+	[Fact]
 	public async Task FullManifestEveryTenMinutes_RemovesWhatNoDeltaCouldSee()
 	{
 		var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 3, 12, 0, 0, TimeSpan.Zero));
