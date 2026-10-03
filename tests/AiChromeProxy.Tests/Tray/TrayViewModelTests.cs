@@ -140,6 +140,55 @@ public sealed class TrayViewModelTests
 		Assert.Equal("scm down", vm.Error);
 	}
 
+	[Theory]
+	[InlineData(ServiceState.Running)]
+	[InlineData(ServiceState.Stopped)]
+	public void Refresh_ServiceInTheAppFolder_AsksOnceForInstallService(ServiceState state)
+	{
+		var service = new FakeServiceControl(state)
+		{
+			BinaryPathName = "\"" + @"C:\Users\Jane Doe\AppData\Local\AiChromeProxy\current\server\AiChromeProxy.Server.exe" + "\"",
+		};
+		var vm = Create(service);
+
+		vm.Refresh();
+
+		Assert.True(vm.NeedsMigration);
+		Assert.Equal(
+			"Run Install service… once to move the service out of the app folder (needed to install updates with Setup.exe)",
+			vm.ErrorText);
+	}
+
+	[Theory]
+	[InlineData(ServiceState.Running)]
+	[InlineData(ServiceState.NotInstalled)]
+	public void Refresh_ServiceInDataDirectoryOrNone_NoMigrationLine(ServiceState state)
+	{
+		var vm = Create(new FakeServiceControl(state));
+
+		vm.Refresh();
+
+		Assert.False(vm.NeedsMigration);
+		Assert.Null(vm.ErrorText);
+	}
+
+	[Fact]
+	public async Task ErrorText_ActionErrorShownBeforeTheMigrationLine()
+	{
+		var service = new FakeServiceControl(ServiceState.Stopped)
+		{
+			BinaryPathName = @"C:\old\server\AiChromeProxy.Server.exe",
+			FailStart = new InvalidOperationException("access denied"),
+		};
+		var vm = Create(service);
+		vm.Refresh();
+
+		await vm.StartCommand.ExecuteAsync(null);
+
+		Assert.True(vm.NeedsMigration);
+		Assert.Equal("access denied", vm.ErrorText);
+	}
+
 	private static TrayViewModel Create(FakeServiceControl service) => new(service, _ => Task.FromResult<int?>(0), Updates(service));
 
 	private static UpdateOrchestrator Updates(FakeServiceControl service) =>

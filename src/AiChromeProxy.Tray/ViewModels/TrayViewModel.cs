@@ -9,6 +9,8 @@ namespace AiChromeProxy.Tray.ViewModels;
 /// <param name="runElevated">Runs <c>--admin &lt;command&gt;</c> elevated; returns its exit code, or null when UAC was declined (<see cref="AdminCommand.Cancelled"/>, the dialog closed, is treated the same).</param>
 public sealed partial class TrayViewModel(IServiceControl service, Func<string, Task<int?>> runElevated, UpdateOrchestrator updates) : ObservableObject
 {
+	public const string MigrationText = "Run Install service… once to move the service out of the app folder (needed to install updates with Setup.exe)";
+
 	[ObservableProperty]
 	[NotifyPropertyChangedFor(nameof(StatusText))]
 	[NotifyCanExecuteChangedFor(nameof(StartCommand), nameof(StopCommand), nameof(RestartCommand), nameof(UninstallCommand))]
@@ -16,12 +18,21 @@ public sealed partial class TrayViewModel(IServiceControl service, Func<string, 
 
 	/// <summary>Last failure of a menu action or status query; cleared when the next action starts.</summary>
 	[ObservableProperty]
+	[NotifyPropertyChangedFor(nameof(ErrorText))]
 	public partial string? Error { get; private set; }
+
+	/// <summary>The installed service runs from the app folder (installed by an older version), which blocks Setup.exe from replacing it.</summary>
+	[ObservableProperty]
+	[NotifyPropertyChangedFor(nameof(ErrorText))]
+	public partial bool NeedsMigration { get; private set; }
 
 	/// <summary>Newer release found by the last check; null hides the menu item.</summary>
 	[ObservableProperty]
 	[NotifyPropertyChangedFor(nameof(UpdateText), nameof(IsUpdateAvailable))]
 	public partial string? UpdateVersion { get; private set; }
+
+	/// <summary>The menu's error line: the last failure, else the migration request.</summary>
+	public string? ErrorText => Error ?? (NeedsMigration ? MigrationText : null);
 
 	public string UpdateText => $"Update to v{UpdateVersion}";
 
@@ -41,6 +52,7 @@ public sealed partial class TrayViewModel(IServiceControl service, Func<string, 
 		try
 		{
 			State = service.GetState();
+			NeedsMigration = State != ServiceState.NotInstalled && !ServiceSetup.RunsFrom(service.GetBinaryPathName(), ServiceSetup.ServiceExecutable);
 		}
 		catch (Exception ex)
 		{

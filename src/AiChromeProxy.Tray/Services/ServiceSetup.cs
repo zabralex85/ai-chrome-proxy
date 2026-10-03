@@ -12,6 +12,9 @@ public static class ServiceSetup
 	/// <summary><c>NT SERVICE\TrustedInstaller</c>.</summary>
 	public const string TrustedInstallerSid = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
 
+	/// <summary>Tries of a rename or delete of a server folder in the data directory (<see cref="RetryDelay"/> apart).</summary>
+	public const int RetryAttempts = 10;
+
 	/// <summary>SERVICE_QUERY_CONFIG | SERVICE_QUERY_STATUS | SERVICE_START | SERVICE_STOP: tray Start/Stop/Restart without UAC.</summary>
 	public const int UserControlRights = 0x0001 | 0x0004 | 0x0010 | 0x0020;
 
@@ -21,8 +24,156 @@ public static class ServiceSetup
 	public static readonly TimeSpan RestartDelay = TimeSpan.FromSeconds(10);
 	public static readonly TimeSpan FailureResetPeriod = TimeSpan.FromDays(1);
 
-	/// <summary>The Server published self-contained into <c>server\</c> next to the tray (Velopack's stable <c>current\</c> folder).</summary>
-	public static string ServerExecutable(string trayDirectory) => Path.Combine(trayDirectory, "server", "AiChromeProxy.Server.exe");
+	/// <summary>The Server's executable, in <c>server\</c> of the package and of the data directory.</summary>
+	public static readonly string ServerFileName = "AiChromeProxy.Server.exe";
+
+	/// <summary>Pause between attempts to rename or delete a server folder: the SCM reports Stopped a moment before the process has let go of its files.</summary>
+	private static readonly TimeSpan RetryDelay = TimeSpan.FromMilliseconds(300);
+
+	/// <summary>
+	/// The service binary: the copy in the default data directory, outside the app folder (Setup.exe cannot replace a folder the running
+	/// service holds). <c>AICP_DATA_DIR</c> is ignored, as in the elevated install.
+	/// </summary>
+	public static string ServiceExecutable => ServerExecutable(DataDirectory.Resolve(null).Root);
+
+	/// <summary>The Server in <c>server\</c> under <paramref name="directory"/>: the tray's folder (the package) or the data directory (the service's copy).</summary>
+	public static string ServerExecutable(string directory) => Path.Combine(directory, "server", ServerFileName);
+
+	/// <summary>
+	/// Whether the SCM's binary path (quoted or not) is exactly <paramref name="executable"/>; false for a service installed by an older version,
+	/// which still runs from the app folder until "Install service…" is run again.
+	/// </summary>
+	public static bool RunsFrom(string? binaryPathName, string executable)
+	{
+		var path = binaryPathName?.Trim() ?? string.Empty;
+		if (path.StartsWith('"'))
+		{
+			var end = path.IndexOf('"', 1);
+			path = end < 0 ? string.Empty : path[1..end];
+		}
+
+		return path.Length > 0 && string.Equals(Path.GetFullPath(path), Path.GetFullPath(executable), StringComparison.OrdinalIgnoreCase);
+	}
+
+	/// <summary>
+	/// Replaces <c>&lt;DataDir&gt;\server</c> with a copy of the package's <paramref name="source"/> folder; the service must be stopped (its files are in use).
+	/// The copy goes to <c>server.new</c>, then <c>server</c> becomes <c>server.old</c>, <c>server.new</c> becomes <c>server</c> and <c>server.old</c> is
+	/// deleted: any failure up to the swap leaves the old <c>server</c> in place. Leftovers of an interrupted sync are cleaned up first.
+	/// </summary>
+	/// <param name="tokenOwner">
+	/// Owner of what this process creates (<see cref="WindowsIdentity.Owner"/>). <c>server.new</c> is writable only by it, SYSTEM and
+	/// Administrators until the copy is complete, so the user cannot redirect the elevated install's writes by planting links meanwhile.
+	/// </param>
+	/// <param name="attempts">Tries of the rename of <c>server</c> and of each delete (<see cref="RetryDelay"/> apart).</param>
+	public static void SyncServerDirectory(string source, DataDirectory dataDir, SecurityIdentifier tokenOwner, int attempts = RetryAttempts)
+	{
+		var target = dataDir.Server;
+		var staging = target + ".new";
+		var old = target + ".old";
+
+		// Interrupted between the two renames: server.old is the last working copy.
+		if (!Directory.Exists(target) && Directory.Exists(old))
+		{
+			Directory.Move(old, target);
+		}
+
+		if (!File.Exists(Path.Combine(source, ServerFileName)))
+		{
+			throw new InvalidOperationException($"{source} has no {ServerFileName}; reinstall the app.");
+		}
+
+		DeleteDirectory(staging, attempts);
+		DeleteDirectory(old, attempts);
+		CreateStaging(staging, tokenOwner);
+		CopyTree(source, staging);
+
+		// Complete: from now on it takes the data directory's permissions, so the service account can run it and a later sync can replace it.
+		var inherited = new DirectorySecurity();
+		inherited.SetAccessRuleProtection(isProtected: false, preserveInheritance: false);
+		new DirectoryInfo(staging).SetAccessControl(inherited);
+
+		if (Directory.Exists(target))
+		{
+			Retry(() => Directory.Move(target, old), attempts);
+		}
+
+		try
+		{
+			Directory.Move(staging, target);
+		}
+		catch
+		{
+			if (Directory.Exists(old) && !Directory.Exists(target))
+			{
+				Directory.Move(old, target);
+			}
+
+			throw;
+		}
+
+		try
+		{
+			DeleteDirectory(old, attempts);
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			// The new copy is in place; the next sync or the uninstall removes the old one.
+		}
+	}
+
+	/// <summary>Uninstall: deletes the service's copy of the Server and leftovers of an interrupted sync; settings and logs are kept.</summary>
+	public static void DeleteServerDirectory(DataDirectory dataDir, int attempts = RetryAttempts)
+	{
+		foreach (var path in new[] { dataDir.Server, dataDir.Server + ".new", dataDir.Server + ".old" })
+		{
+			try
+			{
+				DeleteDirectory(path, attempts);
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+			{
+				throw new IOException($"The service was removed, but {path} could not be deleted ({ex.Message}); delete it by hand.", ex);
+			}
+		}
+	}
+
+	/// <summary>
+	/// "Install service…": stop the service if it runs (its files are in use), sync its copy of the Server, create or reconfigure it, then start it
+	/// when it was running or is new. A failed sync leaves the service as it was (old binary path) and starts it again if it ran.
+	/// </summary>
+	/// <param name="stopIfRunning">Stops a running service and waits; true when it was running.</param>
+	/// <param name="sync">Syncs the service's copy of the Server.</param>
+	/// <param name="createOrReconfigure">Creates or reconfigures the service; true when it was created (did not exist).</param>
+	/// <param name="start">Starts the service.</param>
+	public static void RunInstallSequence(Func<bool> stopIfRunning, Action sync, Func<bool> createOrReconfigure, Action start)
+	{
+		var wasRunning = stopIfRunning();
+		try
+		{
+			sync();
+		}
+		catch
+		{
+			if (wasRunning)
+			{
+				try
+				{
+					start();
+				}
+				catch (Exception)
+				{
+					// The sync error is the one to show; the tray status shows the service stopped.
+				}
+			}
+
+			throw;
+		}
+
+		if (createOrReconfigure() || wasRunning)
+		{
+			start();
+		}
+	}
 
 	/// <summary>Always quoted: the path is under the user's profile and may contain spaces (unquoted service paths are also a privilege-escalation hole).</summary>
 	public static string BinaryPathName(string executable) => $"\"{executable}\"";
@@ -180,13 +331,13 @@ public static class ServiceSetup
 		owner is not null
 		&& (owner.IsWellKnown(WellKnownSidType.BuiltinAdministratorsSid) || owner.IsWellKnown(WellKnownSidType.LocalSystemSid) || owner.Value == TrustedInstallerSid || trusted.Contains(owner));
 
-	/// <summary>The service binary lives in the tray user's writable profile: running it as anyone else would hand that account to the user.</summary>
+	/// <summary>The tray user replaces the service binaries on every update (without UAC): running them as anyone else would hand that account to the user.</summary>
 	public static void EnsureServiceAccountIsControlUser(SecurityIdentifier account, SecurityIdentifier controlUser)
 	{
 		if (account != controlUser)
 		{
 			throw new InvalidOperationException(
-				"The service binary is in your user profile, so the service must run as that same user. Enter your own account.");
+				"Updates replace the service's files as you, so the service must run as that same user. Enter your own account.");
 		}
 	}
 
@@ -204,6 +355,68 @@ public static class ServiceSetup
 		}
 
 		waitStopped();
+	}
+
+	/// <summary>Created with a protected DACL: SYSTEM, Administrators and <paramref name="tokenOwner"/> Full Control, nobody else.</summary>
+	private static void CreateStaging(string path, SecurityIdentifier tokenOwner)
+	{
+		var security = new DirectorySecurity();
+		security.SetSecurityDescriptorSddlForm($"D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;{tokenOwner.Value})", AccessControlSections.Access);
+		security.CreateDirectory(path);
+
+		// Deleted just before: anything else here was created by someone else in between (and may be a link or carry their permissions).
+		if (new DirectoryInfo(path).Attributes.HasFlag(FileAttributes.ReparsePoint) || DataDirectoryGuard.OwnerOf(path) != tokenOwner)
+		{
+			throw new InvalidOperationException($"{path} was created by another user; delete it and retry.");
+		}
+	}
+
+	/// <summary>Files and folders; links are skipped, never followed out of the package.</summary>
+	private static void CopyTree(string source, string target)
+	{
+		foreach (var entry in new DirectoryInfo(source).EnumerateFileSystemInfos())
+		{
+			if (entry.Attributes.HasFlag(FileAttributes.ReparsePoint))
+			{
+				continue;
+			}
+
+			var destination = Path.Combine(target, entry.Name);
+			if (entry is DirectoryInfo directory)
+			{
+				Directory.CreateDirectory(destination);
+				CopyTree(directory.FullName, destination);
+			}
+			else
+			{
+				((FileInfo)entry).CopyTo(destination);
+			}
+		}
+	}
+
+	/// <summary>Removes the folder, or only the link when it is one (<see cref="Directory.Delete(string, bool)"/> does not follow links).</summary>
+	private static void DeleteDirectory(string path, int attempts)
+	{
+		if (Directory.Exists(path))
+		{
+			Retry(() => Directory.Delete(path, recursive: true), attempts);
+		}
+	}
+
+	private static void Retry(Action action, int attempts)
+	{
+		for (var attempt = 1; ; attempt++)
+		{
+			try
+			{
+				action();
+				return;
+			}
+			catch (Exception ex) when ((ex is IOException or UnauthorizedAccessException) && attempt < attempts)
+			{
+				Thread.Sleep(RetryDelay);
+			}
+		}
 	}
 
 	private static void EnsureDirectorySafe(string path, SecurityIdentifier account, SecurityIdentifier controlUser, Func<string, SecurityIdentifier?> ownerOf)

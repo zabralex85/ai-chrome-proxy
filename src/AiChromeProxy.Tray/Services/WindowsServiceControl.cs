@@ -34,6 +34,8 @@ public sealed class WindowsServiceControl(string serviceName = WindowsServiceCon
 		}
 	}
 
+	public string? GetBinaryPathName() => ServiceInstaller.QueryBinaryPathName(serviceName);
+
 	/// <summary>Not unit-tested: starting a real service needs one installed with a DACL for the test user (manual checklist).</summary>
 	[ExcludeFromCodeCoverage]
 	public Task StartAsync(CancellationToken ct) => Task.Run(
@@ -74,5 +76,5 @@ public sealed class WindowsServiceControl(string serviceName = WindowsServiceCon
 		ServiceInstaller.Install(serviceName, account, password, controlUser, DataDirectory.Resolve(null));
 
 	[ExcludeFromCodeCoverage]
-	public void Uninstall() => ServiceInstaller.Uninstall(serviceName);
+	public void Uninstall() => ServiceInstaller.Uninstall(serviceName, DataDirectory.Resolve(null));
 }

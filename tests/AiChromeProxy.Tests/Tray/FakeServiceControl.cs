@@ -19,7 +19,12 @@ public sealed class FakeServiceControl(ServiceState state = ServiceState.Running
 
 	public Exception? FailUninstall { get; set; }
 
+	/// <summary>As the SCM stores it (quoted); returned only while installed. Defaults to the current layout, <c>&lt;DataDir&gt;\server</c>.</summary>
+	public string BinaryPathName { get; set; } = ServiceSetup.BinaryPathName(ServiceSetup.ServiceExecutable);
+
 	public ServiceState GetState() => FailGetState is null ? State : throw FailGetState;
+
+	public string? GetBinaryPathName() => State == ServiceState.NotInstalled ? null : BinaryPathName;
 
 	public Task StartAsync(CancellationToken ct)
 	{

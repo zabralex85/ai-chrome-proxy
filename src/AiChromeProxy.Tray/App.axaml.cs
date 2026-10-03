@@ -114,8 +114,8 @@ public partial class App : Avalonia.Application
 		{
 			status.Header = vm.StatusText;
 			icon.ToolTipText = "AI Chrome Proxy: " + vm.StatusText;
-			error.Header = vm.Error;
-			error.IsVisible = vm.Error is not null;
+			error.Header = vm.ErrorText;
+			error.IsVisible = vm.ErrorText is not null;
 			update.Header = vm.UpdateText;
 			update.IsVisible = vm.IsUpdateAvailable;
 		}
