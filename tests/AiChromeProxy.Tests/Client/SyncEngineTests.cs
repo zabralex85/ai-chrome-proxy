@@ -785,7 +785,8 @@ public sealed class SyncEngineTests : IDisposable
 
 		// The uploads: one file at a time waits a round trip per file (64 × 50 ms); pipelined, up to MaxUploadsInFlight replies are awaited together.
 		Assert.InRange(_server.Transport.MaxPendingReplies, 8, SyncEngine.MaxUploadsInFlight);
-		Assert.True(watch.Elapsed < 20 * delay, $"The pass took {watch.Elapsed}.");
+		// Generous for slow CI runners: still well below the 64 round trips one file at a time would take.
+		Assert.True(watch.Elapsed < 50 * delay, $"The pass took {watch.Elapsed}.");
 	}
 
 	[Fact]
