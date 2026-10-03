@@ -15,12 +15,12 @@ public interface IServiceControl
 	Task StopAsync(CancellationToken ct);
 
 	/// <summary>
-	/// Elevated only. Prepares the data directory, stops a running service, copies the Server to <c>&lt;DataDir&gt;\server</c>, creates
-	/// (or reconfigures) the service running from there as <paramref name="account"/>, lets <paramref name="controlUser"/> start/stop it
-	/// without UAC, and starts it when it was running or is new.
+	/// Elevated only, SCM/LSA/DACL work only. Protects the data directory, checks that the tray copied the Server to
+	/// <c>&lt;DataDir&gt;\server</c>, creates (or reconfigures) the service running from there as <paramref name="account"/>, lets
+	/// <paramref name="controlUser"/> start/stop it without UAC, and starts it when it is new.
 	/// </summary>
 	void Install(string account, string password, string controlUser);
 
-	/// <summary>Elevated only. Stops and deletes the service, then its copy of the Server; settings and logs are kept.</summary>
+	/// <summary>Elevated only. Stops and deletes the service; the non-elevated caller then deletes its copy of the Server (settings and logs are kept).</summary>
 	void Uninstall();
 }

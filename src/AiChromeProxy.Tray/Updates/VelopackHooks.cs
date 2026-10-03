@@ -87,7 +87,10 @@ public static class VelopackHooks
 		}
 	}
 
-	/// <summary>Removes the service and its copy of the Server (elevated <c>--admin uninstall</c>) and the "Start with Windows" entry; settings and logs are kept.</summary>
+	/// <summary>
+	/// Removes the service (<paramref name="runElevated"/>: the elevated <c>--admin uninstall</c>, after which the caller deletes its copy of the
+	/// Server as the user) and the "Start with Windows" entry; settings and logs are kept.
+	/// </summary>
 	public static void BeforeUninstall(IServiceControl service, Func<string, Task<int?>> runElevated, IAutoStart autoStart)
 	{
 		try

@@ -189,6 +189,51 @@ public sealed class TrayViewModelTests
 		Assert.Equal("access denied", vm.ErrorText);
 	}
 
+	[Theory]
+	[InlineData("0.2.2+1111111", "0.2.3+2222222", "The service runs v0.2.2; the app is v0.2.3 — run Install service… to update it")]
+	[InlineData("0.2.3-rc1", "0.2.3", "The service runs v0.2.3-rc1; the app is v0.2.3 — run Install service… to update it")]
+	[InlineData("0.2.3+1111111", "0.2.3+2222222", null)]
+	[InlineData("0.2.3", "0.2.3", null)]
+	[InlineData(null, "0.2.3", null)]
+	[InlineData("", "0.2.3", null)]
+	[InlineData("0.2.3", null, null)]
+	public void VersionText_OnlyWhenBothKnownAndDifferent(string? serviceVersion, string? appVersion, string? expected)
+	{
+		Assert.Equal(expected, TrayViewModel.VersionText(serviceVersion, appVersion));
+	}
+
+	[Fact]
+	public void Refresh_ServiceCopyOlderThanTheApp_VersionLine()
+	{
+		var service = new FakeServiceControl(ServiceState.Running);
+		var vm = new TrayViewModel(service, _ => Task.FromResult<int?>(0), Updates(service), () => "0.2.2", "0.2.3");
+
+		vm.Refresh();
+
+		Assert.Equal("The service runs v0.2.2; the app is v0.2.3 — run Install service… to update it", vm.ErrorText);
+	}
+
+	[Fact]
+	public void Refresh_SameVersion_NotInstalled_OrMigrationPending_NoVersionLine()
+	{
+		var service = new FakeServiceControl(ServiceState.Running);
+		var version = "0.2.3";
+		var vm = new TrayViewModel(service, _ => Task.FromResult<int?>(0), Updates(service), () => version, "0.2.3");
+
+		vm.Refresh();
+		Assert.Null(vm.ErrorText);
+
+		version = "0.2.2";
+		service.State = ServiceState.NotInstalled;
+		vm.Refresh();
+		Assert.Null(vm.ErrorText);
+
+		service.State = ServiceState.Running;
+		service.BinaryPathName = @"C:\old\server\AiChromeProxy.Server.exe";
+		vm.Refresh();
+		Assert.Equal(TrayViewModel.MigrationText, vm.ErrorText);
+	}
+
 	private static TrayViewModel Create(FakeServiceControl service) => new(service, _ => Task.FromResult<int?>(0), Updates(service));
 
 	private static UpdateOrchestrator Updates(FakeServiceControl service) =>

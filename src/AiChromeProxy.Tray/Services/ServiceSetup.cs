@@ -57,40 +57,25 @@ public static class ServiceSetup
 
 	/// <summary>
 	/// Replaces <c>&lt;DataDir&gt;\server</c> with a copy of the package's <paramref name="source"/> folder; the service must be stopped (its files are in use).
-	/// The copy goes to <c>server.new</c>, then <c>server</c> becomes <c>server.old</c>, <c>server.new</c> becomes <c>server</c> and <c>server.old</c> is
-	/// deleted: any failure up to the swap leaves the old <c>server</c> in place. Leftovers of an interrupted sync are cleaned up first.
+	/// Runs only as the tray user (never elevated): the folder is writable by that user. The copy goes to <c>server.new</c>, then <c>server</c> becomes
+	/// <c>server.old</c>, <c>server.new</c> becomes <c>server</c> and <c>server.old</c> is deleted: any failure up to the swap leaves the old
+	/// <c>server</c> in place. Leftovers of an interrupted sync are cleaned up first (<see cref="CleanUpServerLeftovers"/>).
 	/// </summary>
-	/// <param name="tokenOwner">
-	/// Owner of what this process creates (<see cref="WindowsIdentity.Owner"/>). <c>server.new</c> is writable only by it, SYSTEM and
-	/// Administrators until the copy is complete, so the user cannot redirect the elevated install's writes by planting links meanwhile.
-	/// </param>
 	/// <param name="attempts">Tries of the rename of <c>server</c> and of each delete (<see cref="RetryDelay"/> apart).</param>
-	public static void SyncServerDirectory(string source, DataDirectory dataDir, SecurityIdentifier tokenOwner, int attempts = RetryAttempts)
+	public static void SyncServerDirectory(string source, DataDirectory dataDir, int attempts = RetryAttempts)
 	{
 		var target = dataDir.Server;
 		var staging = target + ".new";
 		var old = target + ".old";
 
-		// Interrupted between the two renames: server.old is the last working copy.
-		if (!Directory.Exists(target) && Directory.Exists(old))
-		{
-			Directory.Move(old, target);
-		}
-
+		CleanUpServerLeftovers(dataDir, attempts);
 		if (!File.Exists(Path.Combine(source, ServerFileName)))
 		{
 			throw new InvalidOperationException($"{source} has no {ServerFileName}; reinstall the app.");
 		}
 
-		DeleteDirectory(staging, attempts);
-		DeleteDirectory(old, attempts);
-		CreateStaging(staging, tokenOwner);
+		Directory.CreateDirectory(staging);
 		CopyTree(source, staging);
-
-		// Complete: from now on it takes the data directory's permissions, so the service account can run it and a later sync can replace it.
-		var inherited = new DirectorySecurity();
-		inherited.SetAccessRuleProtection(isProtected: false, preserveInheritance: false);
-		new DirectoryInfo(staging).SetAccessControl(inherited);
 
 		if (Directory.Exists(target))
 		{
@@ -117,8 +102,25 @@ public static class ServiceSetup
 		}
 		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 		{
-			// The new copy is in place; the next sync or the uninstall removes the old one.
+			// The new copy is in place; the next sync, tray start or uninstall removes the old one.
 		}
+	}
+
+	/// <summary>
+	/// Repairs what an interrupted sync left (as the tray user: at tray start and before every sync): <c>server</c> missing but <c>server.old</c>
+	/// present means the swap stopped between its two renames, so <c>server.old</c> (the last working copy) goes back; <c>server.new</c> and
+	/// <c>server.old</c> are deleted.
+	/// </summary>
+	public static void CleanUpServerLeftovers(DataDirectory dataDir, int attempts = RetryAttempts)
+	{
+		var old = dataDir.Server + ".old";
+		if (!Directory.Exists(dataDir.Server) && Directory.Exists(old))
+		{
+			Directory.Move(old, dataDir.Server);
+		}
+
+		DeleteDirectory(dataDir.Server + ".new", attempts);
+		DeleteDirectory(old, attempts);
 	}
 
 	/// <summary>Uninstall: deletes the service's copy of the Server and leftovers of an interrupted sync; settings and logs are kept.</summary>
@@ -137,20 +139,56 @@ public static class ServiceSetup
 		}
 	}
 
-	/// <summary>
-	/// "Install service…": stop the service if it runs (its files are in use), sync its copy of the Server, create or reconfigure it, then start it
-	/// when it was running or is new. A failed sync leaves the service as it was (old binary path) and starts it again if it ran.
-	/// </summary>
-	/// <param name="stopIfRunning">Stops a running service and waits; true when it was running.</param>
-	/// <param name="sync">Syncs the service's copy of the Server.</param>
-	/// <param name="createOrReconfigure">Creates or reconfigures the service; true when it was created (did not exist).</param>
-	/// <param name="start">Starts the service.</param>
-	public static void RunInstallSequence(Func<bool> stopIfRunning, Action sync, Func<bool> createOrReconfigure, Action start)
+	/// <summary>Elevated install: refuses unless the tray already copied the Server to <c>&lt;DataDir&gt;\server</c> (a real folder and file, not links).</summary>
+	public static void EnsureServerCopied(DataDirectory dataDir)
 	{
-		var wasRunning = stopIfRunning();
+		var executable = ServerExecutable(dataDir.Root);
+		if (!File.Exists(executable))
+		{
+			throw new InvalidOperationException($"{executable} is missing; run Install service… from the tray menu (it copies the Server there first).");
+		}
+
+		foreach (var path in new[] { dataDir.Server, executable })
+		{
+			if (File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
+			{
+				throw new InvalidOperationException($"{path} is a link; delete it and retry.");
+			}
+		}
+	}
+
+	/// <summary>
+	/// The tray side of <c>--admin install|uninstall</c>: every file operation runs here, as the user, so the elevated instance never copies,
+	/// renames or deletes anything in a folder the user can write (it only does SCM, LSA and DACL work).
+	/// Install: stop the service if it runs (the user has SERVICE_STOP; its files are in use), <paramref name="syncServer"/>, run the elevated
+	/// install (which starts a new service), then start again a service that was running, whatever the elevated step did. A failed sync is not
+	/// elevated. Uninstall: the elevated instance deletes the service; on success <paramref name="deleteServer"/> removes its copy of the Server.
+	/// </summary>
+	/// <returns>The elevated instance's exit code (null: UAC declined).</returns>
+	public static async Task<int?> RunAdminCommandAsync(string command, IServiceControl service, Action syncServer, Action deleteServer, Func<string, Task<int?>> runElevated)
+	{
+		if (command == AdminCommand.Uninstall)
+		{
+			var uninstalled = await runElevated(command);
+			if (uninstalled == 0)
+			{
+				deleteServer();
+			}
+
+			return uninstalled;
+		}
+
+		var wasRunning = service.GetState() is ServiceState.Running or ServiceState.Starting;
+		int? exitCode;
 		try
 		{
-			sync();
+			if (wasRunning)
+			{
+				await service.StopAsync(CancellationToken.None);
+			}
+
+			syncServer();
+			exitCode = await runElevated(command);
 		}
 		catch
 		{
@@ -158,21 +196,23 @@ public static class ServiceSetup
 			{
 				try
 				{
-					start();
+					await service.StartAsync(CancellationToken.None);
 				}
 				catch (Exception)
 				{
-					// The sync error is the one to show; the tray status shows the service stopped.
+					// The first error is the one to show; the tray status shows the service stopped.
 				}
 			}
 
 			throw;
 		}
 
-		if (createOrReconfigure() || wasRunning)
+		if (wasRunning && service.GetState() == ServiceState.Stopped)
 		{
-			start();
+			await service.StartAsync(CancellationToken.None);
 		}
+
+		return exitCode;
 	}
 
 	/// <summary>Always quoted: the path is under the user's profile and may contain spaces (unquoted service paths are also a privilege-escalation hole).</summary>
@@ -355,20 +395,6 @@ public static class ServiceSetup
 		}
 
 		waitStopped();
-	}
-
-	/// <summary>Created with a protected DACL: SYSTEM, Administrators and <paramref name="tokenOwner"/> Full Control, nobody else.</summary>
-	private static void CreateStaging(string path, SecurityIdentifier tokenOwner)
-	{
-		var security = new DirectorySecurity();
-		security.SetSecurityDescriptorSddlForm($"D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;{tokenOwner.Value})", AccessControlSections.Access);
-		security.CreateDirectory(path);
-
-		// Deleted just before: anything else here was created by someone else in between (and may be a link or carry their permissions).
-		if (new DirectoryInfo(path).Attributes.HasFlag(FileAttributes.ReparsePoint) || DataDirectoryGuard.OwnerOf(path) != tokenOwner)
-		{
-			throw new InvalidOperationException($"{path} was created by another user; delete it and retry.");
-		}
 	}
 
 	/// <summary>Files and folders; links are skipped, never followed out of the package.</summary>

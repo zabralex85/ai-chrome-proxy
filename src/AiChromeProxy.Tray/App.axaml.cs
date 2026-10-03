@@ -49,6 +49,10 @@ public partial class App : Avalonia.Application
 		return item;
 	}
 
+	/// <summary>Product version of the service's copy of the Server; null when there is none.</summary>
+	private static string? ServiceVersion() =>
+		File.Exists(ServiceSetup.ServiceExecutable) ? FileVersionInfo.GetVersionInfo(ServiceSetup.ServiceExecutable).ProductVersion : null;
+
 	/// <summary>One window per kind: a second click brings the open one to front.</summary>
 	private static void ShowSingle<TWindow>(IClassicDesktopStyleApplicationLifetime desktop, Func<TWindow> create)
 		where TWindow : Window
@@ -73,14 +77,16 @@ public partial class App : Avalonia.Application
 		var service = new WindowsServiceControl();
 		var repository = typeof(App).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == "UpdateRepository")?.Value;
 		var updates = new UpdateOrchestrator(new VelopackUpdateSource(repository), service, UpdateOrchestrator.DefaultPendingMarker);
-		var vm = new TrayViewModel(service, AdminCommand.RunElevatedAsync, updates);
+		var admin = Program.AdminCommands(service);
+		var appVersion = typeof(App).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+		var vm = new TrayViewModel(service, admin, updates, ServiceVersion, appVersion);
 		var update = new NativeMenuItem { Command = vm.UpdateCommand };
 		var status = new NativeMenuItem { IsEnabled = false };
 		var error = new NativeMenuItem { IsEnabled = false };
 
 		void ShowRemoteAccess() => ShowSingle(desktop, () => new RemoteAccessWindow
 		{
-			DataContext = new RemoteAccessViewModel(dataDir, CloudflareHttp, service, AdminCommand.RunElevatedAsync, Environment.MachineName),
+			DataContext = new RemoteAccessViewModel(dataDir, CloudflareHttp, service, admin, Environment.MachineName),
 		});
 
 		var menu = new NativeMenu
@@ -118,6 +124,16 @@ public partial class App : Avalonia.Application
 			error.IsVisible = vm.ErrorText is not null;
 			update.Header = vm.UpdateText;
 			update.IsVisible = vm.IsUpdateAvailable;
+		}
+
+		// An update or Setup cut off between the two renames of a copy leaves the service without its folder: repair before the first status.
+		try
+		{
+			ServiceSetup.CleanUpServerLeftovers(DataDirectory.Resolve(null));
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			// The next sync retries.
 		}
 
 		vm.PropertyChanged += (_, _) => Render();

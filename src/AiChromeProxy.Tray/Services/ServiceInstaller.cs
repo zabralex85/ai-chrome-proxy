@@ -48,7 +48,10 @@ internal static partial class ServiceInstaller
 
 	private static readonly TimeSpan StopTimeout = TimeSpan.FromSeconds(30);
 
-	/// <summary>Creates (or reconfigures) the service to run as <paramref name="account"/>, then starts it.</summary>
+	/// <summary>
+	/// Creates (or reconfigures) the service to run as <paramref name="account"/> from <c>&lt;DataDir&gt;\server</c>, which the tray already
+	/// filled (as the user, before elevating); starts it when it is new. No file is copied, renamed or deleted here.
+	/// </summary>
 	public static void Install(string serviceName, string account, string password, string controlUser, DataDirectory dataDir)
 	{
 		var accountSid = ServiceSetup.Sid(account);
@@ -59,45 +62,41 @@ internal static partial class ServiceInstaller
 		// "Log on as a service" first: LogonUser(LOGON32_LOGON_SERVICE) below then fails only for bad credentials.
 		GrantLogonAsService(accountSid);
 		VerifyPassword(account, password);
-
-		// Protected before anything is copied into it.
 		ServiceSetup.PrepareDataDirectory(dataDir, accountSid, controlSid);
+		ServiceSetup.EnsureServerCopied(dataDir);
 
 		using (var manager = OpenSCManager(null, null, ScManagerConnect | ScManagerCreateService))
 		{
 			ThrowIfInvalid(manager);
 			var binaryPath = ServiceSetup.BinaryPathName(ServiceSetup.ServerExecutable(dataDir.Root));
-			ServiceSetup.RunInstallSequence(
-				() => StopIfRunning(serviceName),
-				() => SyncServer(dataDir),
-				() =>
+			bool created;
+			using (var service = CreateOrReconfigure(manager, serviceName, binaryPath, ServiceSetup.ServiceStartName(account), password, out created))
+			{
+				SetFailureActions(service);
+				GrantUserControl(service, controlSid);
+			}
+
+			// An existing service the tray stopped for the copy is started again by the tray; one that was stopped stays stopped.
+			if (created)
+			{
+				using (var controller = new ServiceController(serviceName))
 				{
-					using (var service = CreateOrReconfigure(manager, serviceName, binaryPath, ServiceSetup.ServiceStartName(account), password, out var created))
-					{
-						SetFailureActions(service);
-						GrantUserControl(service, controlSid);
-						return created;
-					}
-				},
-				() =>
-				{
-					using (var controller = new ServiceController(serviceName))
-					{
-						controller.Start();
-					}
-				});
+					controller.Start();
+				}
+			}
 		}
 	}
 
 	/// <summary>
-	/// Copies this version's <c>server\</c> (next to the running tray, in the app folder) to <c>&lt;DataDir&gt;\server</c>. Used by the
-	/// elevated install and by Velopack's install and after-update hooks (the tray user; the data directory grants them Modify).
+	/// Not elevated (the tray before <c>--admin install</c>, Velopack's install and after-update hooks): makes the data directory safe as the
+	/// settings save does, then copies this version's <c>server\</c> (next to the running tray) to <c>&lt;DataDir&gt;\server</c>.
 	/// </summary>
 	public static void SyncServer(DataDirectory dataDir)
 	{
 		using (var identity = WindowsIdentity.GetCurrent())
 		{
-			ServiceSetup.SyncServerDirectory(Path.Combine(AppContext.BaseDirectory, "server"), dataDir, identity.Owner!);
+			ServiceSetup.PrepareSettingsDirectory(dataDir, identity.User!, DataDirectoryGuard.OwnerOf, identity.Owner);
+			ServiceSetup.SyncServerDirectory(Path.Combine(AppContext.BaseDirectory, "server"), dataDir);
 		}
 	}
 
@@ -139,47 +138,10 @@ internal static partial class ServiceInstaller
 	}
 
 	/// <summary>
-	/// Marks the service for deletion, then stops it (deletion completes once it has stopped), then deletes its copy of the Server
-	/// (also when there was no service: leftovers); settings and logs are kept.
+	/// Marks the service for deletion, then stops it (deletion completes once it has stopped). Its copy of the Server is deleted by the
+	/// non-elevated caller afterwards; settings and logs are kept.
 	/// </summary>
-	public static void Uninstall(string serviceName, DataDirectory dataDir)
-	{
-		RemoveService(serviceName);
-		ServiceSetup.DeleteServerDirectory(dataDir);
-	}
-
-	/// <summary>Stops the service when it runs and waits until it has stopped (also when it was already stopping).</summary>
-	/// <returns>True when it was running (or starting).</returns>
-	private static bool StopIfRunning(string serviceName)
-	{
-		using (var controller = new ServiceController(serviceName))
-		{
-			ServiceControllerStatus status;
-			try
-			{
-				status = controller.Status;
-			}
-			catch (InvalidOperationException ex) when (ex.InnerException is Win32Exception { NativeErrorCode: ErrorServiceDoesNotExist })
-			{
-				return false;
-			}
-
-			var wasRunning = status is ServiceControllerStatus.Running or ServiceControllerStatus.StartPending;
-			if (wasRunning)
-			{
-				controller.Stop(stopDependentServices: false);
-			}
-
-			if (status != ServiceControllerStatus.Stopped)
-			{
-				controller.WaitForStatus(ServiceControllerStatus.Stopped, StopTimeout);
-			}
-
-			return wasRunning;
-		}
-	}
-
-	private static void RemoveService(string serviceName)
+	public static void Uninstall(string serviceName)
 	{
 		using (var manager = OpenSCManager(null, null, ScManagerConnect))
 		{

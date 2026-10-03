@@ -76,5 +76,5 @@ public sealed class WindowsServiceControl(string serviceName = WindowsServiceCon
 		ServiceInstaller.Install(serviceName, account, password, controlUser, DataDirectory.Resolve(null));
 
 	[ExcludeFromCodeCoverage]
-	public void Uninstall() => ServiceInstaller.Uninstall(serviceName, DataDirectory.Resolve(null));
+	public void Uninstall() => ServiceInstaller.Uninstall(serviceName);
 }

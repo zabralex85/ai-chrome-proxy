@@ -7,7 +7,14 @@ namespace AiChromeProxy.Tray.ViewModels;
 
 /// <summary>Tray menu state: service status line, Start / Stop / Restart, the elevated Install / Uninstall and "Update to vX".</summary>
 /// <param name="runElevated">Runs <c>--admin &lt;command&gt;</c> elevated; returns its exit code, or null when UAC was declined (<see cref="AdminCommand.Cancelled"/>, the dialog closed, is treated the same).</param>
-public sealed partial class TrayViewModel(IServiceControl service, Func<string, Task<int?>> runElevated, UpdateOrchestrator updates) : ObservableObject
+/// <param name="serviceVersion">Reads the product version of the service's copy of the Server (null when unknown); null turns the version line off.</param>
+/// <param name="appVersion">The tray's product version.</param>
+public sealed partial class TrayViewModel(
+	IServiceControl service,
+	Func<string, Task<int?>> runElevated,
+	UpdateOrchestrator updates,
+	Func<string?>? serviceVersion = null,
+	string? appVersion = null) : ObservableObject
 {
 	public const string MigrationText = "Run Install service… once to move the service out of the app folder (needed to install updates with Setup.exe)";
 
@@ -31,8 +38,13 @@ public sealed partial class TrayViewModel(IServiceControl service, Func<string, 
 	[NotifyPropertyChangedFor(nameof(UpdateText), nameof(IsUpdateAvailable))]
 	public partial string? UpdateVersion { get; private set; }
 
-	/// <summary>The menu's error line: the last failure, else the migration request.</summary>
-	public string? ErrorText => Error ?? (NeedsMigration ? MigrationText : null);
+	/// <summary>The service's copy of the Server is another version than the tray (a hook could not update it); null when they match.</summary>
+	[ObservableProperty]
+	[NotifyPropertyChangedFor(nameof(ErrorText))]
+	public partial string? VersionWarning { get; private set; }
+
+	/// <summary>The menu's error line: the last failure, else the migration request, else the version mismatch.</summary>
+	public string? ErrorText => Error ?? (NeedsMigration ? MigrationText : VersionWarning);
 
 	public string UpdateText => $"Update to v{UpdateVersion}";
 
@@ -47,12 +59,23 @@ public sealed partial class TrayViewModel(IServiceControl service, Func<string, 
 		_ => "Service: running",
 	};
 
+	/// <summary>The version line, when both versions are known and differ (build metadata after <c>+</c> is ignored).</summary>
+	public static string? VersionText(string? serviceVersion, string? appVersion)
+	{
+		var service = serviceVersion?.Split('+')[0];
+		var app = appVersion?.Split('+')[0];
+		return string.IsNullOrEmpty(service) || string.IsNullOrEmpty(app) || service == app
+			? null
+			: $"The service runs v{service}; the app is v{app} — run Install service… to update it";
+	}
+
 	public void Refresh()
 	{
 		try
 		{
 			State = service.GetState();
 			NeedsMigration = State != ServiceState.NotInstalled && !ServiceSetup.RunsFrom(service.GetBinaryPathName(), ServiceSetup.ServiceExecutable);
+			VersionWarning = State == ServiceState.NotInstalled || NeedsMigration || serviceVersion is null ? null : VersionText(serviceVersion(), appVersion);
 		}
 		catch (Exception ex)
 		{

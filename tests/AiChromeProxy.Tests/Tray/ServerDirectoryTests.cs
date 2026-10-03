@@ -11,8 +11,6 @@ public sealed class ServerDirectoryTests : IDisposable
 	private const string Exe = "AiChromeProxy.Server.exe";
 	private const string ServiceExe = @"C:\ProgramData\AiChromeProxy\server\AiChromeProxy.Server.exe";
 
-	private static readonly SecurityIdentifier Owner = WindowsIdentity.GetCurrent().Owner!;
-
 	private readonly string _temp = Path.Combine(Path.GetTempPath(), "aicp-tests", Guid.NewGuid().ToString("N"));
 	private readonly string _package;
 	private readonly DataDirectory _dataDir;
@@ -55,7 +53,7 @@ public sealed class ServerDirectoryTests : IDisposable
 	[Fact]
 	public void Sync_FirstTime_CopiesPackage_InheritsDataDirectoryPermissions()
 	{
-		ServiceSetup.SyncServerDirectory(_package, _dataDir, Owner, attempts: 1);
+		ServiceSetup.SyncServerDirectory(_package, _dataDir, attempts: 1);
 
 		Assert.Equal("v2", File.ReadAllText(Path.Combine(_dataDir.Server, Exe)));
 		Assert.Equal("v2", File.ReadAllText(Path.Combine(_dataDir.Server, "wwwroot", "index.html")));
@@ -76,7 +74,7 @@ public sealed class ServerDirectoryTests : IDisposable
 	{
 		WriteServer("v1", "removed.dll");
 
-		ServiceSetup.SyncServerDirectory(_package, _dataDir, Owner, attempts: 1);
+		ServiceSetup.SyncServerDirectory(_package, _dataDir, attempts: 1);
 
 		Assert.Equal("v2", File.ReadAllText(Path.Combine(_dataDir.Server, Exe)));
 		Assert.False(File.Exists(Path.Combine(_dataDir.Server, "removed.dll")));
@@ -91,12 +89,12 @@ public sealed class ServerDirectoryTests : IDisposable
 		WriteServer("v1");
 		using (new FileStream(Path.Combine(_dataDir.Server, Exe), FileMode.Open, FileAccess.Read, FileShare.Read))
 		{
-			Assert.ThrowsAny<IOException>(() => ServiceSetup.SyncServerDirectory(_package, _dataDir, Owner, attempts: 1));
+			Assert.ThrowsAny<IOException>(() => ServiceSetup.SyncServerDirectory(_package, _dataDir, attempts: 1));
 
 			Assert.Equal("v1", File.ReadAllText(Path.Combine(_dataDir.Server, Exe)));
 		}
 
-		ServiceSetup.SyncServerDirectory(_package, _dataDir, Owner, attempts: 1);
+		ServiceSetup.SyncServerDirectory(_package, _dataDir, attempts: 1);
 
 		Assert.Equal("v2", File.ReadAllText(Path.Combine(_dataDir.Server, Exe)));
 		AssertOnlyServer();
@@ -108,7 +106,7 @@ public sealed class ServerDirectoryTests : IDisposable
 		WriteServer("v1");
 		using (new FileStream(Path.Combine(_package, Exe), FileMode.Open, FileAccess.Read, FileShare.None))
 		{
-			Assert.ThrowsAny<IOException>(() => ServiceSetup.SyncServerDirectory(_package, _dataDir, Owner, attempts: 1));
+			Assert.ThrowsAny<IOException>(() => ServiceSetup.SyncServerDirectory(_package, _dataDir, attempts: 1));
 		}
 
 		Assert.Equal("v1", File.ReadAllText(Path.Combine(_dataDir.Server, Exe)));
@@ -120,7 +118,7 @@ public sealed class ServerDirectoryTests : IDisposable
 		WriteServer("v1");
 		File.Delete(Path.Combine(_package, Exe));
 
-		var ex = Assert.Throws<InvalidOperationException>(() => ServiceSetup.SyncServerDirectory(_package, _dataDir, Owner, attempts: 1));
+		var ex = Assert.Throws<InvalidOperationException>(() => ServiceSetup.SyncServerDirectory(_package, _dataDir, attempts: 1));
 
 		Assert.Contains(Exe, ex.Message, StringComparison.Ordinal);
 		Assert.Equal("v1", File.ReadAllText(Path.Combine(_dataDir.Server, Exe)));
@@ -134,7 +132,7 @@ public sealed class ServerDirectoryTests : IDisposable
 		WriteTree(_dataDir.Server + ".new", "half");
 		WriteTree(_dataDir.Server + ".old", "v0");
 
-		ServiceSetup.SyncServerDirectory(_package, _dataDir, Owner, attempts: 1);
+		ServiceSetup.SyncServerDirectory(_package, _dataDir, attempts: 1);
 
 		Assert.Equal("v2", File.ReadAllText(Path.Combine(_dataDir.Server, Exe)));
 		AssertOnlyServer();
@@ -146,7 +144,7 @@ public sealed class ServerDirectoryTests : IDisposable
 		WriteTree(_dataDir.Server + ".old", "v1");
 		File.Delete(Path.Combine(_package, Exe));
 
-		Assert.Throws<InvalidOperationException>(() => ServiceSetup.SyncServerDirectory(_package, _dataDir, Owner, attempts: 1));
+		Assert.Throws<InvalidOperationException>(() => ServiceSetup.SyncServerDirectory(_package, _dataDir, attempts: 1));
 
 		Assert.Equal("v1", File.ReadAllText(Path.Combine(_dataDir.Server, Exe)));
 		AssertOnlyServer();
@@ -162,7 +160,7 @@ public sealed class ServerDirectoryTests : IDisposable
 		ServiceSetupSecurityTests.Junction(link, outside);
 		try
 		{
-			ServiceSetup.SyncServerDirectory(_package, _dataDir, Owner, attempts: 1);
+			ServiceSetup.SyncServerDirectory(_package, _dataDir, attempts: 1);
 
 			Assert.False(Directory.Exists(Path.Combine(_dataDir.Server, "link")));
 			Assert.True(File.Exists(Path.Combine(_dataDir.Server, Exe)));
@@ -174,17 +172,54 @@ public sealed class ServerDirectoryTests : IDisposable
 	}
 
 	[Fact]
-	public void Sync_StagingNotOwnedByThisProcess_Refused()
+	public void CleanUpLeftovers_RestoresAnInterruptedSwap_DeletesStaging()
+	{
+		WriteTree(_dataDir.Server + ".old", "v1");
+		WriteTree(_dataDir.Server + ".new", "half");
+
+		ServiceSetup.CleanUpServerLeftovers(_dataDir, attempts: 1);
+
+		Assert.Equal("v1", File.ReadAllText(Path.Combine(_dataDir.Server, Exe)));
+		AssertOnlyServer();
+
+		// Nothing left over: nothing to do.
+		ServiceSetup.CleanUpServerLeftovers(_dataDir, attempts: 1);
+		ServiceSetup.CleanUpServerLeftovers(new DataDirectory(Path.Combine(_temp, "missing")), attempts: 1);
+	}
+
+	[Fact]
+	public void EnsureServerCopied_Present_Accepted()
 	{
 		WriteServer("v1");
 
-		// A group this user is in: the folder is readable (as with the real owner), but its owner is this user, not the group.
-		var users = new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null);
+		ServiceSetup.EnsureServerCopied(_dataDir);
+	}
 
-		var ex = Assert.Throws<InvalidOperationException>(() => ServiceSetup.SyncServerDirectory(_package, _dataDir, users, attempts: 1));
+	[Fact]
+	public void EnsureServerCopied_Missing_ClearMessage()
+	{
+		var ex = Assert.Throws<InvalidOperationException>(() => ServiceSetup.EnsureServerCopied(_dataDir));
 
-		Assert.Contains("created by another user", ex.Message, StringComparison.Ordinal);
-		Assert.Equal("v1", File.ReadAllText(Path.Combine(_dataDir.Server, Exe)));
+		Assert.Contains(Path.Combine(_dataDir.Server, Exe), ex.Message, StringComparison.Ordinal);
+		Assert.Contains("Install service", ex.Message, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public void EnsureServerCopied_ServerFolderIsALink_Refused()
+	{
+		var outside = Path.Combine(_temp, "outside");
+		WriteTree(outside, "v1");
+		ServiceSetupSecurityTests.Junction(_dataDir.Server, outside);
+		try
+		{
+			var ex = Assert.Throws<InvalidOperationException>(() => ServiceSetup.EnsureServerCopied(_dataDir));
+
+			Assert.Contains("is a link", ex.Message, StringComparison.Ordinal);
+		}
+		finally
+		{
+			Directory.Delete(_dataDir.Server);
+		}
 	}
 
 	[Fact]
@@ -216,52 +251,120 @@ public sealed class ServerDirectoryTests : IDisposable
 	}
 
 	[Theory]
-	[InlineData(true, false, "stop sync configure start")]
-	[InlineData(false, false, "stop sync configure")]
-	[InlineData(false, true, "stop sync configure start")]
-	public void InstallSequence_StartsWhenItRanOrIsNew(bool wasRunning, bool created, string calls)
+	[InlineData(ServiceState.Running, "stop sync elevate:install start")]
+	[InlineData(ServiceState.Starting, "stop sync elevate:install start")]
+	[InlineData(ServiceState.Stopped, "sync elevate:install")]
+	[InlineData(ServiceState.NotInstalled, "sync elevate:install")]
+	public async Task AdminInstall_UserStopsAndSyncs_ElevatedPartOnly_RestartsWhatRan(ServiceState state, string calls)
 	{
-		var log = new List<string>();
+		var service = new FakeServiceControl(state);
 
-		ServiceSetup.RunInstallSequence(
-			() => Log(log, "stop", wasRunning),
-			() => log.Add("sync"),
-			() => Log(log, "configure", created),
-			() => log.Add("start"));
+		var exitCode = await RunAdminAsync(service, AdminCommand.Install, 0);
 
-		Assert.Equal(calls, string.Join(' ', log));
+		Assert.Equal(0, exitCode);
+		Assert.Equal(calls, string.Join(' ', service.Calls));
 	}
 
 	[Theory]
-	[InlineData(true, "stop sync start")]
-	[InlineData(false, "stop sync")]
-	public void InstallSequence_SyncFails_NotReconfigured_RanBeforeStartedAgain(bool wasRunning, string calls)
+	[InlineData(null)]
+	[InlineData(AdminCommand.Cancelled)]
+	[InlineData(5)]
+	public async Task AdminInstall_DeclinedOrFailed_ServiceStartedAgain_ExitCodePassedOn(int? elevatedExitCode)
 	{
-		var log = new List<string>();
-		var error = new IOException("in use");
+		var service = new FakeServiceControl(ServiceState.Running);
 
-		var thrown = Assert.Throws<IOException>(() => ServiceSetup.RunInstallSequence(
-			() => Log(log, "stop", wasRunning),
-			() =>
-			{
-				log.Add("sync");
-				throw error;
-			},
-			() => Log(log, "configure", false),
-			() =>
-			{
-				log.Add("start");
-				throw new InvalidOperationException("start failed too");
-			}));
+		var exitCode = await RunAdminAsync(service, AdminCommand.Install, elevatedExitCode);
 
-		Assert.Same(error, thrown);
-		Assert.Equal(calls, string.Join(' ', log));
+		Assert.Equal(elevatedExitCode, exitCode);
+		Assert.Equal("stop sync elevate:install start", string.Join(' ', service.Calls));
 	}
 
-	private static bool Log(List<string> log, string call, bool result)
+	[Fact]
+	public async Task AdminInstall_SyncFails_NotElevated_StartedAgain_ErrorRethrown()
 	{
-		log.Add(call);
-		return result;
+		var service = new FakeServiceControl(ServiceState.Running);
+		var error = new IOException("in use");
+
+		var thrown = await Assert.ThrowsAsync<IOException>(() => ServiceSetup.RunAdminCommandAsync(
+			AdminCommand.Install,
+			service,
+			() =>
+			{
+				service.Calls.Add("sync");
+				throw error;
+			},
+			() => service.Calls.Add("delete"),
+			command => Elevate(service, command, 0)));
+
+		Assert.Same(error, thrown);
+		Assert.Equal("stop sync start", string.Join(' ', service.Calls));
+	}
+
+	[Fact]
+	public async Task AdminInstall_ElevationThrows_RestartFailsToo_ElevationErrorRethrown()
+	{
+		var service = new FakeServiceControl(ServiceState.Running);
+		var error = new InvalidOperationException("no UAC");
+
+		var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => ServiceSetup.RunAdminCommandAsync(
+			AdminCommand.Install,
+			service,
+			() =>
+			{
+				service.Calls.Add("sync");
+				service.FailStart = new InvalidOperationException("start failed");
+			},
+			() => service.Calls.Add("delete"),
+			_ => throw error));
+
+		Assert.Same(error, thrown);
+		Assert.Equal("stop sync start", string.Join(' ', service.Calls));
+	}
+
+	[Fact]
+	public async Task AdminUninstall_ElevatedRemovesService_ThenUserDeletesServerFolder()
+	{
+		var service = new FakeServiceControl(ServiceState.Running);
+
+		var exitCode = await RunAdminAsync(service, AdminCommand.Uninstall, 0);
+
+		Assert.Equal(0, exitCode);
+		Assert.Equal("elevate:uninstall delete", string.Join(' ', service.Calls));
+	}
+
+	[Theory]
+	[InlineData(null)]
+	[InlineData(AdminCommand.Cancelled)]
+	[InlineData(5)]
+	public async Task AdminUninstall_DeclinedOrFailed_ServerFolderKept(int? elevatedExitCode)
+	{
+		var service = new FakeServiceControl(ServiceState.Running);
+
+		var exitCode = await RunAdminAsync(service, AdminCommand.Uninstall, elevatedExitCode);
+
+		Assert.Equal(elevatedExitCode, exitCode);
+		Assert.Equal("elevate:uninstall", string.Join(' ', service.Calls));
+	}
+
+	private static Task<int?> RunAdminAsync(FakeServiceControl service, string command, int? elevatedExitCode) =>
+		ServiceSetup.RunAdminCommandAsync(
+			command,
+			service,
+			() => service.Calls.Add("sync"),
+			() => service.Calls.Add("delete"),
+			c => Elevate(service, c, elevatedExitCode));
+
+	/// <summary>The elevated instance: on success it creates (and starts) a missing service or removes it.</summary>
+	private static Task<int?> Elevate(FakeServiceControl service, string command, int? exitCode)
+	{
+		service.Calls.Add("elevate:" + command);
+		if (exitCode == 0)
+		{
+			service.State = command == AdminCommand.Uninstall ? ServiceState.NotInstalled
+				: service.State == ServiceState.NotInstalled ? ServiceState.Running : service.State;
+		}
+
+		return Task.FromResult(exitCode);
 	}
 
 	private static void WriteTree(string root, string version, string? extraFile = null)
