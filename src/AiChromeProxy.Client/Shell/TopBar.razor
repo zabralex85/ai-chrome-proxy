@@ -1,0 +1,69 @@
+@using AiChromeProxy.Client.Transport
+
+<header class="topbar" data-testid="top-bar">
+    <span class="brand" data-testid="app-name"><Icon Name="logo" Class="brand-mark" />ai-chrome-proxy</span>
+    @if (FolderName is not null)
+    {
+        <span class="crumb-sep" aria-hidden="true">/</span>
+        <span class="crumb-folder" data-testid="folder-name" title="@FolderName"><Icon Name="folder" />@FolderName</span>
+    }
+    <span class="pill pill-@State.ToString().ToLowerInvariant()" data-testid="connection-state" title="@PingTitle" role="status"><span class="dot" aria-hidden="true"></span>@Format.Connection(State)</span>
+    <button type="button" class="icon-button" data-testid="theme-toggle" data-theme-choice="@(Theme ?? "system")" title="@ThemeTitle" aria-label="@ThemeTitle" @onclick="OnToggleTheme">
+        <Icon Name="@(Theme switch { "light" => "sun", "dark" => "moon", _ => "monitor" })" />
+    </button>
+    <span class="spacer"></span>
+    <button type="button" class="icon-button" data-testid="toggle-files" title="Toggle the file tree" aria-label="Toggle the file tree"
+            aria-pressed="@(FilesOpen ? "true" : "false")" @onclick="OnToggleFiles">
+        <Icon Name="panel-left" />
+    </button>
+    <button type="button" class="icon-button" data-testid="toggle-history" title="Toggle the actions history" aria-label="Toggle the actions history"
+            aria-pressed="@(HistoryOpen ? "true" : "false")" @onclick="OnToggleHistory">
+        <Icon Name="panel-right" />
+    </button>
+    <span class="topbar-sep" aria-hidden="true"></span>
+    <span class="user" data-testid="user" title="@(User is null ? null : $"Signed in as {User}")">
+        <span class="avatar" aria-hidden="true">@Initial</span>
+        <span class="user-email">@(User ?? "…")</span>
+    </span>
+</header>
+
+@code {
+    [Parameter]
+    public string? FolderName { get; set; }
+
+    [Parameter]
+    public TransportState State { get; set; }
+
+    /// <summary>Round trip of the last ping; null before the first one or after a failed one.</summary>
+    [Parameter]
+    public long? PingMs { get; set; }
+
+    /// <summary>"light", "dark" or null (follow the system).</summary>
+    [Parameter]
+    public string? Theme { get; set; }
+
+    [Parameter]
+    public EventCallback OnToggleTheme { get; set; }
+
+    /// <summary>The Access email, "local" without Access, null while loading.</summary>
+    [Parameter]
+    public string? User { get; set; }
+
+    [Parameter]
+    public bool FilesOpen { get; set; }
+
+    [Parameter]
+    public EventCallback OnToggleFiles { get; set; }
+
+    [Parameter]
+    public bool HistoryOpen { get; set; }
+
+    [Parameter]
+    public EventCallback OnToggleHistory { get; set; }
+
+    private string PingTitle => PingMs is { } ms ? $"Ping {ms} ms" : "Ping: no answer yet";
+
+    private string ThemeTitle => $"Theme: {Theme ?? "system"} (click to change)";
+
+    private string Initial => string.IsNullOrEmpty(User) ? "?" : User[..1].ToUpperInvariant();
+}

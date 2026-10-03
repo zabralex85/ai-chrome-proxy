@@ -1,0 +1,74 @@
+@using AiChromeProxy.Client.Sync
+@implements IDisposable
+
+<footer class="status-box" data-testid="sync-status">
+    <span class="status-line status-@Tone" role="status">
+        <Icon Name="@IconName" Class="@(Engine.Phase is SyncPhase.Scanning or SyncPhase.Uploading ? "spin" : null)" />
+        <span class="status-text" data-testid="status-sync">@SyncText</span>
+    </span>
+    <button type="button" class="error-count @(Engine.Errors.Count > 0 ? "has-errors" : null)" data-testid="status-errors"
+            title="Show the errors" aria-label="@($"{Engine.Errors.Count} errors, show the list")" @onclick="OnShowErrors">
+        <Icon Name="error" Size="14" />@Engine.Errors.Count
+    </button>
+</footer>
+
+@code {
+    private readonly CancellationTokenSource _stop = new();
+
+    [Parameter, EditorRequired]
+    public SyncEngine Engine { get; set; } = null!;
+
+    [Parameter]
+    public EventCallback OnShowErrors { get; set; }
+
+    private string SyncText => Format.SyncStatus(
+        Engine.Folder,
+        Engine.Phase,
+        Engine.Files.Count(f => f.State == FileSyncState.Synced),
+        Engine.UploadDone,
+        Engine.UploadTotal,
+        Engine.NextScan - DateTimeOffset.UtcNow);
+
+    private string IconName => Engine.Folder switch
+    {
+        FolderStatus.None => "folder",
+        FolderStatus.NeedsPermission => "lock",
+        _ => Engine.Phase switch
+        {
+            SyncPhase.Synced => "check",
+            SyncPhase.Failed => "warning",
+            _ => "sync",
+        },
+    };
+
+    private string Tone => Engine.Folder == FolderStatus.NeedsPermission || Engine.Phase == SyncPhase.Failed
+        ? "warn"
+        : Engine.Folder == FolderStatus.Ready && Engine.Phase == SyncPhase.Synced ? "ok" : "muted";
+
+    public void Dispose()
+    {
+        _stop.Cancel();
+        _stop.Dispose();
+    }
+
+    protected override void OnInitialized() => _ = TickAsync();
+
+    /// <summary>Re-renders only this box once a second for the "Rescan in N s" countdown.</summary>
+    private async Task TickAsync()
+    {
+        using (var timer = new PeriodicTimer(TimeSpan.FromSeconds(1)))
+        {
+            try
+            {
+                while (await timer.WaitForNextTickAsync(_stop.Token))
+                {
+                    StateHasChanged();
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Disposed.
+            }
+        }
+    }
+}

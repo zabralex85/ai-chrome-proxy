@@ -1,0 +1,72 @@
+@using System.Globalization
+@using AiChromeProxy.Client.Sync
+@using AiChromeProxy.Client.Transport
+
+<aside class="panel panel-right" data-testid="actions-history" aria-label="Actions history">
+    <header class="panel-header"><span class="panel-title">Actions history</span></header>
+    <div class="panel-body">
+        @{
+            var entries = Engine.Activity;
+        }
+        @if (entries.Count == 0)
+        {
+            <div class="empty-state">
+                <Icon Name="history" Size="32" Class="empty-icon" />
+                <p>Nothing yet. Opened folders, sync passes, uploads and errors show up here.</p>
+            </div>
+        }
+        else
+        {
+            <ol class="history">
+                @foreach (var entry in entries)
+                {
+                    <li class="history-entry tone-@Tone(entry.Kind)" data-testid="history-entry">
+                        <Icon Name="@IconName(entry.Kind)" Size="14" />
+                        <div class="history-body">
+                            <div class="history-text">@entry.Text</div>
+                            <time datetime="@entry.At.ToString("O", CultureInfo.InvariantCulture)">@entry.At.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture)</time>
+                        </div>
+                    </li>
+                }
+            </ol>
+        }
+    </div>
+    <footer class="status-box" data-testid="connection-status">
+        <span class="status-line" role="status">
+            <span class="dot dot-@State.ToString().ToLowerInvariant()" aria-hidden="true"></span>
+            <span class="status-text">@Format.Connection(State)</span>
+        </span>
+        <span class="muted mono" title="Round trip of the last ping">@(State == TransportState.Connected && PingMs is { } ms ? $"{ms} ms" : "—")</span>
+    </footer>
+</aside>
+
+@code {
+    [Parameter, EditorRequired]
+    public SyncEngine Engine { get; set; } = null!;
+
+    [Parameter]
+    public TransportState State { get; set; }
+
+    [Parameter]
+    public long? PingMs { get; set; }
+
+    private static string IconName(SyncActivityKind kind) => kind switch
+    {
+        SyncActivityKind.FolderOpened => "folder-open",
+        SyncActivityKind.PassStarted => "play",
+        SyncActivityKind.Uploaded => "upload",
+        SyncActivityKind.Deleted => "trash",
+        SyncActivityKind.PassFinished => "check",
+        SyncActivityKind.Reconnected => "plug",
+        SyncActivityKind.AccessLost => "lock",
+        _ => "error",
+    };
+
+    private static string Tone(SyncActivityKind kind) => kind switch
+    {
+        SyncActivityKind.Error => "error",
+        SyncActivityKind.AccessLost => "warn",
+        SyncActivityKind.PassFinished => "ok",
+        _ => "info",
+    };
+}

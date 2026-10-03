@@ -1,0 +1,180 @@
+@using AiChromeProxy.Client.Sync
+
+<section class="center" aria-label="Main">
+    @* aria-activedescendant like the tree: one tab stop, arrows switch tabs, Delete closes the active one. *@
+    <div class="tabstrip" role="tablist" tabindex="0" aria-label="Open tabs" data-testid="tabs" aria-activedescendant="@TabId(Tabs.Active)" @onkeydown="OnKeyDown">
+        @foreach (var id in Tabs.Open)
+        {
+            var active = id == Tabs.Active;
+            var kind = TabSet.IsFile(id) ? Format.FileKind(id) : null;
+            <div id="@TabId(id)" role="tab" class="tab @(active ? "active" : null)" aria-selected="@(active ? "true" : "false")" aria-controls="tab-panel"
+                 data-testid="@TestId(id)" data-path="@(kind is null ? null : id)" title="@(kind is null ? null : id)" @onclick="() => ChangeAsync(() => Tabs.Show(id))">
+                @switch (id)
+                {
+                    case TabSet.Welcome:
+                        <Icon Name="logo" Class="kind-welcome" />
+                        <span class="tab-label">Welcome</span>
+                        break;
+                    case TabSet.Errors:
+                        <Icon Name="error" Class="kind-error" />
+                        <span class="tab-label">Errors</span>
+                        break;
+                    default:
+                        <Icon Name="@("file-" + kind)" Class="@("kind-" + kind)" />
+                        <span class="tab-label">@FileName(id)</span>
+                        break;
+                }
+                @if (id != TabSet.Welcome)
+                {
+                    <button type="button" class="tab-close" tabindex="-1" aria-label="@($"Close {Label(id)}")" title="Close"
+                            @onclick="() => ChangeAsync(() => Tabs.Close(id))" @onclick:stopPropagation="true">
+                        <Icon Name="close" Size="14" />
+                    </button>
+                }
+            </div>
+        }
+        <span class="tabstrip-fill"></span>
+    </div>
+
+    <div id="tab-panel" class="tab-panel" role="tabpanel" aria-labelledby="@TabId(Tabs.Active)" data-testid="main">
+        @switch (Tabs.Active)
+        {
+            case TabSet.Welcome:
+                <section class="welcome" data-testid="welcome">
+                    <div class="welcome-mark"><Icon Name="logo" Size="40" /></div>
+                    <h1>ai-chrome-proxy</h1>
+                    <p class="lead">Work on the repository in this browser with Claude Code running on your home server. The folder you open here is mirrored to the server and kept in sync.</p>
+                    <ol class="steps">
+                        <li>
+                            <span class="step-number">1</span>
+                            <div><strong>Open folder</strong><p>Pick the repository folder in the file tree. Secrets (<code>.env</code>, keys) and build output are never sent.</p></div>
+                        </li>
+                        <li>
+                            <span class="step-number">2</span>
+                            <div><strong>Wait for the sync</strong><p>The status under the file tree shows the progress; later edits follow within about 10 seconds.</p></div>
+                        </li>
+                        <li>
+                            <span class="step-number">3</span>
+                            <div><strong>Chat</strong><p>Talking to Claude about the code arrives in the next update.</p></div>
+                        </li>
+                    </ol>
+                </section>
+                break;
+            case TabSet.Errors:
+                var errors = Engine.Errors;
+                <section class="errors" data-testid="error-list">
+                    <h1>Errors <span class="count">@errors.Count</span></h1>
+                    @if (errors.Count == 0)
+                    {
+                        <p class="muted">No errors.</p>
+                    }
+                    else
+                    {
+                        <ul>
+                            @foreach (var error in errors)
+                            {
+                                <li><Icon Name="error" Class="kind-error" /><span>@error</span></li>
+                            }
+                        </ul>
+                    }
+                </section>
+                break;
+            default:
+                var file = Engine.FileAt(Tabs.Active);
+                <section class="file-details" data-testid="file-details">
+                    <div class="file-heading">
+                        <Icon Name="@("file-" + Format.FileKind(Tabs.Active))" Size="32" Class="@("kind-" + Format.FileKind(Tabs.Active))" />
+                        <div>
+                            <h1>@FileName(Tabs.Active)</h1>
+                            <div class="mono muted">@Tabs.Active</div>
+                        </div>
+                    </div>
+                    @if (file is null)
+                    {
+                        <p class="muted">This file is no longer in the folder.</p>
+                    }
+                    else
+                    {
+                        <dl>
+                            <dt>Size</dt>
+                            <dd>@Format.Bytes(file.Size) <span class="muted">(@Format.Count(file.Size) bytes)</span></dd>
+                            <dt>SHA-256</dt>
+                            <dd class="mono">@(file.Sha256 ?? "—")</dd>
+                            <dt>Sync state</dt>
+                            <dd>
+                                <span class="state state-@file.State.ToString().ToLowerInvariant()">@StateText(file.State)</span>
+                                @if (file.Error is not null)
+                                {
+                                    <span class="state-error">@file.Error</span>
+                                }
+                            </dd>
+                        </dl>
+                        <p class="muted">The file viewer comes with the code navigator.</p>
+                    }
+                </section>
+                break;
+        }
+    </div>
+
+    <div class="chat">
+        <textarea data-testid="chat-input" rows="2" disabled aria-label="Message to Claude" placeholder="Chat with Claude arrives in the next update"></textarea>
+        <button type="button" class="send" disabled title="Send" aria-label="Send"><Icon Name="send" /></button>
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired]
+    public SyncEngine Engine { get; set; } = null!;
+
+    /// <summary>Owned by the page (the tree and the error count open tabs too).</summary>
+    [Parameter, EditorRequired]
+    public TabSet Tabs { get; set; } = null!;
+
+    /// <summary>Raised after every tab change so the page re-renders (the tree highlights the active file).</summary>
+    [Parameter]
+    public EventCallback OnChanged { get; set; }
+
+    private static string FileName(string path) => path[(path.LastIndexOf('/') + 1)..];
+
+    private static string Label(string id) => id switch
+    {
+        TabSet.Welcome => "Welcome",
+        TabSet.Errors => "Errors",
+        _ => FileName(id),
+    };
+
+    private static string TestId(string id) => id switch
+    {
+        TabSet.Welcome => "tab-welcome",
+        TabSet.Errors => "tab-errors",
+        _ => "tab-file",
+    };
+
+    private static string StateText(FileSyncState state) => state switch
+    {
+        FileSyncState.Synced => "Synced",
+        FileSyncState.Pending => "Pending upload",
+        FileSyncState.TooLarge => "Too large (over 20 MB), not synced",
+        _ => "Error",
+    };
+
+    private string TabId(string id) => $"tab-{Tabs.Open.ToList().IndexOf(id)}";
+
+    private Task OnKeyDown(KeyboardEventArgs e) => ChangeAsync(() =>
+    {
+        if (e.Key == "Delete")
+        {
+            Tabs.Close(Tabs.Active);
+        }
+        else
+        {
+            Tabs.OnKey(e.Key);
+        }
+    });
+
+    private Task ChangeAsync(Action change)
+    {
+        change();
+        return OnChanged.InvokeAsync();
+    }
+}

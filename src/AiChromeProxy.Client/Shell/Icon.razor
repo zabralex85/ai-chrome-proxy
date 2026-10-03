@@ -1,0 +1,126 @@
+<svg class="icon @Class" width="@Size" height="@Size" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+    @switch (Name)
+    {
+        case "logo":
+            <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
+            <path d="M4.5 6l2 2-2 2M8.5 10.5h3" />
+            break;
+        case "folder":
+            <path d="M1.5 3.5h4.5l1.5 1.5h7v8h-13z" />
+            break;
+        case "folder-open":
+            <path d="M1.5 12.5v-9h4.5l1.5 1.5h6v2M1.5 12.5l2-5.5h11l-2 5.5z" />
+            break;
+        case "chevron-right":
+            <path d="M6 4l4 4-4 4" />
+            break;
+        case "chevron-down":
+            <path d="M4 6l4 4 4-4" />
+            break;
+        case "sun":
+            <circle cx="8" cy="8" r="3" />
+            <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.5 1.5M11.5 11.5L13 13M3 13l1.5-1.5M11.5 4.5L13 3" />
+            break;
+        case "moon":
+            <path d="M13 9.5A5.5 5.5 0 1 1 6.5 3a4.5 4.5 0 0 0 6.5 6.5z" />
+            break;
+        case "monitor":
+            <rect x="1.5" y="2.5" width="13" height="9" rx="1" />
+            <path d="M5.5 14h5M8 11.5V14" />
+            break;
+        case "warning":
+            <path d="M8 1.5l6.5 12h-13zM8 6v3.5M8 11.5v.5" />
+            break;
+        case "error":
+            <circle cx="8" cy="8" r="6.5" />
+            <path d="M5.75 5.75l4.5 4.5M10.25 5.75l-4.5 4.5" />
+            break;
+        case "check":
+            <path d="M3 8.5l3 3 7-7" />
+            break;
+        case "sync":
+            <path d="M13 6.5A5 5 0 0 0 3.6 5M3 9.5A5 5 0 0 0 12.4 11M3.5 2.5V5H6M12.5 13.5V11H10" />
+            break;
+        case "lock":
+            <rect x="3" y="7" width="10" height="7" rx="1" />
+            <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
+            break;
+        case "close":
+            <path d="M4 4l8 8M12 4l-8 8" />
+            break;
+        case "send":
+            <path d="M2 8l12-5.5L10.5 14 8 9zM8 9l6-6.5" />
+            break;
+        case "upload":
+            <path d="M8 11V2.5M4.5 6L8 2.5 11.5 6M2.5 13.5h11" />
+            break;
+        case "trash":
+            <path d="M2.5 4h11M6 4V2.5h4V4M4 4l.75 9.5h6.5L12 4" />
+            break;
+        case "plug":
+            <path d="M6 1.5v3M10 1.5v3M4 4.5h8v2.5a4 4 0 0 1-8 0zM8 11v3.5" />
+            break;
+        case "play":
+            <path d="M5 3l8 5-8 5z" />
+            break;
+        case "flag":
+            <path d="M3.5 14.5v-12M3.5 3h9l-2 3 2 3h-9" />
+            break;
+        case "history":
+            <path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.5v2.5H5M8 5v3l2 1.5" />
+            break;
+        case "panel-left":
+            <rect x="1.5" y="2.5" width="13" height="11" rx="1" />
+            <path d="M6 2.5v11" />
+            break;
+        case "panel-right":
+            <rect x="1.5" y="2.5" width="13" height="11" rx="1" />
+            <path d="M10 2.5v11" />
+            break;
+        case "chat":
+            <path d="M2.5 3h11v7.5h-6l-3 2.5v-2.5h-2z" />
+            break;
+        case "file-code":
+            <path d="@FileOutline" />
+            <path d="M6.5 8.5L5 10l1.5 1.5M9.5 8.5L11 10l-1.5 1.5" />
+            break;
+        case "file-web":
+            <path d="@FileOutline" />
+            <circle cx="8" cy="10.25" r="2.25" />
+            <path d="M5.75 10.25h4.5" />
+            break;
+        case "file-data":
+            <path d="@FileOutline" />
+            <path d="M6.5 7.75h-.75v1.5L5.25 10l.5.75v1.5h.75M9.5 7.75h.75v1.5l.5.75-.5.75v1.5H9.5" />
+            break;
+        case "file-doc":
+            <path d="@FileOutline" />
+            <path d="M5.5 8h5M5.5 10h5M5.5 12h3" />
+            break;
+        case "file-image":
+            <path d="@FileOutline" />
+            <circle cx="6.25" cy="8.25" r=".75" />
+            <path d="M5 12.5l2-2.5 1.5 1.5 1-1 1.5 2z" />
+            break;
+        default:
+            <path d="@FileOutline" />
+            break;
+    }
+</svg>
+
+@code {
+    private const string FileOutline = "M4 1.5h5l3 3v10H4zM9 1.5v3h3";
+
+    /// <summary>
+    /// logo, folder, folder-open, chevron-right/down, sun, moon, monitor, warning, error, check, sync, lock, close, send, upload, trash,
+    /// plug, play, flag, history, panel-left/right, chat, file-code/web/data/doc/image; anything else draws a plain file.
+    /// </summary>
+    [Parameter, EditorRequired]
+    public string Name { get; set; } = string.Empty;
+
+    [Parameter]
+    public int Size { get; set; } = 16;
+
+    [Parameter]
+    public string? Class { get; set; }
+}

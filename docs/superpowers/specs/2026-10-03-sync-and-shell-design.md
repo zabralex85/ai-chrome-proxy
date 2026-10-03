@@ -26,13 +26,30 @@ In Chrome on the locked-down machine the user clicks **Open folder**, picks the 
 
 ## UI (the shell)
 
-- **Title bar:** app name, picked folder name, connection pill (Connected / Reconnecting… / Offline) with ping latency on hover; theme toggle.
-- **Activity bar:** Explorer (active); Chat and Search icons shown disabled with "coming soon" tooltips.
-- **Explorer sidebar:** **Open folder** button (or the folder name with **Change** and a **Restore access** button when permission is lost); sync summary (files synced / total, bytes, last sync time, progress bar while uploading); the file tree from the manifest (collapsible folders, file icons by extension, sync badge per file: synced / pending / too large / error); excluded items are not shown.
-- **Editor area:** welcome page when nothing is selected (what the app does, the three steps: open folder → wait for sync → chat soon); selecting a file shows its metadata (path, size, hash, sync state) — the viewer comes with the code navigator sub-project.
-- **Status bar:** connection state, sync state ("Synced 1 234 files", "Uploading 12/80", "Rescan in 7 s"), errors count with a click-to-open list.
-- Keyboard: tree navigable with arrows/Enter; focus styles visible; colours meet WCAG AA contrast in both themes.
-- Layout works from 1024 px wide; the sidebar is resizable (drag) and collapsible.
+Layout from the owner's sketch (2026-10-03):
+
+```
++------------------------------------------------------------------+
+| folder · connection pill · theme toggle                   user ▾ |
++-----------+------------------------------------+-----------------+
+| file tree | [Welcome] [file.cs] [...] tabs     | Actions history |
+|           |                                    |                 |
+|           |  code / chat session / diagrams    |                 |
+|           |                                    |                 |
+|           +------------------------------------+                 |
++-----------+  chat input                        +-----------------+
+| status    |                                    | status 2        |
++-----------+------------------------------------+-----------------+
+```
+
+- **Top bar:** app name, picked folder name, connection pill (Connected / Reconnecting… / Offline, ping latency in its tooltip), theme toggle (system → light → dark, stored in `localStorage`), and on the right the user: the Access email from `GET /cdn-cgi/access/get-identity` (same origin, served by Cloudflare Access; on failure or in Development shows "local").
+- **Left — file tree:** **Open folder** button (or the folder name with **Change**, and **Restore access** when permission is lost); sync summary (files synced / total, progress bar while uploading); the tree from the manifest (collapsible folders, file icons by extension, a sync badge per file: synced / pending / too large / error); excluded items are not shown. Resizable and collapsible.
+- **Centre — tabs + main area:** a **Welcome** tab (what the app does; open folder → wait for sync → chat soon) and one tab per opened file (click in the tree opens or focuses its tab; tabs closable). In 3a a file tab shows the file's metadata (path, size, hash, sync state); the code view, chat sessions and diagrams arrive in later sub-projects as more tab kinds.
+- **Centre bottom — chat input:** a multi-line input with a send button, disabled in 3a with the placeholder "Chat with Claude arrives in the next update".
+- **Right — Actions history:** newest first, timestamped entries of what happened: folder opened, sync started / finished (n files, bytes, duration), uploaded / deleted files (grouped per sync pass), errors (with the server message), reconnects. Capped at the last 500 entries. Later sub-projects add Claude's actions here. Resizable and collapsible.
+- **Left bottom — status:** sync state: "Synced 1 234 files", "Uploading 12/80", "Rescan in 7 s", "Access needed"; an error count that opens the error list in the main area when clicked.
+- **Right bottom — status 2:** connection and agent state: Connected / Reconnecting… / Offline with the ping latency; later sub-projects add Claude's state (idle / working…, session cost).
+- Keyboard: tree and tabs navigable with arrows/Enter; visible focus; WCAG AA contrast in both themes. Works from 1024 px wide.
 
 ## Server
 
