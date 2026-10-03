@@ -831,6 +831,25 @@ public sealed class SyncEngineTests : IDisposable
 	}
 
 	[Fact]
+	public async Task SendFailsWhileDisconnecting_ProblemIsConnectionLost()
+	{
+		_folder.Write("a.txt", "a");
+		await OpenAsync();
+		_server.Transport.Reply = async request =>
+		{
+			// SignalR throws this when the connection drops between the state check and the send.
+			_server.Transport.SetState(TransportState.Reconnecting);
+			throw new InvalidOperationException("The 'SendCoreAsync' method cannot be called if the connection is not active");
+		};
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(SyncEngine.ConnectionLost, _engine.Problem);
+		Assert.Contains(_engine.Activity, a => a.Text == SyncEngine.ConnectionLost);
+		Assert.DoesNotContain(_engine.Activity, a => a.Text.Contains("SendCoreAsync", StringComparison.Ordinal));
+	}
+
+	[Fact]
 	public async Task FolderChangedWhileOpening_OldCycleStops_NewFolderSyncedUnderItsName()
 	{
 		_folder.Write("a.txt", "a");

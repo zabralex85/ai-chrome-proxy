@@ -46,6 +46,8 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 	/// </summary>
 	public const int MaxUploadsInFlight = 16;
 
+	public const string ConnectionLost = "Connection lost — reconnecting…";
+
 	public static readonly TimeSpan ScanInterval = TimeSpan.FromSeconds(10);
 	public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
 
@@ -382,7 +384,8 @@ public sealed class SyncEngine(ITransport transport, IFolderAccess folder, TimeP
 			{
 				// The server may have lost the session (reconnect, restart): start over with a full manifest.
 				_repo = null;
-				Problem = Blocked ? $"{ex.Message} Sync is paused: change the folder or restore access." : ex.Message;
+				var message = transport.State != TransportState.Connected ? ConnectionLost : ex.Message;
+				Problem = Blocked ? $"{message} Sync is paused: change the folder or restore access." : message;
 				Phase = SyncPhase.Failed;
 			}
 		}
