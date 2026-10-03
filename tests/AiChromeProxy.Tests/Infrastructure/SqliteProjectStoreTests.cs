@@ -94,6 +94,20 @@ public sealed class SqliteProjectStoreTests : IDisposable
 	}
 
 	[Fact]
+	public void Settings_AgentKeys_ListValueRoundTrips()
+	{
+		var store = Create();
+		store.SaveSettings("r", new ProjectSettings { AgentPermissions = "settings", AgentModel = "opus", AgentAllowedTools = ["Bash(ls)", "Read"] });
+
+		var read = Create().GetSettings("r");
+
+		Assert.Equal("settings", read.AgentPermissions);
+		Assert.Equal("opus", read.AgentModel);
+		Assert.Equal(["Bash(ls)", "Read"], read.AgentAllowedTools);
+		Assert.Null(read.Extra);
+	}
+
+	[Fact]
 	public void Defaults_DataDirOrContentRoot_ConfiguredWins()
 	{
 		var dataDir = new DataDirectory(@"C:\data");
