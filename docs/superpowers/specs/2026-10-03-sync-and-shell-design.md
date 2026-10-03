@@ -66,7 +66,7 @@ Manual checklist (`docs/sync.md`): pick a real repo in Chrome; first sync time a
 
 ## Known limitations
 
-A case-only rename keeps the old casing on the mirror. Two folders with the same name share one mirror folder. Requires Chrome 123+ (`light-dark()`).
+A case-only rename keeps the old casing on the mirror. Two folders with the same name share one mirror folder. Requires Chrome 123+ (`light-dark()`). The periodic full manifest no longer overwrites server edits: see the [back channel design](2026-10-03-back-channel-design.md).
 
 ## Done when
 

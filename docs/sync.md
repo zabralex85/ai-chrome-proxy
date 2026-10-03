@@ -1,6 +1,6 @@
-# Sync (one way: browser → home server)
+# Sync (browser ⇄ home server)
 
-The folder you open in Chrome is mirrored to the home server and kept in sync. Nothing is written back to the folder yet (that is sub-project 3b). Design: [spec](superpowers/specs/2026-10-03-sync-and-shell-design.md).
+The folder you open in Chrome is mirrored to the home server and kept in sync. Edits made on the server (by Claude or by hand) come back to the folder (the [back channel](#back-channel)). Design: [sync and shell](superpowers/specs/2026-10-03-sync-and-shell-design.md), [back channel](superpowers/specs/2026-10-03-back-channel-design.md).
 
 Requires **Chrome 123 or newer** (File System Access API; the theme uses CSS `light-dark()`). The browser code is strict TypeScript (`src/AiChromeProxy.Client/Scripts`) compiled by `dotnet build`; no Node.js is needed.
 
@@ -38,9 +38,27 @@ Requires **Chrome 123 or newer** (File System Access API; the theme uses CSS `li
 | `sync.manifest` → `sync.need` | client → server → client | `{repo, entries[{path, size, sha256}], final, keep?[]}` (pages of ≤ 500 entries and ≤ 24 000 bytes; `keep` pages follow the entry pages and count toward the same limits) → `{repo, paths[]}`. `keep` (optional) lists what the browser could not sync but the mirror must keep: file paths, and folder prefixes ending in `/`; nothing is uploaded for them |
 | `sync.delta` → `sync.need` | client → server → client | `{repo, upserts[{path, size, sha256}], deletes[]}` → `{repo, paths[]}` |
 | `sync.chunk` → `sync.stored` | client → server → client | `{repo, path, offset, data, last, sha256?}` → `{repo, path}` (only the last chunk is answered; when an earlier chunk of the upload failed, the rest is dropped and the last chunk gets that first error). `data` is **base64url without padding** (`-` and `_`, no `+`, `/` or `=`), at most 16 KB raw, so a chunk stays well under SignalR's message limit |
+| `sync.opened` (reply to `sync.open`) | server → client | `{repo, settings?}` — the project settings |
+| `sync.remote` | server → client | `{repo, changes[{path, sha256?, size, base?}]}` (≤ 500 changes and ≤ 24 000 bytes per page); `sha256` is absent for a deletion, `base` is the last agreed hash |
+| `sync.fetch` → `sync.data` | client → server → client | `{repo, path, offset}` → `{repo, path, offset, data, last, sha256?}` (≤ 16 KB raw, base64url; `sha256` on the last chunk; `not_found` when the file is gone) |
+| `sync.ack` | client → server → client | `{repo, path, sha256?}`; echoed back once the change is applied |
+| `project.settings.get` / `project.settings.set` → `project.settings` | client → server → client | `{repo}` / `{repo, settings}` → `{repo, settings}` |
 | `error` | server → client | `{code, message?}` with the request's `correlationId`; `code` is `bad_request`, `not_found`, `too_large`, `unknown_type` or `internal` |
 
 After the last manifest page the server deletes mirror files that are neither in the manifest nor covered by `keep` (an exact path or a kept folder prefix, ignoring case; an invalid `keep` entry is refused with `bad_request`). The browser sends the full manifest on every new session (first sync, page reload, reconnect, folder change) and then every 10 minutes (cheap: the server caches hashes), deltas in between. The server refuses (`bad_request`) an empty manifest (no entries and no `keep`), and a delta that would delete every file, while the mirror has files: an empty folder over a non-empty mirror is never applied (the explorer shows the message with **Change folder** and **Restore access**). More than 20 000 files waiting for upload is refused with `too_large`.
+
+## Back channel
+
+The server keeps, per file, a **base**: the last SHA-256 both sides agreed on, in SQLite (WAL) at `<DataDir>icp.db` (dev: `dataicp.db` under the content root; `Projects:Database` overrides). Each file is decided three ways from the browser's hash, the mirror's hash and the base: equal → in sync; the mirror still at the base → the browser's change is uploaded (or deleted); the browser still at the base → the server's change is pushed; both changed → pushed as a conflict candidate. Before a repo's first full manifest after upgrading, the browser wins as in 3a; afterwards the three-way rule applies. Bases survive a service restart.
+
+1. A `FileSystemWatcher` on the mirror (500 ms quiet, at most 3 s) notices a server edit or delete and pushes `sync.remote`.
+2. The browser fetches the file (`sync.fetch`), checks the hash, re-hashes its own file after the fetch and writes only if the file is still the agreed version; then it sends `sync.ack`. If the file changed meanwhile, it is a **conflict**.
+3. A conflict opens in the **Conflict** tab (server text preview up to 256 KB): **Keep mine** uploads the browser's version, **Take server's** writes the server's.
+4. Writing needs the browser's write permission. Without it the Explorer shows "N server changes — Allow writing"; one click grants it. With **Apply server changes automatically** off it shows "N server changes waiting — **Apply all**" (or **Apply** per change).
+5. Excluded files (built-ins, `.gitignore`, the project's extra excludes) are never deleted, pushed or written on either side: build output on the mirror (`bin/`, `obj/`) stays there.
+6. An upload whose mirror file changed meanwhile is not committed; the server pushes the new version instead.
+
+**Project settings** (gear in the top bar, a tab): *extra excludes* (`.gitignore` syntax, applied after the built-ins and the `.gitignore`; they cannot re-include a built-in) and *Apply server changes automatically* (default on). Stored on the server per repo (`project.settings.get/set`); unknown keys are kept.
 
 ## What is never sent
 
@@ -63,7 +81,7 @@ A file on the mirror is deleted only when a scan positively saw it absent. A fil
 - If the folder looks empty (or access was lost) while files are known, the pass is refused and nothing is deleted.
 - After a **page reload** the first pass sends the full manifest with its keep list, so files deleted while the page was closed disappear from the mirror at once, even while something else is unreadable.
 - A file whose upload failed and that is then deleted is deleted on the mirror too. A kept file (unreadable, too large) that is later deleted is deleted on the mirror with the next scan.
-- Every 10 minutes the full manifest is sent again, so nothing a delta could not see (for example a file added to the mirror on the server) stays there for long.
+- Every 10 minutes the full manifest is sent again, so nothing a delta could not see stays out of sync; a server edit is no longer overwritten by it, it is pushed back (see [Back channel](#back-channel)).
 - A file whose upload keeps failing is retried only after it changes, or after **5 minutes**; meanwhile it shows its error and is not re-sent every 10 s. A transient server error (`internal`) is retried on the next scan.
 - A reconnect in the middle of an upload ends the pass; the next scan starts over. Losing access to the folder in the middle of the uploads ends the pass too ("Access to the folder was lost; click Restore access."), without marking the remaining files as failed.
 
@@ -71,7 +89,10 @@ A file on the mirror is deleted only when a scan positively saw it absent. A fil
 
 - **Case-only rename:** renaming `readme.md` to `README.md` changes nothing on the mirror, which keeps the old casing (it is case-insensitive and already has the content).
 - **Same folder name:** two folders with the same name (after sanitizing) share one mirror folder, and each sync deletes the other's files. Open one at a time, or rename a folder.
-- One folder at a time; one-way only (edits made on the server are overwritten or deleted by the next sync until 3b adds the back channel).
+- **Check-then-write window:** the browser writes a pushed change if its file is still the agreed version; a save in the few milliseconds between that check and the write is lost.
+- **Upload commit window:** a mirror file changing in the milliseconds between the server's check and the commit of an upload is not detected (the next pass pushes it as a conflict candidate).
+- **Conflicts show text only;** the preview is the server's text only.
+- One folder at a time.
 
 ## Where the mirror lives
 
@@ -140,9 +161,19 @@ The browser code (`fsaccess.ts`) has no automated tests; run this before a relea
 - [ ] Close the tab, delete a synced file, lock another one exclusively, reopen and **Restore access**: the deleted file disappears from the mirror within ~10 s, the locked one stays.
 - [ ] Add a large folder to the root `.gitignore` (e.g. `dist/` with thousands of files): the next scan is about as fast as before it existed, and nothing from it reaches the mirror.
 - [ ] A repository with a submodule: its `.git` file is neither listed as an error nor synced.
-- [ ] Leave the page open 10+ minutes, put an extra file into the mirror folder on the server: it is deleted within ~10 minutes (the periodic full manifest).
+- [ ] Leave the page open 10+ minutes, put an extra file into the mirror folder on the server: it appears in the folder (the back channel), it is not deleted.
 - [ ] Revoke access (site settings → File System) while a first sync of many files uploads: the pass stops with "Access to the folder was lost; click Restore access."; after **Restore access** the remaining files upload at once (not after 5 minutes).
 - [ ] Change a file while it uploads (a large file, edit and save mid-upload): the upload fails once and the next scan uploads one consistent version.
 - [ ] Switch to another tab and back, and focus the window: one rescan per event, none while the tab is hidden, and none after the app is closed.
 - [ ] Delete the folder's contents (or move the folder away) while the page is open: the pass is refused ("The folder looks empty; nothing was deleted…") and the mirror keeps its files.
 - [ ] The error count in the left status box opens the Errors tab.
+
+**Back channel**
+
+- [ ] Edit a file on the server (with write access granted): it changes in the folder within ~5 s; delete a file on the server: it is deleted in the folder.
+- [ ] Edit the same file in the folder and on the server before a sync: the **Conflict** tab opens; **Keep mine** leaves the folder's version (and the mirror gets it), **Take server's** overwrites the folder file. Repeat for each button.
+- [ ] Run `dotnet build` in the mirror: `bin/` and `obj/` stay there and are not pushed to the folder.
+- [ ] Without write access (new tab, no permission): the Explorer shows "N server changes — Allow writing"; after **Allow writing** the changes are applied.
+- [ ] Turn **Apply server changes automatically** off in Project settings: a server edit waits ("N server changes waiting — Apply all") until **Apply all**.
+- [ ] Add an extra exclude in Project settings (e.g. `*.log`): such a file on the mirror is neither pushed nor deleted.
+- [ ] Restart the service: no conflict appears and nothing is overwritten (the bases persist in `aicp.db`).
