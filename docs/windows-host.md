@@ -15,7 +15,7 @@ Remote access (Cloudflare Tunnel + Cloudflare Access) is set up by the tray: [Re
 | Settings | `%ProgramData%\AiChromeProxy\appsettings.json` |
 | Logs | `%ProgramData%\AiChromeProxy\logs\server-YYYYMMDD.clef` (one JSON event per line, daily, 14 files kept) |
 
-The data folder `%ProgramData%\AiChromeProxy` therefore holds `appsettings.json`, `logs\` and `server\`. `server.new\` and `server.old\` exist only while a copy is being swapped in (leftovers of an interrupted copy are removed by the next one). The service's copy is refreshed by **Install service…**, by `Setup.exe` and by every update; never edit files in it.
+The data folder `%ProgramData%\AiChromeProxy` therefore holds `appsettings.json`, `logs\` and `server\`. `server.new\` and `server.old\` exist only while a copy is being swapped in (leftovers of an interrupted copy are removed at the next tray start or copy). The service's copy is refreshed by **Install service…**, by `Setup.exe` and by every update — always by the tray or Velopack's hooks running as you, never by an elevated process; never edit files in it. If it ends up at another version than the tray (a copy failed), the tray menu shows *The service runs vX; the app is vY — run Install service… to update it*.
 
 `AICP_DATA_DIR` overrides `%ProgramData%\AiChromeProxy` for tests and local runs only (a relative value is made absolute); **Install service…** ignores it and always uses `%ProgramData%\AiChromeProxy`. The settings file is read only by the service or when `AICP_DATA_DIR` is set; environment variables still override it.
 
@@ -31,7 +31,9 @@ The data folder `%ProgramData%\AiChromeProxy` therefore holds `appsettings.json`
    - an account without a password cannot run a service — set one first;
    - the password goes to the Service Control Manager only; it is never written to a file or a command line.
 
-   The installer grants the account *Log on as a service*, checks the password, creates the `AiChromeProxy` service (automatic start, restart after 10 s up to three times, counter reset after a day), lets you start and stop it without UAC, creates `%ProgramData%\AiChromeProxy` (and its `logs` folder) and gives both a protected DACL (nothing inherited from `%ProgramData%`): SYSTEM and Administrators Full Control, the account **Modify**, inherited by files created later; Users, Authenticated Users and Everyone get nothing. It then stops the service if it runs, copies `current\server\` to `%ProgramData%\AiChromeProxy\server\` (which inherits that DACL), points the service there and starts it if it is new or was running (re-running it on a stopped service leaves it stopped). If the copy fails, the service is left as it was (and started again if it was running).
+   Before asking for approval the tray, as you, makes `%ProgramData%\AiChromeProxy` safe (the same checks as the settings save, see [Remote access](#remote-access)), stops the service if it runs and copies `current\server\` to `%ProgramData%\AiChromeProxy\server\` (which inherits the folder's DACL). If that copy fails, nothing is elevated and a service that was running is started again. The elevated part touches no files in the Server folder: it only refuses when `server\AiChromeProxy.Server.exe` is missing or a link.
+
+   The elevated installer grants the account *Log on as a service*, checks the password, creates the `AiChromeProxy` service (automatic start, restart after 10 s up to three times, counter reset after a day), lets you start and stop it without UAC, creates `%ProgramData%\AiChromeProxy` (and its `logs` folder) and gives both a protected DACL (nothing inherited from `%ProgramData%`): SYSTEM and Administrators Full Control, the account **Modify**, inherited by files created later; Users, Authenticated Users and Everyone get nothing. It points the service at `%ProgramData%\AiChromeProxy\server\AiChromeProxy.Server.exe` and starts it if it is new; the tray then starts a service it stopped for the copy, also when the approval was declined or the install failed (re-running it on a stopped service leaves it stopped).
 
 If you change your Windows password later, the service can no longer log on: run **Install service…** again — on an installed service it updates the account and password. A reinstall writes the DACL of the folder and of `logs` only when it differs from the one above; existing files inside are never rewritten.
 
@@ -79,7 +81,7 @@ The tunnel runs **inside the service**: the Server starts the bundled `cloudflar
 
 | Item | What it does |
 |---|---|
-| Service: running / stopped / starting… / stopping… / not installed | Status from the Service Control Manager, refreshed every 2 s. A second, greyed line shows the last error, if any. |
+| Service: running / stopped / starting… / stopping… / not installed | Status from the Service Control Manager, refreshed every 2 s. A second, greyed line shows the last error, else the request to run **Install service…** once (service still in the app folder), else a version mismatch between the service's copy and the tray. |
 | Start / Stop / Restart | Controls the service; no UAC needed after install. |
 | Install service… / Uninstall service | The only actions that need administrator approval. |
 | Set up remote access… | The Cloudflare Tunnel + Access wizard ([Remote access](#remote-access)). Opens by itself at tray start while no public host is configured (neither in `appsettings.json` nor as a `Server__PublicHost` environment variable). |
@@ -101,9 +103,9 @@ The tray checks GitHub Releases at start and then every 24 hours. **Update to vX
 
 ## Uninstall
 
-**Windows Settings → Apps → Installed apps → AI Chrome Proxy → Uninstall.** Windows asks for administrator approval to remove the service and its copy of the Server, `%ProgramData%\AiChromeProxy\server` (the prompt may appear behind other windows); the **Start the tray with Windows** entry is removed too. `%ProgramData%\AiChromeProxy` (settings and logs) is kept. If the prompt is not approved within about 25 seconds, or the uninstall hook fails, the app is removed but the service stays: delete it with `sc.exe delete AiChromeProxy` (elevated).
+**Windows Settings → Apps → Installed apps → AI Chrome Proxy → Uninstall.** Windows asks for administrator approval to remove the service (the prompt may appear behind other windows); once that succeeded, the uninstaller deletes the service's copy of the Server, `%ProgramData%\AiChromeProxy\server`, as you; the **Start the tray with Windows** entry is removed too. `%ProgramData%\AiChromeProxy` (settings and logs) is kept. If the prompt is not approved within about 25 seconds, or the uninstall hook fails, the app is removed but the service stays: delete it with `sc.exe delete AiChromeProxy` (elevated).
 
-**Uninstall service** in the tray does the same (service, then `server\`). If it fails, it shows "Service uninstall did not complete (exit code N)", where N is a Win32 error code (for example 5 = access denied) or 1 (for example when `server\` could not be deleted after the service was removed: delete that folder by hand). No error file is written. Remove the service by hand (elevated PowerShell), and the data too if you want everything gone:
+**Uninstall service** in the tray does the same (the elevated step removes the service, then the tray deletes `server\`). If the elevated step fails, it shows "Service uninstall did not complete (exit code N)", where N is a Win32 error code (for example 5 = access denied); if only `server\` could not be deleted, it shows "The service was removed, but … could not be deleted …; delete it by hand." No error file is written. Remove the service by hand (elevated PowerShell), and the data too if you want everything gone:
 
 ```powershell
 sc.exe stop AiChromeProxy; sc.exe delete AiChromeProxy
@@ -179,3 +181,5 @@ Service outside the app folder (`Setup.exe` over an existing install):
 31. After 29, 30 and an update from the tray menu: no `server.new` or `server.old` in `%ProgramData%\AiChromeProxy`.
 32. Migration: with a service installed by a version before this change (`sc.exe qc` shows `...\current\server\...`) → the tray shows the *Run Install service… once…* line; an update from the tray menu still restarts it from `current\server`; **Install service…** → `sc.exe qc` shows the `%ProgramData%` path, the line disappears, the service runs; then item 29 passes.
 33. `Setup.exe` with no service installed → installs normally; no `server\` folder is created.
+34. **Install service…** while the service runs → it is stopped before the UAC prompt and running again afterwards; decline the UAC prompt → it is running again. During the elevated step `Get-Process AiChromeProxy.Tray` shows the elevated instance, and Process Monitor (filter: path contains `ProgramData\AiChromeProxy\server`) shows no writes or deletes by it.
+35. Version line: replace `%ProgramData%\AiChromeProxy\server\` with an older release's Server (service stopped), start the tray → *The service runs vX; the app is vY — run Install service… to update it*; **Install service…** → the line disappears. `(Get-Item "$env:ProgramData\AiChromeProxy\server\AiChromeProxy.Server.exe").VersionInfo.ProductVersion` starts with the release version (the tag without `v`).
