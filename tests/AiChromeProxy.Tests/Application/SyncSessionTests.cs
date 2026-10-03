@@ -235,6 +235,24 @@ public sealed class SyncSessionTests : IDisposable
 	}
 
 	[Fact]
+	public async Task MiddleChunkFails_LaterChunksIgnored_LastChunkGetsTheFirstError_OffsetZeroStartsOver()
+	{
+		await OpenAsync();
+		await NeedAsync(Manifest(true, Entry("a.txt", "abcdef")));
+		await _session.HandleAsync(Chunk("a.txt", 0, "ab"u8.ToArray(), last: false), Ct);
+
+		var first = await Assert.ThrowsAsync<EnvelopeException>(() => _session.HandleAsync(Chunk("a.txt", 2, "cdefgh"u8.ToArray(), last: false), Ct));
+		Assert.Null(await _session.HandleAsync(Chunk("a.txt", 8, "x"u8.ToArray(), last: false), Ct));
+		var last = await Assert.ThrowsAsync<EnvelopeException>(() => _session.HandleAsync(Chunk("a.txt", 9, "y"u8.ToArray(), last: true), Ct));
+
+		Assert.Equal(ErrorCodes.TooLarge, first.Code);
+		Assert.Equal((first.Code, first.Message), (last.Code, last.Message));
+		Assert.Empty(Directory.GetFiles(_repoRoot, "*.aicp-tmp"));
+		await AssertError(ErrorCodes.BadRequest, Chunk("a.txt", 6, "z"u8.ToArray(), last: true));
+		Assert.Equal(MessageTypes.SyncStored, (await _session.HandleAsync(Chunk("a.txt", 0, "abcdef"u8.ToArray(), last: true), Ct))!.Type);
+	}
+
+	[Fact]
 	public async Task Chunk_HashMismatch_BadRequest_OldFileKept_TempRemoved()
 	{
 		File.WriteAllText(Path.Combine(_repoRoot, "a.txt"), "old");

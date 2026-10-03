@@ -25,6 +25,7 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 	private volatile bool _disposed;
 	private string? _repo;
 	private Upload? _upload;
+	private (string Path, Exception Error)? _chunkFailure;
 	private int _storedFiles;
 	private long _storedBytes;
 	private long _started;
@@ -108,13 +109,17 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 			case MessageTypes.SyncDelta:
 				return await DeltaAsync(Read<SyncDeltaPayload>(request), request, ct);
 			case MessageTypes.SyncChunk:
+				SyncChunkPayload? chunk = null;
 				try
 				{
-					return await ChunkAsync(Read<SyncChunkPayload>(request), request, ct);
+					chunk = Read<SyncChunkPayload>(request);
+					return await ChunkAsync(chunk, request, ct);
 				}
-				catch
+				catch (Exception ex)
 				{
+					// Nobody waits for the reply to a chunk that is not the last: its failure is kept for the last chunk.
 					DiscardUpload();
+					_chunkFailure = chunk is { Last: false, Path: { } path } ? (path, ex) : null;
 					throw;
 				}
 
@@ -127,6 +132,7 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 	{
 		var repo = RepoName.Sanitize(payload.Repo) ?? throw BadRequest("sync.open needs the folder name in 'repo'.");
 		DiscardUpload();
+		_chunkFailure = null;
 		EndManifestPass();
 		_expected.Clear();
 		_repo = repo;
@@ -263,6 +269,14 @@ public sealed class SyncSession(IMirrorStore store, ILogger logger, TimeProvider
 		{
 			throw BadRequest("sync.chunk needs 'path' and 'data'.");
 		}
+
+		// The rest of an upload that already failed is dropped; its last chunk gets the first failure (offset 0 starts over).
+		if (_chunkFailure is { } failure && failure.Path == payload.Path && payload.Offset != 0)
+		{
+			return payload.Last ? throw failure.Error : null;
+		}
+
+		_chunkFailure = null;
 
 		if (!_expected.TryGetValue(payload.Path, out var entry))
 		{
