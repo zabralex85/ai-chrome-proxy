@@ -19,23 +19,50 @@ public sealed class NavigatorSteps(IPage page)
 	private ILocator Editor => page.Locator("[data-testid=file-view]:not([hidden]) .monaco-editor");
 
 	[Given("the app is connected with a folder holding the sample files")]
-	public async Task GivenTheAppIsConnectedWithAFolderAsync()
+	public async Task GivenTheAppIsConnectedWithAFolderAsync() => await ConnectAsync(11);
+
+	[When("I open the text files f01 to f{int} from the file tree")]
+	public async Task WhenIOpenTheTextFilesAsync(int last)
 	{
-		_folder = "e2e-nav-" + Guid.NewGuid().ToString("N")[..8];
-		await page.AddInitScriptAsync(
-			"window.showDirectoryPicker = async () => {"
-			+ $" const root = await (await navigator.storage.getDirectory()).getDirectoryHandle('{_folder}', {{ create: true }});"
-			+ " const put = async (dir, name, data) => { const w = await (await dir.getFileHandle(name, { create: true })).createWritable(); await w.write(data); await w.close(); };"
-			+ " const src = await root.getDirectoryHandle('src', { create: true });"
-			+ $" await put(src, 'A.cs', {System.Text.Json.JsonSerializer.Serialize(Code)});"
-			+ " await put(root, 'notes.bin', new Uint8Array([1, 2, 0, 3, 255, 0, 7]));"
-			+ " await put(root, 'README.md', '# e2e repo');"
-			+ " return root; };");
-		await page.GotoAsync("/");
-		await Expect(page.GetByTestId("connection-state")).ToHaveTextAsync("Connected");
-		await page.GetByTestId("open-folder").ClickAsync();
-		await Expect(page.GetByTestId("folder-name")).ToHaveTextAsync(_folder);
-		await Expect(page.GetByTestId("status-sync")).ToHaveTextAsync(new Regex("^Synced"));
+		for (var i = 1; i <= last; i++)
+		{
+			var name = $"f{i:00}.txt";
+			await page.Locator($"[role=treeitem][title='{name}']").ClickAsync();
+			await Expect(page.Locator("[data-testid=file-view]:not([hidden]) .view-lines")).ToContainTextAsync($"file f{i:00}");
+		}
+	}
+
+	[When("I close the tab of {string}")]
+	public async Task WhenICloseTheTabAsync(string path) =>
+		await page.Locator($"[data-testid=tab-file][data-path='{path}'] .tab-close").ClickAsync();
+
+	[When("I change the folder")]
+	public async Task WhenIChangeTheFolderAsync() => await page.GetByTestId("change-folder").First.ClickAsync();
+
+	[When("the file {string} is deleted from the folder")]
+	public async Task WhenTheFileIsDeletedAsync(string name)
+	{
+		await page.EvaluateAsync(
+			"""
+			async ([folder, name]) => {
+				const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle(folder);
+				await dir.removeEntry(name);
+				window.dispatchEvent(new Event('focus')); // wakes the sync scan
+			}
+			""",
+			new object[] { _folder, name });
+	}
+
+	/// <summary>Counts Monaco's live editors and text models (the page's globalThis.monaco): equal to what is open, so nothing leaked.</summary>
+	[Then("Monaco holds {int} editors and {int} text models")]
+	public async Task ThenMonacoHoldsAsync(int editors, int models)
+	{
+		const string Count = "() => globalThis.monaco ? [monaco.editor.getEditors().length, monaco.editor.getModels().length] : [0, 0]";
+		await page.WaitForFunctionAsync("([e, m]) => { const [a, b] = (" + Count + ")(); return a === e && b === m; }", new object[] { editors, models });
+
+		// A late disposal or a late open would show up after a moment: the count must hold.
+		await page.WaitForTimeoutAsync(800);
+		Xunit.Assert.Equal([editors, models], await page.EvaluateAsync<int[]>(Count));
 	}
 
 	[When("I click {string} and then {string} in the file tree")]
@@ -74,6 +101,9 @@ public sealed class NavigatorSteps(IPage page)
 		var top = await Editor.Locator($".view-overlays > div:nth-child({line})").EvaluateAsync<string>("e => e.style.top");
 		await Expect(Editor.Locator($".view-lines > div[style*='top:{top}']")).ToContainTextAsync(text);
 	}
+
+	[Then("the viewer shows {string}")]
+	public async Task ThenTheViewerShowsTextAsync(string text) => await Expect(Editor.Locator(".view-lines")).ToContainTextAsync(text);
 
 	[Then("the viewer says {string}")]
 	public async Task ThenTheViewerSaysAsync(string text) => await Expect(page.Locator("[data-testid=file-view]:not([hidden]) [data-testid=symbol-note]")).ToHaveTextAsync(text);
@@ -135,5 +165,25 @@ public sealed class NavigatorSteps(IPage page)
 			await page.WaitForTimeoutAsync(500);
 			await page.ScreenshotAsync(new() { Path = Path.Combine(directory, $"nav-{name}-{theme}.png") });
 		}
+	}
+
+	private async Task ConnectAsync(int textFiles)
+	{
+		_folder = "e2e-nav-" + Guid.NewGuid().ToString("N")[..8];
+		await page.AddInitScriptAsync(
+			"window.showDirectoryPicker = async () => {"
+			+ $" const root = await (await navigator.storage.getDirectory()).getDirectoryHandle('{_folder}', {{ create: true }});"
+			+ " const put = async (dir, name, data) => { const w = await (await dir.getFileHandle(name, { create: true })).createWritable(); await w.write(data); await w.close(); };"
+			+ " const src = await root.getDirectoryHandle('src', { create: true });"
+			+ $" await put(src, 'A.cs', {System.Text.Json.JsonSerializer.Serialize(Code)});"
+			+ " await put(root, 'notes.bin', new Uint8Array([1, 2, 0, 3, 255, 0, 7]));"
+			+ " await put(root, 'README.md', '# e2e repo');"
+			+ $" for (let i = 1; i <= {textFiles}; i++) {{ const n = String(i).padStart(2, '0'); await put(root, 'f' + n + '.txt', 'file f' + n); }}"
+			+ " return root; };");
+		await page.GotoAsync("/");
+		await Expect(page.GetByTestId("connection-state")).ToHaveTextAsync("Connected");
+		await page.GetByTestId("open-folder").ClickAsync();
+		await Expect(page.GetByTestId("folder-name")).ToHaveTextAsync(_folder);
+		await Expect(page.GetByTestId("status-sync")).ToHaveTextAsync(new Regex("^Synced"));
 	}
 }

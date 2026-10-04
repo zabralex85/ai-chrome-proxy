@@ -43,3 +43,30 @@ Scenario: A binary file is not shown
 	When I click "notes.bin" in the file tree
 	Then the file note says "Binary file — not shown"
 	And the viewer has no editor
+
+Scenario: A file deleted from the folder says so
+	When I click "README.md" in the file tree
+	Then the viewer shows "# e2e repo"
+	When the file "README.md" is deleted from the folder
+	Then the file note says "This file is no longer in the folder"
+	And the viewer has no editor
+	And Monaco holds 0 editors and 0 text models
+
+Scenario: Closing a file tab disposes its editor and model
+	When I click "src" and then "A.cs" in the file tree
+	Then Monaco holds 1 editors and 1 text models
+	When I close the tab of "src/A.cs"
+	Then Monaco holds 0 editors and 0 text models
+
+Scenario: Changing the folder disposes the editors and the open file comes back with one
+	When I click "src" and then "A.cs" in the file tree
+	Then Monaco holds 1 editors and 1 text models
+	When I change the folder
+	Then the viewer shows the code of "A.cs" with line numbers and highlighting
+	And Monaco holds 1 editors and 1 text models
+
+Scenario: At most ten editors stay alive: the least recently shown is disposed
+	When I open the text files f01 to f11 from the file tree
+	Then Monaco holds 10 editors and 10 text models
+	When I close the tab of "f11.txt"
+	Then Monaco holds 9 editors and 9 text models

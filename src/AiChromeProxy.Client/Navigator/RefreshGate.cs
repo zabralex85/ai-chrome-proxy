@@ -33,4 +33,7 @@ public sealed class RefreshGate
 		_running = false;
 		return false;
 	}
+
+	/// <summary>Frees the gate after a read that failed.</summary>
+	public void Reset() => (_running, _again) = (false, false);
 }

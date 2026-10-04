@@ -37,7 +37,7 @@ public sealed class ViewerSteps(IPage page)
 				host.style.cssText = 'position:fixed;left:0;top:0;width:800px;height:400px;z-index:1000';
 				document.body.appendChild(host);
 				const viewer = await import('./js/viewer.js');
-				await viewer.open(host, path, text, line);
+				await viewer.open(host, 'viewer-test', path, text, line);
 			}
 			""",
 			new object[] { path, Code, line });

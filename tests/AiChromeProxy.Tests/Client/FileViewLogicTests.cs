@@ -72,6 +72,19 @@ public sealed class FileViewLogicTests
 		Assert.True(gate.TryStart());
 	}
 
+	[Fact]
+	public void RefreshGate_ResetAfterAFailedRead_FreesTheGateAndDropsPendingTriggers()
+	{
+		var gate = new RefreshGate();
+		Assert.True(gate.TryStart());
+		Assert.False(gate.TryStart());
+
+		gate.Reset();
+
+		Assert.True(gate.TryStart());
+		Assert.False(gate.Finish());
+	}
+
 	[Theory]
 	[InlineData("a\nb\nc", 2, null, 2)]
 	[InlineData("a\nb\nc", 0, null, null)]

@@ -23,7 +23,7 @@ public sealed class ClientPageTests
 		var html = ClientPage.Render("<script type=\"importmap\">{{importmap}}</script>", assets);
 
 		Assert.DoesNotContain("lib/monaco", html, StringComparison.Ordinal);
-		Assert.Contains("js/viewer.js", html, StringComparison.Ordinal);
+		Assert.Contains("js/viewer.fp3.js", html, StringComparison.Ordinal);
 	}
 
 	[Fact]

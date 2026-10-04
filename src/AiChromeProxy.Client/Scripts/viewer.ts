@@ -77,6 +77,7 @@ type AmdRequire = ((modules: string[], loaded: (module: Monaco) => void, failed:
 };
 
 interface Viewer {
+    host: HTMLElement;
     editor: Editor;
     revealed: DecorationsCollection;
     changed: DecorationsCollection;
@@ -89,7 +90,8 @@ const CHANGED_FOR_MS = 2000;
 /** Extensions Monaco's registry does not know: .razor is highlighted like Razor markup. */
 const EXTRA_LANGUAGES: Record<string, string> = { '.razor': 'razor' };
 
-const viewers = new Map<HTMLElement, Viewer>();
+/** By the id the caller gave: a host element that is already gone from the page cannot be looked up, an id can. */
+const viewers = new Map<string, Viewer>();
 let loading: Promise<Monaco> | null = null;
 let loaded: Monaco | null = null;
 let chosenDark: boolean | null = null; // set by setTheme; null follows the shell's data-theme, else the system's
@@ -183,10 +185,10 @@ function show(viewer: Viewer, line: number | null): void {
     viewer.editor.revealLineInCenter(line);
 }
 
-/** Shows text in a read-only editor inside host (replacing one already there); line (1-based) is revealed in the centre and highlighted. */
-export async function open(host: HTMLElement, path: string, text: string, line: number | null): Promise<void> {
+/** Shows text in a read-only editor inside host, known by id from now on (replacing the one of that id); line (1-based) is revealed in the centre and highlighted. */
+export async function open(host: HTMLElement, id: string, path: string, text: string, line: number | null): Promise<void> {
     const monaco = await load();
-    dispose(host);
+    dispose(id);
     sweep();
     watchSystemTheme(monaco);
     const model = monaco.editor.createModel(text, languageOf(monaco, path));
@@ -205,14 +207,14 @@ export async function open(host: HTMLElement, path: string, text: string, line: 
         model.dispose();
         throw e;
     }
-    const viewer: Viewer = { editor, revealed: editor.createDecorationsCollection(), changed: editor.createDecorationsCollection(), timer: undefined };
-    viewers.set(host, viewer);
+    const viewer: Viewer = { host, editor, revealed: editor.createDecorationsCollection(), changed: editor.createDecorationsCollection(), timer: undefined };
+    viewers.set(id, viewer);
     show(viewer, line);
 }
 
 /** Replaces the text, keeping the scroll position, and marks changedLines (1-based, in the new text) for two seconds. */
-export function update(host: HTMLElement, text: string, changedLines: number[]): void {
-    const viewer = viewers.get(host);
+export function update(id: string, text: string, changedLines: number[]): void {
+    const viewer = viewers.get(id);
     const model = viewer?.editor.getModel();
     if (viewer === undefined || model === null || model === undefined) {
         return;
@@ -226,8 +228,8 @@ export function update(host: HTMLElement, text: string, changedLines: number[]):
 }
 
 /** Reveals and highlights line (1-based); null goes to the top and removes the highlight. */
-export function reveal(host: HTMLElement, line: number | null): void {
-    const viewer = viewers.get(host);
+export function reveal(id: string, line: number | null): void {
+    const viewer = viewers.get(id);
     if (viewer !== undefined) {
         show(viewer, line);
     }
@@ -239,23 +241,24 @@ export function setTheme(dark: boolean | null): void {
     loaded?.editor.setTheme(themeName()); // before the first open there is nothing to repaint: open applies it
 }
 
-/** Disposes the editor in host and its text model. */
-export function dispose(host: HTMLElement | null): void {
-    const viewer = host === null ? undefined : viewers.get(host);
-    if (host !== null && viewer !== undefined) {
-        viewers.delete(host);
+/** Disposes the editor with this id and its text model (works when its host element is already gone), then the ones whose host left the page. */
+export function dispose(id: string): void {
+    const viewer = viewers.get(id);
+    if (viewer !== undefined) {
+        viewers.delete(id);
         window.clearTimeout(viewer.timer);
         const model = viewer.editor.getModel();
         viewer.editor.dispose();
         model?.dispose();
     }
+    sweep();
 }
 
 /** Disposes the editors whose host element left the page without a dispose call (a safety net: no leaked editors or models). */
 function sweep(): void {
-    for (const host of [...viewers.keys()]) {
-        if (!host.isConnected) {
-            dispose(host);
+    for (const [id, viewer] of [...viewers]) {
+        if (!viewer.host.isConnected) {
+            dispose(id);
         }
     }
 }

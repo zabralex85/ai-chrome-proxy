@@ -42,6 +42,7 @@
 
 @code {
     private readonly RefreshGate _gate = new();
+    private readonly string _id = Guid.NewGuid().ToString("N");
     private ElementReference _host;
     private bool _opened;
     private string? _text;
@@ -104,11 +105,22 @@
         }
 
         var before = (_note, _symbolMissing);
-        do
+        var again = true;
+        try
         {
-            await ReadAndShowAsync();
+            while (again)
+            {
+                await ReadAndShowAsync();
+                again = _gate.Finish();
+            }
         }
-        while (_gate.Finish());
+        finally
+        {
+            if (again)
+            {
+                _gate.Reset();
+            }
+        }
 
         if (before != (_note, _symbolMissing))
         {
@@ -121,15 +133,22 @@
     private async Task ReadAndShowAsync()
     {
         _read = Stamp();
+        _symbolMissing = false;
         FileBytes? bytes = null;
         string? failure = null;
         try
         {
             bytes = await Folder.ReadFileAsync(Path);
         }
-        catch (JSException ex)
+        catch (Exception ex) when (ex is JSException or InvalidOperationException or IOException)
         {
             failure = "Could not read the file: " + ex.Message;
+        }
+
+        if (_disposed || !Live)
+        {
+            // Closed, evicted or the folder changed while the read ran: nothing to show.
+            return;
         }
 
         var (text, note) = failure is null ? FileContent.Decide(bytes) : (null, failure);
@@ -143,13 +162,13 @@
             }
             else if (!_opened)
             {
-                await Viewer.OpenAsync(_host, Path, text, null);
+                await Viewer.OpenAsync(_host, _id, Path, text, null);
                 _opened = true;
                 _text = text;
             }
             else if (text != _text)
             {
-                await Viewer.UpdateAsync(_host, text, LineDiff.ChangedLines(_text!, text));
+                await Viewer.UpdateAsync(_id, text, LineDiff.ChangedLines(_text!, text));
                 _text = text;
             }
 
@@ -161,11 +180,11 @@
                 {
                     var line = link.LineIn(_text);
                     _symbolMissing = link.Symbol is not null && line is null;
-                    await Viewer.RevealAsync(_host, line);
+                    await Viewer.RevealAsync(_id, line);
                 }
             }
         }
-        catch (JSException ex)
+        catch (Exception ex) when (ex is JSException or InvalidOperationException or ArgumentException)
         {
             _note = "Could not show the file: " + ex.Message;
         }
@@ -184,7 +203,7 @@
             _opened = false;
             try
             {
-                await Viewer.DisposeAsync(_host);
+                await Viewer.DisposeAsync(_id);
             }
             catch (JSException)
             {

@@ -187,13 +187,17 @@
     private string[] ConflictedPaths() => [.. Engine.Remote.Where(r => r.Status == RemoteStatus.Conflict).Select(r => r.Change.Path)];
 
     /// <summary>A conflicted file opens its Conflict tab instead of the file tab.</summary>
-    private void OpenFile(string path) => _tabs.Show(ConflictedPaths().Contains(path) ? TabSet.ConflictTab(path) : TabSet.FileTab(path));
+    private void OpenFile(string path)
+    {
+        _link = null; // a pending link never outlives the click that made it
+        _tabs.Show(ConflictedPaths().Contains(path) ? TabSet.ConflictTab(path) : TabSet.FileTab(path));
+    }
 
     /// <summary>A chat link opens the file's tab; its viewer reveals the line or symbol.</summary>
     private void OpenLink(FileLink link)
     {
-        _link = link;
         OpenFile(link.Path);
+        _link = TabSet.IsFile(_tabs.Active) ? link : null; // a conflict tab opened instead has no viewer to reveal in
     }
 
     /// <summary>After a render the shell's <c>data-theme</c> is current: the viewers follow it (an explicit choice, or the system's when none).</summary>
