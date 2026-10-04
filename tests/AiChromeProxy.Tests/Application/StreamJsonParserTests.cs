@@ -18,6 +18,21 @@ public sealed class StreamJsonParserTests
 	}
 
 	[Fact]
+	public void RealClaudeCodeOutput_ThinkingSkipped_DeltasThenMessage_Result()
+	{
+		// Captured from Claude Code 2.1.288 (`-p --output-format stream-json --verbose --include-partial-messages`); hook lines, usage
+		// and the thinking text removed.
+		var (parser, events) = Run("real-claude-2.1.288.jsonl");
+		const string Answer = "ok\n\n```mermaid\ngraph LR\n    A --> B\n```";
+
+		Assert.False(string.IsNullOrEmpty(parser.ClaudeSessionId));
+		Assert.Equal(Answer, string.Concat(events.Where(e => e.Kind == ChatEventKinds.Text).Select(e => e.Text)));
+		Assert.Equal(
+			[$"message:{Answer}", "result:True:0.2464372:4544:"],
+			events.Where(e => e.Kind != ChatEventKinds.Text).Select(Describe));
+	}
+
+	[Fact]
 	public void ToolUse_SummariesAndResults()
 	{
 		var (parser, events) = Run("tool-use.jsonl");
