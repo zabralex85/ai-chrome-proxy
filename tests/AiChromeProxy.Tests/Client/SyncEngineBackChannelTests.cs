@@ -85,6 +85,7 @@ public sealed class SyncEngineBackChannelTests : IDisposable
 
 		Assert.False(_folder.Files.ContainsKey("a.txt"));
 		Assert.Equal(["a.txt"], _folder.Writes);
+		Assert.Equal(1, _engine.WriteCount);
 		Assert.False(_server.Projects.GetBases(Repo).ContainsKey("a.txt"));
 		Assert.Equal([MessageTypes.SyncAck], SentTypes());
 		Assert.Empty(_engine.Remote);

@@ -8,7 +8,7 @@ namespace AiChromeProxy.Infrastructure.Chat;
 public static class ClaudeArguments
 {
 	/// <summary>Appended to the system prompt so the UI can render diagrams and link code.</summary>
-	public const string Convention = "You are used through a web UI. Draw diagrams as ```mermaid fenced blocks. Refer to code as `path:line` relative to the repository root.";
+	public const string Convention = "You are used through a web UI. Draw diagrams as ```mermaid fenced blocks. Refer to code as `path:line` or `path#Symbol` relative to the repository root.";
 
 	private const string ApprovalTool = "mcp__aicp__approve";
 

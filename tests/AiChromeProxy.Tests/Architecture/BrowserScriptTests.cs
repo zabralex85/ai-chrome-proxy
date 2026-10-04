@@ -6,8 +6,10 @@ namespace AiChromeProxy.Tests.Architecture;
 /// <summary>Browser code is strict TypeScript compiled by MSBuild (<c>src/*/Scripts</c> → <c>wwwroot/js</c>); no hand-written JavaScript.</summary>
 public sealed class BrowserScriptTests
 {
-	/// <summary>The one third-party script that is committed as JavaScript (minified, MIT; version and licence in THIRD-PARTY-NOTICES.md).</summary>
+	/// <summary>The third-party scripts committed as JavaScript (minified, MIT; version and licence in THIRD-PARTY-NOTICES.md): mermaid, and Monaco by folder.</summary>
 	private const string VendoredMermaid = "src/AiChromeProxy.Client/wwwroot/lib/mermaid/mermaid.min.js";
+
+	private const string VendoredMonaco = "src/AiChromeProxy.Client/wwwroot/lib/monaco/";
 
 	private static readonly Regex AnyType = new(@":\s*any\b|\bas\s+any\b|<any>", RegexOptions.Compiled);
 
@@ -15,7 +17,7 @@ public sealed class BrowserScriptTests
 	public void Wwwroot_HasNoTrackedJavaScript()
 	{
 		var tracked = Git(FindRepoRoot(), "ls-files", "--", "src")
-			.Where(f => f.Contains("/wwwroot/", StringComparison.Ordinal) && f.EndsWith(".js", StringComparison.OrdinalIgnoreCase) && f != VendoredMermaid)
+			.Where(f => f.Contains("/wwwroot/", StringComparison.Ordinal) && f.EndsWith(".js", StringComparison.OrdinalIgnoreCase) && !IsVendored(f))
 			.ToList();
 
 		Assert.True(tracked.Count == 0, "Compiled JavaScript is committed (write it in Scripts/*.ts and gitignore the output):\n" + string.Join('\n', tracked));
@@ -32,7 +34,7 @@ public sealed class BrowserScriptTests
 			var project = Path.GetDirectoryName(wwwroot)!;
 			foreach (var js in Directory.EnumerateFiles(wwwroot, "*.js", SearchOption.AllDirectories))
 			{
-				if (Path.GetRelativePath(root, js).Replace('\\', '/') != VendoredMermaid && !File.Exists(Path.Combine(project, "Scripts", Path.GetFileNameWithoutExtension(js) + ".ts")))
+				if (!IsVendored(Path.GetRelativePath(root, js).Replace('\\', '/')) && !File.Exists(Path.Combine(project, "Scripts", Path.GetFileNameWithoutExtension(js) + ".ts")))
 				{
 					offenders.Add(Path.GetRelativePath(root, js));
 				}
@@ -53,6 +55,19 @@ public sealed class BrowserScriptTests
 		Assert.True(File.Exists(Path.Combine(root, "src", "AiChromeProxy.Client", "wwwroot", "lib", "mermaid", "LICENSE")), "The mermaid licence file is missing.");
 		Assert.Contains("mermaid.min.js", notices);
 		Assert.Contains("MIT", notices);
+	}
+
+	[Fact]
+	public void VendoredMonaco_IsCommittedAndItsLicenceIsRecorded()
+	{
+		var root = FindRepoRoot();
+		var tracked = Git(root, "ls-files", "--", VendoredMonaco);
+		var notices = File.ReadAllText(Path.Combine(root, "THIRD-PARTY-NOTICES.md"));
+
+		Assert.Contains(VendoredMonaco + "vs/loader.js", tracked);
+		Assert.Contains(VendoredMonaco + "vs/editor/editor.main.js", tracked);
+		Assert.Contains(VendoredMonaco + "LICENSE", tracked);
+		Assert.Contains("monaco-editor", notices);
 	}
 
 	[Fact]
@@ -83,6 +98,8 @@ public sealed class BrowserScriptTests
 	[InlineData("let company: string;", false)]
 	[InlineData("const many = 1; // as anything", false)]
 	public void AnyType_Pattern(string line, bool matches) => Assert.Equal(matches, AnyType.IsMatch(line));
+
+	private static bool IsVendored(string path) => path == VendoredMermaid || path.StartsWith(VendoredMonaco, StringComparison.Ordinal);
 
 	private static IEnumerable<string> SourceDirectories(string root, string name) =>
 		Directory.EnumerateDirectories(Path.Combine(root, "src"), name, SearchOption.AllDirectories).Where(d => !IsBuildOutput(root, d));

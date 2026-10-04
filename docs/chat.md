@@ -61,7 +61,7 @@ The approval tool is an MCP endpoint, `/mcp/approve`, reachable only from `127.0
 - Sessions are stored in `aicp.db` and survive restarts and page reloads; a new message continues the session with `--resume`. Your messages appear in the history. **New chat** starts another session.
 - A message may have up to 16 000 characters and about 30 KB once encoded: non-ASCII characters and quotes are sent as `\uXXXX` (6 bytes each), so a message in Cyrillic, for example, holds about 5 000 characters. A longer one is not sent: "The message is too long; shorten it."
 - One run per repo at a time (a second send gets "busy"). **Stop** kills the run. A run continues if the browser disconnects; reopen the tab to see it. After the `result` event the process is killed if it does not exit within 5 seconds.
-- Replies render as markdown (raw HTML is not rendered), mermaid diagrams (mermaid 12.1.0, vendored) and `path:line` links that open the file's tab. **Enter** sends, **Shift+Enter** adds a line.
+- Replies render as markdown (raw HTML is not rendered), mermaid diagrams (mermaid 12.1.0, vendored) and `path:line` and `path#Symbol` links that open the file's tab in the [code viewer](navigator.md). **Enter** sends, **Shift+Enter** adds a line.
 - The status bar shows "Claude idle" or "Claude working... 0:42" and the last run's cost.
 
 ## Security
@@ -87,7 +87,7 @@ Run this before a release that touches the chat. Use a test repository.
 
 - [ ] As the service account, `claude` is on `PATH` and logged in (`claude -p "hi"` answers).
 - [ ] Send a message: text streams in, status shows "Claude working..." and then "Claude idle" with a cost.
-- [ ] Ask for a mermaid diagram: it renders; a `path:line` link opens the file's tab.
+- [ ] Ask for a mermaid diagram: it renders; `path:line` and `path#Symbol` links open the file's tab.
 - [ ] Ask for a file edit: the mirror changes and the file in your folder follows within ~5 s.
 - [ ] Ask to run a command: the card appears; **Deny** makes Claude report the denial; **Allow** runs it; **Allow always in this project** skips the card next time (and not for a command with `*`).
 - [ ] Switch to *Allow everything* and *Only what my Claude Code settings allow*: behavior matches.

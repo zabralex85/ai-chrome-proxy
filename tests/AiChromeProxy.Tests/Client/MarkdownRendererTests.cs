@@ -109,20 +109,70 @@ public sealed class MarkdownRendererTests
 	}
 
 	[Theory]
-	[InlineData("#open=src/a.cs:12", "src/a.cs", 12)]
-	[InlineData("http://localhost:5000/#open=a/b.txt:3", "a/b.txt", 3)]
-	public void TryParseOpenLink_ReadsThePathAndLine(string uri, string path, int line)
+	[InlineData("[Program](src/Program.cs#Main)", "src/Program.cs", "Main")]
+	[InlineData("`src/App/Main.razor#Foo.Bar`", "src/App/Main.razor", "Foo.Bar")]
+	[InlineData("See `docs/a-b_c.md#_x1`.", "docs/a-b_c.md", "_x1")]
+	public void Render_PathSymbol_BecomesAnOpenLink(string markdown, string path, string symbol)
 	{
-		Assert.True(MarkdownRenderer.TryParseOpenLink(uri, out var parsedPath, out var parsedLine));
-		Assert.Equal((path, line), (parsedPath, parsedLine));
+		var html = MarkdownRenderer.Render(markdown);
+
+		Assert.Contains($"href=\"#open={path}#{symbol}\"", html);
+		Assert.DoesNotContain("target=", html);
+	}
+
+	[Theory]
+	[InlineData("`src/a.cs#`")]
+	[InlineData("`src/a.cs#1abc`")]
+	[InlineData("`src/a.cs#a b`")]
+	[InlineData("`src/a.cs#a\"onclick=x`")]
+	[InlineData("`src/a.cs#a<b>`")]
+	[InlineData("`/etc/passwd#Foo`")]
+	[InlineData("`../x/a.cs#Foo`")]
+	[InlineData("`src/../a.cs#Foo`")]
+	[InlineData("`C:/x/a.cs#Foo`")]
+	[InlineData("`src/a.cs#Foo#Bar`")]
+	[InlineData("`src/a.cs#Foo:3`")]
+	[InlineData("`#Foo`")]
+	public void Render_InlineCodeThatIsNoPathSymbol_StaysCode(string markdown)
+	{
+		var html = MarkdownRenderer.Render(markdown);
+
+		Assert.DoesNotContain("href", html);
+		Assert.Contains("<code>", html);
+	}
+
+	[Theory]
+	[InlineData("[x](src/a.cs#Foo\"onclick=\"y)")]
+	[InlineData("[x](../a.cs#Foo)")]
+	[InlineData("[x](javascript:alert(1)#Foo)")]
+	public void Render_UnsafePathSymbolLinks_AreDropped(string markdown) => Assert.DoesNotContain("href", MarkdownRenderer.Render(markdown));
+
+	[Theory]
+	[InlineData("#open=src/a.cs:12", "src/a.cs", 12, null)]
+	[InlineData("http://localhost:5000/#open=a/b.txt:3", "a/b.txt", 3, null)]
+	[InlineData("#open=src/a.cs#Main", "src/a.cs", 0, "Main")]
+	[InlineData("http://localhost:5000/#open=a/b.txt#A.B", "a/b.txt", 0, "A.B")]
+	[InlineData("#open=docs/%D0%9F%D1%80%D0%B8%D0%B2%D0%B5%D1%82.md:3", "docs/Привет.md", 3, null)]
+	[InlineData("#open=docs/%D0%9F%D1%80%D0%B8%D0%B2%D0%B5%D1%82.md#Main", "docs/Привет.md", 0, "Main")]
+	public void TryParseOpenLink_ReadsThePathAndTheLineOrSymbol(string uri, string path, int line, string? symbol)
+	{
+		Assert.True(MarkdownRenderer.TryParseOpenLink(uri, out var parsedPath, out var parsedLine, out var parsedSymbol));
+		Assert.Equal((path, line, symbol), (parsedPath, parsedLine, parsedSymbol));
 	}
 
 	[Theory]
 	[InlineData("http://localhost/")]
 	[InlineData("http://localhost/#open=../a.cs:1")]
+	[InlineData("http://localhost/#open=../a.cs#Foo")]
 	[InlineData("http://localhost/#open=a.cs")]
+	[InlineData("http://localhost/#open=a.cs#")]
+	[InlineData("http://localhost/#open=a.cs#1x")]
 	[InlineData("http://localhost/#other")]
-	public void TryParseOpenLink_RejectsAnythingElse(string uri) => Assert.False(MarkdownRenderer.TryParseOpenLink(uri, out _, out _));
+	[InlineData("http://localhost/#open=%2e%2e/x.cs:1")]
+	[InlineData("http://localhost/#open=a/%2e%2e/x.cs:1")]
+	[InlineData("http://localhost/#open=%2fetc/x.cs:1")]
+	[InlineData("http://localhost/#open=a%252e%252e/x.cs:1")]
+	public void TryParseOpenLink_RejectsAnythingElse(string uri) => Assert.False(MarkdownRenderer.TryParseOpenLink(uri, out _, out _, out _));
 
 	[Fact]
 	public void Render_MermaidFence_IsMarkedForTheBrowser()

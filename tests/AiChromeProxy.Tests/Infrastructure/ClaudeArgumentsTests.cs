@@ -9,6 +9,13 @@ public sealed class ClaudeArgumentsTests
 	private static readonly string[] Base = ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"];
 
 	[Fact]
+	public void Convention_MentionsBothCodeLinkForms()
+	{
+		Assert.Contains("`path:line`", ClaudeArguments.Convention);
+		Assert.Contains("`path#Symbol`", ClaudeArguments.Convention);
+	}
+
+	[Fact]
 	public void Ask_WithApprovalEndpoint_AddsPromptToolAndMcpConfig()
 	{
 		var args = ClaudeArguments.Build(Run("ask", "http://127.0.0.1:5180/mcp/approve", "tok123"), new AgentOptions());

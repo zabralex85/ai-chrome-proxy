@@ -32,6 +32,9 @@ public interface IFolderAccess
 	/// <summary>Text of a file in the folder (read now, not from the last scan), or null when it is not there; throws when it is there but cannot be read.</summary>
 	Task<string?> ReadTextAsync(string path);
 
+	/// <summary>The file as it is now (not from the last scan), at most <c>FileText.MaxBytes + 1</c> bytes of it; null when it is not there; throws when it is there but cannot be read (or the path is invalid).</summary>
+	Task<FileBytes?> ReadFileAsync(string path);
+
 	/// <summary>
 	/// Bytes [<paramref name="offset"/>, <paramref name="offset"/> + <paramref name="length"/>) of a file of the last scan (fewer at its end).
 	/// Offset 0 snapshots the file for the following chunks; fails when the path is not in the last scan or the file changed since.

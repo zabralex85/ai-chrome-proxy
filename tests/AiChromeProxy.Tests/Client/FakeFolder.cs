@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using AiChromeProxy.Client.Navigator;
 using AiChromeProxy.Client.Sync;
 using Microsoft.JSInterop;
 
@@ -149,6 +150,29 @@ public sealed class FakeFolder : IFolderAccess
 		}
 
 		return Task.FromResult(Files.TryGetValue(path, out var b) && !Unreadable.Contains(path) ? Encoding.UTF8.GetString(b) : null);
+	}
+
+	public Task<FileBytes?> ReadFileAsync(string path)
+	{
+		// Like fsaccess.ts: invalid segments throw before anything is read; a missing file is null; at most MaxBytes + 1 bytes come back.
+		if (path.Split('/').Any(s => s is "" or "." or ".." || s.Contains('\\')))
+		{
+			return Task.FromException<FileBytes?>(new JSException($"Invalid path '{path}'."));
+		}
+
+		if (HashFailures.Contains(path))
+		{
+			return Task.FromException<FileBytes?>(new JSException($"NotReadableError: '{path}' could not be read."));
+		}
+
+		if (SizeOnly.TryGetValue(path, out var size) && !Files.ContainsKey(path))
+		{
+			return Task.FromResult<FileBytes?>(new FileBytes(new byte[Math.Min(size, FileText.MaxBytes + 1L)], size));
+		}
+
+		return Task.FromResult(Files.TryGetValue(path, out var b) && !Unreadable.Contains(path)
+			? new FileBytes(b.Take(FileText.MaxBytes + 1).ToArray(), b.Length)
+			: null);
 	}
 
 	public Task<byte[]> ReadChunkAsync(string path, long offset, int length)

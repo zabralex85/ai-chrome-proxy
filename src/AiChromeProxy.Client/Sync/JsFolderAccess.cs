@@ -31,6 +31,8 @@ public sealed class JsFolderAccess(IJSRuntime js) : IFolderAccess, IAsyncDisposa
 
 	public async Task<string?> ReadTextAsync(string path) => await (await ModuleAsync()).InvokeAsync<string?>("readText", path);
 
+	public async Task<FileBytes?> ReadFileAsync(string path) => await (await ModuleAsync()).InvokeAsync<FileBytes?>("readFile", path);
+
 	public async Task<byte[]> ReadChunkAsync(string path, long offset, int length) =>
 		await (await ModuleAsync()).InvokeAsync<byte[]>("readChunk", path, offset, length);
 

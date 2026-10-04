@@ -92,7 +92,7 @@ A file on the mirror is deleted only when a scan positively saw it absent. A fil
 - **Same folder name:** two folders with the same name (after sanitizing) share one mirror folder, and each sync deletes the other's files. Open one at a time, or rename a folder.
 - **Check-then-write window:** the browser writes a pushed change if its file is still the agreed version; a save in the few milliseconds between that check and the write is lost.
 - **Upload commit window:** a mirror file changing in the milliseconds between the server's check and the commit of an upload is not detected (the next pass pushes it as a conflict candidate).
-- **Conflicts show no diff:** the Conflict tab previews only the server's version as text (up to 256 KB); a diff view comes with the code navigator.
+- **Conflicts show no diff:** the Conflict tab previews only the server's version as text (up to 256 KB); a diff view comes later (Monaco's diff editor).
 - One folder at a time.
 
 ## Where the mirror lives

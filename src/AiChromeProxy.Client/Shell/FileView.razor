@@ -1,0 +1,218 @@
+@using AiChromeProxy.Client.Navigator
+@using AiChromeProxy.Client.Sync
+@using Microsoft.JSInterop
+@inject IFileViewer Viewer
+@inject IFolderAccess Folder
+@implements IAsyncDisposable
+
+@* One per open file tab, kept (hidden) while the tab is in the background so that the scroll position stays; the editor itself lives only while the pool allows it. *@
+<section class="file-view" hidden="@(!Active)" data-testid="file-view" data-path="@Path">
+    @{
+        var file = Engine.FileAt(Path);
+    }
+    <header class="file-details file-bar" data-testid="file-details">
+        <Icon Name="@("file-" + Format.FileKind(Path))" Size="16" Class="@("kind-" + Format.FileKind(Path))" />
+        <span class="mono file-bar-path" title="@Path">@Path</span>
+        @if (file is not null)
+        {
+            <span class="muted" title="@(Format.Count(file.Size) + " bytes")">@Format.Bytes(file.Size)</span>
+            <span class="state state-@file.State.ToString().ToLowerInvariant()">@StateText(file.State)</span>
+            @if (file.Error is not null)
+            {
+                <span class="state-error">@file.Error</span>
+            }
+            @if (file.Sha256 is not null)
+            {
+                <span class="mono muted file-bar-hash" title="SHA-256 @file.Sha256">@file.Sha256[..12]…</span>
+            }
+        }
+    </header>
+    <div class="viewer-area">
+        <div class="viewer-host" data-testid="viewer" @ref="_host"></div>
+        @if (_note is not null)
+        {
+            <p class="file-note" role="status" data-testid="file-note">@_note</p>
+        }
+        @if (_symbolMissing)
+        {
+            <p class="viewer-note" role="status" data-testid="symbol-note">Symbol not found</p>
+        }
+    </div>
+</section>
+
+@code {
+    private readonly RefreshGate _gate = new();
+    private readonly string _id = Guid.NewGuid().ToString("N");
+    private ElementReference _host;
+    private bool _opened;
+    private string? _text;
+    private string? _note;
+    private bool _symbolMissing;
+    private (string? Sha256, int Writes)? _read;
+    private bool _disposed;
+
+    [Parameter, EditorRequired]
+    public SyncEngine Engine { get; set; } = null!;
+
+    [Parameter, EditorRequired]
+    public string Path { get; set; } = null!;
+
+    /// <summary>The tab is the one on screen.</summary>
+    [Parameter]
+    public bool Active { get; set; }
+
+    /// <summary>The pool lets this tab hold an editor; false disposes it (the file is read again when the tab comes back).</summary>
+    [Parameter]
+    public bool Live { get; set; }
+
+    /// <summary>The last link from the chat; revealed once when it is for this file.</summary>
+    [Parameter]
+    public FileLink? Link { get; set; }
+
+    public async ValueTask DisposeAsync()
+    {
+        _disposed = true;
+        await DisposeViewerAsync();
+    }
+
+    private static string StateText(FileSyncState state) => state switch
+    {
+        FileSyncState.Synced => "Synced",
+        FileSyncState.Pending => "Pending upload",
+        FileSyncState.TooLarge => "Too large (over 20 MB), not synced",
+        _ => "Error",
+    };
+
+    protected override Task OnAfterRenderAsync(bool firstRender) => SyncViewerAsync();
+
+    /// <summary>After every render: opens, refreshes or disposes the editor as the parameters ask. Cheap when nothing changed.</summary>
+    private async Task SyncViewerAsync()
+    {
+        if (!Live)
+        {
+            await DisposeViewerAsync();
+            _read = null;
+            _text = null;
+            _note = null;
+            return;
+        }
+
+        var link = Link is { Applied: false } l && l.Path == Path ? l : null;
+        var changed = Active && (_read is null || _read != Stamp() || link is not null);
+        if (!changed || !_gate.TryStart())
+        {
+            return;
+        }
+
+        var before = (_note, _symbolMissing);
+        var again = true;
+        try
+        {
+            while (again)
+            {
+                await ReadAndShowAsync();
+                again = _gate.Finish();
+            }
+        }
+        finally
+        {
+            if (again)
+            {
+                _gate.Reset();
+            }
+        }
+
+        if (before != (_note, _symbolMissing))
+        {
+            StateHasChanged();
+        }
+    }
+
+    private (string? Sha256, int Writes) Stamp() => (Engine.FileAt(Path)?.Sha256, Engine.WriteCount);
+
+    private async Task ReadAndShowAsync()
+    {
+        _read = Stamp();
+        _symbolMissing = false;
+        FileBytes? bytes = null;
+        string? failure = null;
+        try
+        {
+            bytes = await Folder.ReadFileAsync(Path);
+        }
+        catch (Exception ex) when (ex is JSException or InvalidOperationException or IOException)
+        {
+            failure = "Could not read the file: " + ex.Message;
+        }
+
+        if (_disposed || !Live)
+        {
+            // Closed, evicted or the folder changed while the read ran: nothing to show.
+            return;
+        }
+
+        var (text, note) = failure is null ? FileContent.Decide(bytes) : (null, failure);
+        _note = note;
+        try
+        {
+            if (text is null)
+            {
+                await DisposeViewerAsync();
+                _text = null;
+            }
+            else if (!_opened)
+            {
+                await Viewer.OpenAsync(_host, _id, Path, text, null);
+                _opened = true;
+                _text = text;
+            }
+            else if (text != _text)
+            {
+                await Viewer.UpdateAsync(_id, text, LineDiff.ChangedLines(_text!, text));
+                _text = text;
+            }
+
+            if (Link is { Applied: false } link && link.Path == Path)
+            {
+                link.Applied = true;
+                _symbolMissing = false;
+                if (_text is not null)
+                {
+                    var line = link.LineIn(_text);
+                    _symbolMissing = link.Symbol is not null && line is null;
+                    await Viewer.RevealAsync(_id, line);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is JSException or InvalidOperationException or ArgumentException)
+        {
+            _note = "Could not show the file: " + ex.Message;
+        }
+
+        if (_disposed || !Live)
+        {
+            // Closed or evicted while the read ran.
+            await DisposeViewerAsync();
+        }
+    }
+
+    private async Task DisposeViewerAsync()
+    {
+        if (_opened)
+        {
+            _opened = false;
+            try
+            {
+                await Viewer.DisposeAsync(_id);
+            }
+            catch (JSException)
+            {
+                // The page is going away; the editor goes with it.
+            }
+            catch (InvalidOperationException)
+            {
+                // The JS runtime is already gone.
+            }
+        }
+    }
+}

@@ -17,6 +17,9 @@ public static partial class ClientPage
 {
 	public const string Template = "index.html";
 
+	/// <summary>The vendored Monaco (hundreds of files, loaded by its own AMD loader by plain paths) stays out of the import map.</summary>
+	public const string UnmappedPrefix = "lib/monaco/";
+
 	/// <summary>Maps the page to <c>/index.html</c> and to every route without a file extension (the SPA fallback, <c>/</c> included).</summary>
 	public static void MapClientPage(this WebApplication app)
 	{
@@ -45,11 +48,12 @@ public static partial class ClientPage
 	public static string Render(string template, ResourceAssetCollection assets) => template
 		.Replace("{{blazor-script}}", assets["_framework/blazor.webassembly.js"], StringComparison.Ordinal)
 		.Replace("{{stylesheet}}", assets["css/app.css"], StringComparison.Ordinal)
-		.Replace("{{importmap}}", ImportMapDefinition.FromResourceCollection(assets).ToString().ReplaceLineEndings("\n"), StringComparison.Ordinal);
+		.Replace("{{importmap}}", ImportMapDefinition.FromResourceCollection(new ResourceAssetCollection([.. assets.Where(a => !a.Url.StartsWith(UnmappedPrefix, StringComparison.Ordinal))])).ToString().ReplaceLineEndings("\n"), StringComparison.Ordinal);
 
 	/// <summary>
 	/// The Content-Security-Policy of the page: everything from this origin, no inline script except the ones in <paramref name="html"/> (by SHA-256, so the
-	/// import map with its fingerprints is allowed and an injected inline script or event handler is not), WebAssembly allowed, inline styles allowed (mermaid's SVG).
+	/// import map with its fingerprints is allowed and an injected inline script or event handler is not), WebAssembly allowed, inline styles allowed (mermaid's SVG,
+	/// Monaco's), workers from this origin or a blob (Monaco wraps its worker in one), fonts from this origin or data (Monaco's icon font).
 	/// </summary>
 	/// <param name="html">The rendered page.</param>
 	/// <returns>The header value.</returns>
@@ -58,7 +62,7 @@ public static partial class ClientPage
 		var hashes = InlineScript().Matches(html)
 			.Select(m => $"'sha256-{Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(m.Groups[1].Value.ReplaceLineEndings("\n"))))}'");
 		return "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' " + string.Join(' ', hashes)
-			+ "; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
+			+ "; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
 	}
 
 	/// <summary>A <c>&lt;script&gt;</c> without <c>src</c>; group 1 is its text.</summary>

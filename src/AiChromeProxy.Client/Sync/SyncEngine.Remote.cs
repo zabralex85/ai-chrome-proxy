@@ -307,11 +307,13 @@ public sealed partial class SyncEngine
 						if (content is null)
 						{
 							await folder.DeleteAsync(change.Path);
+							WriteCount++;
 							deleted.Add(change.Path);
 						}
 						else
 						{
 							await folder.WriteAsync(change.Path, content);
+							WriteCount++;
 							received.Add(change.Path);
 						}
 
@@ -362,6 +364,7 @@ public sealed partial class SyncEngine
 		if (change.Sha256 is null)
 		{
 			await folder.DeleteAsync(change.Path);
+			WriteCount++;
 			return true;
 		}
 
@@ -372,6 +375,7 @@ public sealed partial class SyncEngine
 		}
 
 		await folder.WriteAsync(change.Path, content!);
+		WriteCount++;
 		return true;
 	}
 
