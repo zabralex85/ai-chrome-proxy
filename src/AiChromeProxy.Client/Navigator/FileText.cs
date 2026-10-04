@@ -11,7 +11,7 @@ public static class FileText
 	/// <summary>A NUL in this many leading bytes makes a file binary.</summary>
 	public const int BinaryProbeBytes = 8192;
 
-	/// <summary>Decodes UTF-8 (BOM stripped) or UTF-16 with a BOM; anything with a NUL early on, or that is not valid UTF-8, is binary.</summary>
+	/// <summary>Decodes UTF-8 (BOM stripped) or UTF-16 with a BOM; anything with a NUL early on (UTF-8 with a BOM included), a UTF-32 BOM, or that is not valid UTF-8 or UTF-16, is binary.</summary>
 	/// <param name="bytes">The file's content.</param>
 	/// <returns>The text, or why there is none.</returns>
 	public static FileTextResult Decode(byte[] bytes)
@@ -23,9 +23,9 @@ public static class FileText
 
 		try
 		{
-			if (bytes.AsSpan().StartsWith(Encoding.UTF8.Preamble))
+			if (bytes.AsSpan().StartsWith(Encoding.UTF32.GetPreamble()))
 			{
-				return Text(new UTF8Encoding(false, true).GetString(bytes, 3, bytes.Length - 3), bytes);
+				return new FileTextResult(null, FileTextReason.Binary, bytes.Length);
 			}
 
 			if (bytes.AsSpan().StartsWith(Encoding.Unicode.Preamble))
@@ -43,7 +43,10 @@ public static class FileText
 				return new FileTextResult(null, FileTextReason.Binary, bytes.Length);
 			}
 
-			return Text(new UTF8Encoding(false, true).GetString(bytes), bytes);
+			var utf8 = new UTF8Encoding(false, true);
+			return bytes.AsSpan().StartsWith(Encoding.UTF8.Preamble)
+				? Text(utf8.GetString(bytes, 3, bytes.Length - 3), bytes)
+				: Text(utf8.GetString(bytes), bytes);
 		}
 		catch (ArgumentException)
 		{

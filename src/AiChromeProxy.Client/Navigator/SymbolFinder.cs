@@ -10,7 +10,7 @@ public static partial class SymbolFinder
 	/// <summary>Searches <paramref name="text"/> for <paramref name="symbol"/>.</summary>
 	/// <param name="text">The file's text.</param>
 	/// <param name="symbol">A name matching <c>[A-Za-z_][\w.]*</c>.</param>
-	/// <returns>The 1-based line, or null when the symbol is invalid or not found.</returns>
+	/// <returns>The 1-based line, or null when the symbol is invalid or not found (or the search times out). Never throws.</returns>
 	public static int? Find(string text, string symbol)
 	{
 		if (!ValidSymbol().IsMatch(symbol))
@@ -25,14 +25,28 @@ public static partial class SymbolFinder
 		int? first = null;
 		for (var i = 0; i < lines.Length; i++)
 		{
-			if (declaration.IsMatch(lines[i]))
+			try
 			{
-				return i + 1;
+				if (declaration.IsMatch(lines[i]))
+				{
+					return i + 1;
+				}
+			}
+			catch (RegexMatchTimeoutException)
+			{
+				// A pathological line: skip the declaration test for it and fall back to the whole-word search.
 			}
 
-			if (first is null && word.IsMatch(lines[i]))
+			try
 			{
-				first = i + 1;
+				if (first is null && word.IsMatch(lines[i]))
+				{
+					first = i + 1;
+				}
+			}
+			catch (RegexMatchTimeoutException)
+			{
+				return null;
 			}
 		}
 

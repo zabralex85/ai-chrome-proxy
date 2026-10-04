@@ -35,7 +35,7 @@ public sealed class FileTextTests
 	}
 
 	[Fact]
-	public void Decode_NulAfterTheFirstChunk_IsStillAnInvalidFileOnlyWhenNotUtf8()
+	public void Decode_NulAfterTheProbedBytes_IsStillText()
 	{
 		var bytes = new byte[FileText.BinaryProbeBytes + 10];
 		Array.Fill(bytes, (byte)'a');
@@ -49,6 +49,33 @@ public sealed class FileTextTests
 	[InlineData(new byte[] { 0xFF, 0xFF, 0x41 })]
 	[InlineData(new byte[] { 0xE2, 0x82 })]
 	public void Decode_InvalidUtf8_IsBinary(byte[] bytes) => Assert.Equal(FileTextReason.Binary, FileText.Decode(bytes).Reason);
+
+	[Fact]
+	public void Decode_Utf8WithBomAndNul_IsBinary() => Assert.Equal(FileTextReason.Binary, FileText.Decode([0xEF, 0xBB, 0xBF, 65, 0, 66]).Reason);
+
+	[Fact]
+	public void Decode_Utf32LeBom_IsBinary() => Assert.Equal(FileTextReason.Binary, FileText.Decode([0xFF, 0xFE, 0, 0, 65, 0, 0, 0]).Reason);
+
+	[Theory]
+	[InlineData(new byte[] { 0xFF, 0xFE, 0x00, 0xD8 })]
+	[InlineData(new byte[] { 0xFF, 0xFE, 0x41, 0x00, 0x42 })]
+	[InlineData(new byte[] { 0xFE, 0xFF, 0xD8, 0x00 })]
+	[InlineData(new byte[] { 0xFE, 0xFF, 0x00, 0x41, 0x00 })]
+	public void Decode_LoneSurrogateOrOddLengthUtf16_IsBinary(byte[] bytes) => Assert.Equal(FileTextReason.Binary, FileText.Decode(bytes).Reason);
+
+	[Fact]
+	public void Decode_MultiByteCharAcrossTheProbeBoundary_IsText()
+	{
+		var bytes = new byte[FileText.BinaryProbeBytes + 4];
+		Array.Fill(bytes, (byte)'a');
+		bytes[FileText.BinaryProbeBytes - 1] = 0xC3;
+		bytes[FileText.BinaryProbeBytes] = 0xA9;
+
+		var result = FileText.Decode(bytes);
+
+		Assert.Equal(FileTextReason.None, result.Reason);
+		Assert.Equal('é', result.Text![FileText.BinaryProbeBytes - 1]);
+	}
 
 	[Fact]
 	public void Decode_ExactlyTheLimit_IsShown()
@@ -73,11 +100,11 @@ public sealed class FileTextTests
 	public void Limit_Is5MiB() => Assert.Equal(5 * 1024 * 1024, FileText.MaxBytes);
 
 	[Theory]
-	[InlineData(0, "Binary file — not shown")]
-	[InlineData(1, "Too large to show (6.0 MB)")]
-	public void Message_SaysWhyTheFileIsNotShown(int reason, string expected)
+	[InlineData(FileTextReason.Binary, "Binary file — not shown")]
+	[InlineData(FileTextReason.TooLarge, "Too large to show (6.0 MB)")]
+	public void Message_SaysWhyTheFileIsNotShown(FileTextReason reason, string expected)
 	{
-		var result = new FileTextResult(null, (FileTextReason)(reason + 1), 6 * 1024 * 1024);
+		var result = new FileTextResult(null, reason, 6 * 1024 * 1024);
 
 		Assert.Equal(expected, result.Message);
 	}

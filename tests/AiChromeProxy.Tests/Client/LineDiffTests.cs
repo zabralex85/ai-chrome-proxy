@@ -54,6 +54,16 @@ public sealed class LineDiffTests
 	}
 
 	[Fact]
+	public void ChangedLines_OverTheCap_PureInsertion_MarksOnlyTheFirstAndLast()
+	{
+		var oldLines = Enumerable.Range(0, LineDiff.MaxLines + 1).Select(i => $"line {i}").ToList();
+		var newLines = oldLines.ToList();
+		newLines.InsertRange(100, Enumerable.Range(0, 30_000).Select(i => $"new {i}"));
+
+		Assert.Equal([101, 30_100], LineDiff.ChangedLines(string.Join('\n', oldLines), string.Join('\n', newLines)));
+	}
+
+	[Fact]
 	public void ChangedLines_LargeDifferingMiddle_FallsBackInsteadOfAllocatingATable()
 	{
 		var oldText = string.Join('\n', Enumerable.Range(0, 5000).Select(i => $"old {i}"));

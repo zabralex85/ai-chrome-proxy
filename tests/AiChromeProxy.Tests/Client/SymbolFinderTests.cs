@@ -35,5 +35,15 @@ public sealed class SymbolFinderTests
 	public void Find_DottedSymbol() => Assert.Equal(2, SymbolFinder.Find("x\nclass A.B {}\n", "A.B"));
 
 	[Fact]
+	public void Find_PathologicalLine_NeverThrows()
+	{
+		var line = string.Concat(Enumerable.Repeat("public ", 300_000));
+
+		var found = SymbolFinder.Find(line, "Missing");
+
+		Assert.Null(found);
+	}
+
+	[Fact]
 	public void Find_HandlesCrLf() => Assert.Equal(3, SymbolFinder.Find("a\r\nFoo\r\nclass Foo\r\n", "Foo"));
 }

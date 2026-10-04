@@ -39,14 +39,14 @@ public static class LineDiff
 			return [];
 		}
 
-		if (n == 0)
-		{
-			return [.. Enumerable.Range(prefix + 1, m)];
-		}
-
 		if (a.Length > MaxLines || b.Length > MaxLines || (long)(n + 1) * (m + 1) > MaxCells)
 		{
 			return m == 1 ? [prefix + 1] : [prefix + 1, prefix + m];
+		}
+
+		if (n == 0)
+		{
+			return [.. Enumerable.Range(prefix + 1, m)];
 		}
 
 		return Lcs(a, b, prefix, n, m);
