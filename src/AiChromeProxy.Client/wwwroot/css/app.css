@@ -1700,3 +1700,75 @@ h1:focus-visible {
 .viewer-changed-line {
     background: light-dark(rgba(46, 125, 50, 0.2), rgba(137, 209, 133, 0.2));
 }
+
+/* File tabs: a slim details bar above the viewer; the tab panel gives the viewer all of its room. */
+.tab-panel.tab-panel-file {
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    overflow: hidden;
+}
+
+.file-view {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.file-view[hidden] {
+    display: none;
+}
+
+.file-details.file-bar {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 12px;
+    max-width: none;
+    padding: 6px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-panel);
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.file-bar-path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.viewer-area {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+}
+
+.viewer-host {
+    position: absolute;
+    inset: 0;
+}
+
+.file-note {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    padding: 24px 32px;
+    background: var(--bg);
+    color: var(--fg-muted);
+}
+
+.viewer-note {
+    position: absolute;
+    top: 8px;
+    right: 28px;
+    z-index: 5;
+    margin: 0;
+    padding: 4px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    background: var(--bg-notice);
+    color: var(--fg);
+    font-size: 12px;
+}

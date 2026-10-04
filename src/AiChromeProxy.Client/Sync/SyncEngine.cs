@@ -120,6 +120,15 @@ public sealed partial class SyncEngine(ITransport transport, IFolderAccess folde
 
 	public string? FolderName { get; private set; }
 
+	/// <summary>Gets a number that changes whenever a folder is picked (also the same one again): what belongs to the old folder (open viewers) is dropped.</summary>
+	public int FolderGeneration => _generation;
+
+	/// <summary>
+	/// Gets how many files the back channel wrote or deleted in the folder: an open viewer re-reads its file when it changes
+	/// (ponytail: one counter for all files, so every open file re-reads after any write; a per-path stamp if that ever shows).
+	/// </summary>
+	public int WriteCount { get; private set; }
+
 	/// <summary>Gets the repo name the server uses for the open folder (set once the session opened, null while there is none); the chat opens on it.</summary>
 	public string? Repo => _repo;
 

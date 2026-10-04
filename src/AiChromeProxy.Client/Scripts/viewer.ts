@@ -38,6 +38,7 @@ interface EditorOptions {
 
 interface Editor {
     getModel(): TextModel | null;
+    layout(): void;
     getScrollTop(): number;
     setScrollTop(top: number): void;
     revealLineInCenter(line: number): void;
@@ -85,6 +86,9 @@ interface Viewer {
 const LOADER = '/lib/monaco/vs/loader.js';
 const CHANGED_FOR_MS = 2000;
 
+/** Extensions Monaco's registry does not know: .razor is highlighted like Razor markup. */
+const EXTRA_LANGUAGES: Record<string, string> = { '.razor': 'razor' };
+
 const viewers = new Map<HTMLElement, Viewer>();
 let loading: Promise<Monaco> | null = null;
 let loaded: Monaco | null = null;
@@ -95,15 +99,6 @@ function amdRequire(): AmdRequire | undefined {
     return (globalThis as unknown as { require?: AmdRequire }).require;
 }
 
-/** The loader's URL: the fingerprinted one through the page's import map when it has the file, else the plain path. */
-function loaderUrl(): string {
-    try {
-        return import.meta.resolve(LOADER);
-    } catch {
-        return LOADER;
-    }
-}
-
 function load(): Promise<Monaco> {
     loading ??= new Promise<void>((resolve, reject) => {
         if (amdRequire() !== undefined) {
@@ -111,7 +106,7 @@ function load(): Promise<Monaco> {
             return;
         }
         const script = document.createElement('script');
-        script.src = loaderUrl();
+        script.src = LOADER; // the page's import map leaves lib/monaco out (ClientPage), so this plain URL is the one served
         script.onload = () => resolve();
         script.onerror = () => reject(new Error('The Monaco loader could not be loaded.'));
         document.head.appendChild(script);
@@ -148,6 +143,10 @@ function languageOf(monaco: Monaco, path: string): string {
     const name = (path.split('/').pop() ?? path).toLowerCase();
     const dot = name.lastIndexOf('.');
     const extension = dot > 0 ? name.substring(dot) : null;
+    const extra = extension === null ? undefined : EXTRA_LANGUAGES[extension];
+    if (extra !== undefined) {
+        return extra;
+    }
     const language = monaco.languages.getLanguages().find(l =>
         l.filenames?.some(f => f.toLowerCase() === name) === true
         || (extension !== null && l.extensions?.some(e => e.toLowerCase() === extension) === true));
@@ -156,9 +155,8 @@ function languageOf(monaco: Monaco, path: string): string {
 
 /** Monaco's theme: the one set through setTheme, else the shell's data-theme, else the system's. */
 function themeName(): string {
-    const chosen = document.querySelector('[data-theme]')?.getAttribute('data-theme');
-    const dark = chosenDark
-        ?? (chosen === undefined || chosen === null ? window.matchMedia('(prefers-color-scheme: dark)').matches : chosen === 'dark');
+    const chosen = document.querySelector('[data-theme]')?.getAttribute('data-theme') ?? null;
+    const dark = chosenDark ?? (chosen === null ? window.matchMedia('(prefers-color-scheme: dark)').matches : chosen === 'dark');
     return dark ? 'vs-dark' : 'vs';
 }
 
@@ -179,6 +177,7 @@ function show(viewer: Viewer, line: number | null): void {
         viewer.editor.setScrollTop(0);
         return;
     }
+    viewer.editor.layout(); // the tab may have just been shown again (display: none gave the editor no size)
     viewer.revealed.set([{ range: lineRange(line), options: { isWholeLine: true, className: 'viewer-revealed-line' } }]);
     viewer.editor.setPosition({ lineNumber: line, column: 1 });
     viewer.editor.revealLineInCenter(line);
@@ -188,16 +187,24 @@ function show(viewer: Viewer, line: number | null): void {
 export async function open(host: HTMLElement, path: string, text: string, line: number | null): Promise<void> {
     const monaco = await load();
     dispose(host);
+    sweep();
     watchSystemTheme(monaco);
-    const editor = monaco.editor.create(host, {
-        model: monaco.editor.createModel(text, languageOf(monaco, path)),
-        theme: themeName(),
-        readOnly: true,
-        domReadOnly: true,
-        automaticLayout: true,
-        minimap: { enabled: true },
-        scrollBeyondLastLine: false,
-    });
+    const model = monaco.editor.createModel(text, languageOf(monaco, path));
+    let editor: Editor;
+    try {
+        editor = monaco.editor.create(host, {
+            model,
+            theme: themeName(),
+            readOnly: true,
+            domReadOnly: true,
+            automaticLayout: true,
+            minimap: { enabled: true },
+            scrollBeyondLastLine: false,
+        });
+    } catch (e: unknown) {
+        model.dispose();
+        throw e;
+    }
     const viewer: Viewer = { editor, revealed: editor.createDecorationsCollection(), changed: editor.createDecorationsCollection(), timer: undefined };
     viewers.set(host, viewer);
     show(viewer, line);
@@ -233,13 +240,22 @@ export function setTheme(dark: boolean | null): void {
 }
 
 /** Disposes the editor in host and its text model. */
-export function dispose(host: HTMLElement): void {
-    const viewer = viewers.get(host);
-    if (viewer !== undefined) {
+export function dispose(host: HTMLElement | null): void {
+    const viewer = host === null ? undefined : viewers.get(host);
+    if (host !== null && viewer !== undefined) {
         viewers.delete(host);
         window.clearTimeout(viewer.timer);
         const model = viewer.editor.getModel();
         viewer.editor.dispose();
         model?.dispose();
+    }
+}
+
+/** Disposes the editors whose host element left the page without a dispose call (a safety net: no leaked editors or models). */
+function sweep(): void {
+    for (const host of [...viewers.keys()]) {
+        if (!host.isConnected) {
+            dispose(host);
+        }
     }
 }

@@ -1,6 +1,7 @@
 @page "/"
 @using System.Diagnostics
 @using AiChromeProxy.Client.Chat
+@using AiChromeProxy.Client.Navigator
 @using AiChromeProxy.Client.Sync
 @using AiChromeProxy.Client.Transport
 @using AiChromeProxy.Domain
@@ -9,6 +10,7 @@
 @inject ChatEngine Chat
 @inject HttpClient Http
 @inject IJSRuntime JS
+@inject IFileViewer Viewer
 @inject TimeProvider Time
 @implements IDisposable
 
@@ -31,7 +33,7 @@
              @onpointerdown="e => StartDragAsync(Side.Left, e)" @onkeydown="e => ResizeByKeyAsync(Side.Left, e)"></div>
     }
     @* An EventCallback re-renders the component that created it once the handler ran: the tree then highlights the active tab's file. *@
-    <MainArea Engine="Engine" Tabs="_tabs" ChatConnected="@(Transport.State == TransportState.Connected)" ChatFolderOpen="@(Engine.Folder == FolderStatus.Ready && Engine.FolderName is not null)" OnOpenFile="OpenFile" OnChanged="StateHasChanged" />
+    <MainArea Engine="Engine" Tabs="_tabs" ChatConnected="@(Transport.State == TransportState.Connected)" ChatFolderOpen="@(Engine.Folder == FolderStatus.Ready && Engine.FolderName is not null)" OnOpenFile="OpenLink" Link="_link" OnChanged="StateHasChanged" />
     <ActionsHistory Engine="Engine" Chat="Chat" Collapsed="@(!_historyOpen)" State="@Transport.State" PingMs="@_pingMs" />
     @if (_historyOpen)
     {
@@ -57,6 +59,8 @@
     private readonly CancellationTokenSource _stop = new();
     private readonly TabSet _tabs = new();
     private string? _theme;
+    private string? _themeApplied;
+    private FileLink? _link;
     private string? _user;
     private bool _filesOpen = true;
     private bool _historyOpen = true;
@@ -184,6 +188,34 @@
 
     /// <summary>A conflicted file opens its Conflict tab instead of the file tab.</summary>
     private void OpenFile(string path) => _tabs.Show(ConflictedPaths().Contains(path) ? TabSet.ConflictTab(path) : TabSet.FileTab(path));
+
+    /// <summary>A chat link opens the file's tab; its viewer reveals the line or symbol.</summary>
+    private void OpenLink(FileLink link)
+    {
+        _link = link;
+        OpenFile(link.Path);
+    }
+
+    /// <summary>After a render the shell's <c>data-theme</c> is current: the viewers follow it (an explicit choice, or the system's when none).</summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _themeApplied = _theme;
+        }
+        else if (_theme != _themeApplied)
+        {
+            _themeApplied = _theme;
+            try
+            {
+                await Viewer.SetThemeAsync(_theme is null ? null : _theme == "dark");
+            }
+            catch (JSException)
+            {
+                // The viewer script is not available; the next editor opens in the shell's theme anyway.
+            }
+        }
+    }
 
     private void ShowFirstConflict()
     {

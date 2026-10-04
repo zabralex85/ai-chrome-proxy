@@ -1,4 +1,5 @@
 @using AiChromeProxy.Client.Chat
+@using AiChromeProxy.Client.Navigator
 @using AiChromeProxy.Client.Sync
 @inject ChatEngine Chat
 
@@ -88,7 +89,7 @@
     </div>
     </div>
 
-    <div id="tab-panel" class="tab-panel" role="tabpanel" aria-labelledby="@TabId(Tabs.Active)" data-testid="main">
+    <div id="tab-panel" class="tab-panel @(TabSet.IsFile(Tabs.Active) ? "tab-panel-file" : null)" role="tabpanel" aria-labelledby="@TabId(Tabs.Active)" data-testid="main">
         @switch (Tabs.Active)
         {
             case TabSet.Welcome:
@@ -141,40 +142,16 @@
                 <ConflictView Engine="Engine" Path="@(TabSet.ConflictPath(conflictTab)!)" />
                 break;
             default:
-                var activePath = TabSet.PathOf(Tabs.Active)!;
-                var file = Engine.FileAt(activePath);
-                <section class="file-details" data-testid="file-details">
-                    <div class="file-heading">
-                        <Icon Name="@("file-" + Format.FileKind(activePath))" Size="32" Class="@("kind-" + Format.FileKind(activePath))" />
-                        <div>
-                            <h1>@FileName(activePath)</h1>
-                            <div class="mono muted">@activePath</div>
-                        </div>
-                    </div>
-                    @if (file is null)
-                    {
-                        <p class="muted">This file is no longer in the folder.</p>
-                    }
-                    else
-                    {
-                        <dl>
-                            <dt>Size</dt>
-                            <dd>@Format.Bytes(file.Size) <span class="muted">(@Format.Count(file.Size) bytes)</span></dd>
-                            <dt>SHA-256</dt>
-                            <dd class="mono">@(file.Sha256 ?? "—")</dd>
-                            <dt>Sync state</dt>
-                            <dd>
-                                <span class="state state-@file.State.ToString().ToLowerInvariant()">@StateText(file.State)</span>
-                                @if (file.Error is not null)
-                                {
-                                    <span class="state-error">@file.Error</span>
-                                }
-                            </dd>
-                        </dl>
-                        <p class="muted">The file viewer comes with the code navigator.</p>
-                    }
-                </section>
+                // A file tab: its viewer is rendered below, for every open file tab.
                 break;
+        }
+        @{
+            SyncPool();
+        }
+        @foreach (var id in Tabs.Open.Where(TabSet.IsFile))
+        {
+            var path = TabSet.PathOf(id)!;
+            <FileView @key="(Engine.FolderGeneration, id)" Engine="Engine" Path="@path" Active="@(id == Tabs.Active)" Live="@Pool.Contains(path)" Link="Link" />
         }
     </div>
 
@@ -189,9 +166,13 @@
     [Parameter, EditorRequired]
     public TabSet Tabs { get; set; } = null!;
 
-    /// <summary>A <c>path:line</c> link in the chat was clicked: the page opens the file's tab.</summary>
+    /// <summary>A <c>path:line</c> or <c>path#Symbol</c> link in the chat was clicked: the page opens the file's tab and passes the link back as <see cref="Link"/>.</summary>
     [Parameter]
-    public EventCallback<string> OnOpenFile { get; set; }
+    public EventCallback<FileLink> OnOpenFile { get; set; }
+
+    /// <summary>The last chat link that was clicked; its file's viewer reveals it once.</summary>
+    [Parameter]
+    public FileLink? Link { get; set; }
 
     /// <summary>The connection is up.</summary>
     [Parameter]
@@ -231,17 +212,29 @@
         _ => "tab-file",
     };
 
-    private static string StateText(FileSyncState state) => state switch
-    {
-        FileSyncState.Synced => "Synced",
-        FileSyncState.Pending => "Pending upload",
-        FileSyncState.TooLarge => "Too large (over 20 MB), not synced",
-        _ => "Error",
-    };
-
     private string TabId(string id) => $"tab-{Tabs.Open.ToList().IndexOf(id)}";
 
     private bool _menuOpen;
+    private int _generation;
+
+    /// <summary>Which file tabs may hold a live editor (at most <see cref="ViewerPool.Capacity"/>).</summary>
+    private ViewerPool Pool { get; } = new();
+
+    /// <summary>Before the file views render: forgets closed tabs and the old folder's, and marks the tab on screen as the most recently shown.</summary>
+    private void SyncPool()
+    {
+        if (_generation != Engine.FolderGeneration)
+        {
+            _generation = Engine.FolderGeneration;
+            Pool.Clear();
+        }
+
+        Pool.Keep([.. Tabs.Open.Where(TabSet.IsFile).Select(t => TabSet.PathOf(t)!)]);
+        if (TabSet.PathOf(Tabs.Active) is { } active)
+        {
+            Pool.Touch(active);
+        }
+    }
 
     /// <summary>The tab's label: the chat's title, or "New chat" until the first message is sent.</summary>
     private string ChatLabel(string id)

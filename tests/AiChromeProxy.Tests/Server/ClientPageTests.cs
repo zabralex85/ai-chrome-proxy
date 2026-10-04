@@ -1,11 +1,31 @@
 using System.Security.Cryptography;
 using System.Text;
 using AiChromeProxy.Server.Hosting;
+using Microsoft.AspNetCore.Components;
 
 namespace AiChromeProxy.Tests.Server;
 
 public sealed class ClientPageTests
 {
+	[Fact]
+	public void Render_ImportMapLeavesTheVendoredMonacoOut_ButKeepsTheModules()
+	{
+		static ResourceAsset Asset(string url, string label) => new(url, [new ResourceAssetProperty("label", label)]);
+		var assets = new ResourceAssetCollection(
+		[
+			new ResourceAsset("_framework/blazor.webassembly.js", [new ResourceAssetProperty("label", "_framework/blazor.webassembly.js")]),
+			new ResourceAsset("css/app.css", [new ResourceAssetProperty("label", "css/app.css")]),
+			Asset("lib/monaco/vs/loader.fp1.js", "lib/monaco/vs/loader.js"),
+			Asset("lib/monaco/vs/editor/editor.main.fp2.js", "lib/monaco/vs/editor/editor.main.js"),
+			Asset("js/viewer.fp3.js", "js/viewer.js"),
+		]);
+
+		var html = ClientPage.Render("<script type=\"importmap\">{{importmap}}</script>", assets);
+
+		Assert.DoesNotContain("lib/monaco", html, StringComparison.Ordinal);
+		Assert.Contains("js/viewer.js", html, StringComparison.Ordinal);
+	}
+
 	[Fact]
 	public void ContentSecurityPolicy_AllowsOnlyTheInlineScriptsOfThePageByHash()
 	{

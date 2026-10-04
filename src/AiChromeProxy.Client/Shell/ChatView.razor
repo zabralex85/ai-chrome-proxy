@@ -1,4 +1,5 @@
 @using AiChromeProxy.Client.Chat
+@using AiChromeProxy.Client.Navigator
 @using AiChromeProxy.Domain.Chat
 @inject JsChatView View
 @implements IDisposable
@@ -90,9 +91,9 @@
     [Parameter, EditorRequired]
     public ChatEngine Chat { get; set; } = null!;
 
-    /// <summary>A <c>path:line</c> link was clicked: open the file's tab.</summary>
+    /// <summary>A <c>path:line</c> or <c>path#Symbol</c> link was clicked: open the file's tab and reveal the target.</summary>
     [Parameter]
-    public EventCallback<string> OnOpenFile { get; set; }
+    public EventCallback<FileLink> OnOpenFile { get; set; }
 
     public void Dispose() => _links?.Dispose();
 
@@ -128,7 +129,7 @@
         {
             if (firstRender)
             {
-                _links = await View.OpenLinksAsync(_log, href => MarkdownRenderer.TryParseOpenLink(href, out var path, out _, out _) ? InvokeAsync(() => OnOpenFile.InvokeAsync(path)) : Task.CompletedTask);
+                _links = await View.OpenLinksAsync(_log, href => MarkdownRenderer.TryParseOpenLink(href, out var path, out var line, out var symbol) ? InvokeAsync(() => OnOpenFile.InvokeAsync(new FileLink(path, line, symbol))) : Task.CompletedTask);
             }
 
             await View.RenderDiagramsAsync(_log);
