@@ -199,8 +199,11 @@ public sealed class ChatSteps(IPage page)
 				await page.GetByTestId("theme-toggle").ClickAsync();
 			}
 
-			// The theme transition and the diagram redraw are over after this.
-			await page.WaitForTimeoutAsync(1000);
+			// Every diagram is drawn in this theme (mermaid calls the light one "default"), and the theme transitions are over.
+			await page.WaitForFunctionAsync(
+				"mode => Array.from(document.querySelectorAll('.mermaid-source')).every(e => e.getAttribute('data-rendered') === mode && e.querySelector('svg') !== null)",
+				theme == "dark" ? "dark" : "default");
+			await page.WaitForTimeoutAsync(400);
 			await page.ScreenshotAsync(new() { Path = Path.Combine(directory, $"chat-{name}-{theme}.png") });
 		}
 	}

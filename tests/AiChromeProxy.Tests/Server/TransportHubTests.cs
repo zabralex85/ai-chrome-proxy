@@ -5,6 +5,7 @@ using AiChromeProxy.Application.Transport;
 using AiChromeProxy.Client.Transport;
 using AiChromeProxy.Domain;
 using AiChromeProxy.Infrastructure.Security;
+using AiChromeProxy.Server.Hosting;
 using AiChromeProxy.Server.Security;
 using AiChromeProxy.Server.Transport;
 using AiChromeProxy.Tests.Infrastructure;
@@ -262,6 +263,17 @@ public sealed class TransportHubTests : IAsyncDisposable
 				Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 				Assert.Equal("text/html", response.Content.Headers.ContentType?.MediaType);
 				Assert.Equal("no-store", response.Headers.CacheControl?.ToString());
+				var policy = Assert.Single(response.Headers.GetValues("Content-Security-Policy"));
+				Assert.Equal(ClientPage.ContentSecurityPolicy(html), policy);
+				var inline = Regex.Matches(html, "<script(?![^>]*\\ssrc=)[^>]*>(.*?)</script>", RegexOptions.Singleline);
+				Assert.NotEmpty(inline);
+				foreach (var body in inline.Select(m => m.Groups[1].Value))
+				{
+					Assert.Contains($"'sha256-{Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(body)))}'", policy, StringComparison.Ordinal);
+				}
+
+				Assert.DoesNotContain("<script>", html, StringComparison.Ordinal);
+				Assert.DoesNotContain("'unsafe-inline'", policy.Split(';').Single(d => d.Trim().StartsWith("script-src", StringComparison.Ordinal)), StringComparison.Ordinal);
 				Assert.DoesNotContain("#[", html, StringComparison.Ordinal);
 				Assert.DoesNotContain("{{", html, StringComparison.Ordinal);
 

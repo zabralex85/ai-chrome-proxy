@@ -1,5 +1,7 @@
 using System.Text.RegularExpressions;
 using Markdig;
+using Markdig.Extensions.AutoIdentifiers;
+using Markdig.Extensions.GenericAttributes;
 using Markdig.Parsers;
 using Markdig.Renderers;
 using Markdig.Renderers.Html;
@@ -18,7 +20,7 @@ public static partial class MarkdownRenderer
 {
 	private const string OpenPrefix = "#open=";
 
-	private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder().UseAdvancedExtensions().DisableHtml().Build();
+	private static readonly MarkdownPipeline Pipeline = CreatePipeline();
 
 	/// <summary>Renders a message.</summary>
 	/// <param name="markdown">Claude's text.</param>
@@ -49,6 +51,15 @@ public static partial class MarkdownRenderer
 	{
 		var index = uri.IndexOf(OpenPrefix, StringComparison.Ordinal);
 		return TryParsePathLine(index < 0 ? string.Empty : uri[(index + OpenPrefix.Length)..], out path, out line);
+	}
+
+	/// <summary>Advanced extensions minus the two that write attributes: generic attributes (<c>{onclick=...}</c> would put event handlers and styles into the page) and auto identifiers (heading ids would clash with the shell's ids).</summary>
+	private static MarkdownPipeline CreatePipeline()
+	{
+		var builder = new MarkdownPipelineBuilder().UseAdvancedExtensions().DisableHtml();
+		builder.Extensions.TryRemove<GenericAttributesExtension>();
+		builder.Extensions.TryRemove<AutoIdentifierExtension>();
+		return builder.Build();
 	}
 
 	private static bool TryParsePathLine(string text, out string path, out int line)

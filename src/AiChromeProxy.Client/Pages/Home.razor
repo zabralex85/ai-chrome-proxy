@@ -31,7 +31,7 @@
              @onpointerdown="e => StartDragAsync(Side.Left, e)" @onkeydown="e => ResizeByKeyAsync(Side.Left, e)"></div>
     }
     @* An EventCallback re-renders the component that created it once the handler ran: the tree then highlights the active tab's file. *@
-    <MainArea Engine="Engine" Tabs="_tabs" ChatEnabled="@(Transport.State == TransportState.Connected && Engine.Folder == FolderStatus.Ready && Engine.FolderName is not null)" OnOpenFile="OpenFile" OnChanged="StateHasChanged" />
+    <MainArea Engine="Engine" Tabs="_tabs" ChatConnected="@(Transport.State == TransportState.Connected)" ChatFolderOpen="@(Engine.Folder == FolderStatus.Ready && Engine.FolderName is not null)" OnOpenFile="OpenFile" OnChanged="StateHasChanged" />
     <ActionsHistory Engine="Engine" Chat="Chat" Collapsed="@(!_historyOpen)" State="@Transport.State" PingMs="@_pingMs" />
     @if (_historyOpen)
     {

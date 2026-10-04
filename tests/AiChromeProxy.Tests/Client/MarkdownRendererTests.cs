@@ -43,6 +43,7 @@ public sealed class MarkdownRendererTests
 	[InlineData("[x](//evil.example.com/a)")]
 	[InlineData("[x](/etc/passwd:3)")]
 	[InlineData("[x](../up/a.cs:3)")]
+	[InlineData("[x](javascript&#58;alert(1))")]
 	[InlineData("<javascript:alert(1)>")]
 	public void Render_UnsafeLinks_AreDropped(string markdown)
 	{

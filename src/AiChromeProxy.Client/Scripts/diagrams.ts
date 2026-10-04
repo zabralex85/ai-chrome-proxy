@@ -24,6 +24,7 @@ const LIBRARY = '/lib/mermaid/mermaid.min.js';
 
 let loading: Promise<Mermaid> | null = null;
 let counter = 0;
+let watching: HTMLElement | null = null; // the container to redraw when the system theme changes
 
 function loaded(): Mermaid | undefined {
     return (globalThis as unknown as { mermaid?: Mermaid }).mermaid;
@@ -82,11 +83,25 @@ function showError(element: HTMLElement, source: string, error: unknown): void {
     element.replaceChildren(message, code);
 }
 
+/** Without a theme picked in the shell the system's applies: when it changes, the diagrams are drawn again in the new one. */
+function watchSystemTheme(container: HTMLElement): void {
+    const first = watching === null;
+    watching = container;
+    if (first) {
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+            if (watching?.isConnected === true) {
+                void render(watching);
+            }
+        });
+    }
+}
+
 /**
  * Draws the diagrams under the container that were not drawn yet; a diagram carries the theme it was drawn in (data-rendered), so a new
  * message does not redraw the old ones, and a theme switch redraws each of them once.
  */
 export async function render(container: HTMLElement): Promise<void> {
+    watchSystemTheme(container);
     const wanted = theme();
     const pending = Array.from(container.querySelectorAll<HTMLElement>('.mermaid-source')).filter(e => e.getAttribute(RENDERED) !== wanted);
     if (pending.length === 0) {

@@ -214,7 +214,8 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 	/// <summary>Answers a permission request of the session on screen (<see cref="ChatDecisions"/>); the card closes when the server's <c>permissionResolved</c> arrives.</summary>
 	/// <param name="requestId">The card's <see cref="ChatApproval.RequestId"/>.</param>
 	/// <param name="decision">One of <see cref="ChatDecisions"/>.</param>
-	public async Task ApproveAsync(string requestId, string decision)
+	/// <returns>Whether the answer was sent (false: the card is gone, or the request failed, which shows as an error line).</returns>
+	public async Task<bool> ApproveAsync(string requestId, string decision)
 	{
 		ChatApproval? card;
 		lock (_gate)
@@ -222,10 +223,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 			card = _sessions.Values.SelectMany(s => s.Approvals).FirstOrDefault(a => a.RequestId == requestId);
 		}
 
-		if (card is not null)
-		{
-			await TryAsync(MessageTypes.ChatApprove, new ChatApprovePayload(card.RunId, requestId, decision));
-		}
+		return card is not null && await TryAsync(MessageTypes.ChatApprove, new ChatApprovePayload(card.RunId, requestId, decision));
 	}
 
 	private static T Read<T>(Envelope envelope) => envelope.Payload.Deserialize<T>(JsonSerializerOptions.Web)!;
@@ -243,7 +241,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 		transport.RequestAsync(Envelope.Create(type, payload), RequestTimeout, ct);
 
 	/// <summary>A request whose failure becomes an error line in the session on screen.</summary>
-	private async Task TryAsync<T>(string type, T payload)
+	private async Task<bool> TryAsync<T>(string type, T payload)
 	{
 		CancellationToken token;
 		lock (_gate)
@@ -254,11 +252,13 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 		try
 		{
 			await RequestAsync(type, payload, token);
+			return true;
 		}
 		catch (Exception ex)
 		{
 			Current.AddError(Describe(ex));
 			Raise();
+			return false;
 		}
 	}
 

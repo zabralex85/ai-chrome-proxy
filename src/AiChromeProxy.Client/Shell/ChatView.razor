@@ -108,7 +108,11 @@
     private async Task AnswerAsync(ChatApproval approval, string decision)
     {
         _answered.Add(approval.RequestId);
-        await Chat.ApproveAsync(approval.RequestId, decision);
+        if (!await Chat.ApproveAsync(approval.RequestId, decision))
+        {
+            // The request failed (the error shows in the log): the buttons come back.
+            _answered.Remove(approval.RequestId);
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)

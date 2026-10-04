@@ -95,6 +95,16 @@ public sealed class ChatUiTests
 		Assert.Equal(expected, Format.Cost((decimal)cost));
 	}
 
+	[Theory]
+	[InlineData(true, true, "Message Claude. Enter sends, Shift+Enter adds a line.")]
+	[InlineData(true, false, "Open a folder to chat with Claude")]
+	[InlineData(false, false, "Open a folder to chat with Claude")]
+	[InlineData(false, true, "Waiting for the connection… you can write when it is back")]
+	public void ChatPlaceholder_SaysHowToUseTheBoxOrWhyItIsOff(bool connected, bool folderOpen, string expected)
+	{
+		Assert.Equal(expected, Format.ChatPlaceholder(connected, folderOpen));
+	}
+
 	[Fact]
 	public void Settings_DefaultToAskAndNoModel_AndAreNotDirty()
 	{

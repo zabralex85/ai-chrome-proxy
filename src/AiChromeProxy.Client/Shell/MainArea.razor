@@ -178,7 +178,7 @@
         }
     </div>
 
-    <ChatInput Chat="Chat" Enabled="ChatEnabled" OnSend="SendAsync" />
+    <ChatInput Chat="Chat" Enabled="ChatEnabled" Placeholder="@Format.ChatPlaceholder(ChatConnected, ChatFolderOpen)" OnSend="SendAsync" />
 </section>
 
 @code {
@@ -193,9 +193,16 @@
     [Parameter]
     public EventCallback<string> OnOpenFile { get; set; }
 
-    /// <summary>The connection is up and a folder is open: the chat input is enabled.</summary>
+    /// <summary>The connection is up.</summary>
     [Parameter]
-    public bool ChatEnabled { get; set; }
+    public bool ChatConnected { get; set; }
+
+    /// <summary>A folder is open and synced.</summary>
+    [Parameter]
+    public bool ChatFolderOpen { get; set; }
+
+    /// <summary>The chat input is enabled: connected, with a folder open.</summary>
+    private bool ChatEnabled => ChatConnected && ChatFolderOpen;
 
     /// <summary>Raised after every tab change so the page re-renders (the tree highlights the active file).</summary>
     [Parameter]

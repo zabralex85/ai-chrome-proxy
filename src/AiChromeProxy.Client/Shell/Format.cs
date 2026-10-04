@@ -128,6 +128,14 @@ public static class Format
 			: string.Create(CultureInfo.InvariantCulture, $"Claude working… {time.Minutes}:{time.Seconds:00}");
 	}
 
+	/// <summary>The chat box's placeholder: how to use it, or why it is off.</summary>
+	public static string ChatPlaceholder(bool connected, bool folderOpen) => (connected, folderOpen) switch
+	{
+		(true, true) => "Message Claude. Enter sends, Shift+Enter adds a line.",
+		(_, false) => "Open a folder to chat with Claude",
+		_ => "Waiting for the connection… you can write when it is back",
+	};
+
 	/// <summary>The cost Claude Code reported for a run: "$0.12".</summary>
 	public static string Cost(decimal usd) => string.Create(CultureInfo.InvariantCulture, $"${usd:0.00}");
 }

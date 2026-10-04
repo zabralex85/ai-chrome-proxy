@@ -6,7 +6,7 @@
 @* Enter sends and Shift+Enter adds a line (the keydown handler is in Scripts/chat.ts: Blazor cannot cancel a key conditionally). While Claude works, the send button is Stop. *@
 <div class="chat">
     <textarea data-testid="chat-input" rows="2" disabled="@(!Enabled)" aria-label="Message to Claude" maxlength="@ChatLimits.MaxTextChars" @ref="_box"
-              placeholder="@(Enabled ? "Message Claude. Enter sends, Shift+Enter adds a line." : "Open a folder to chat with Claude")"
+              placeholder="@Placeholder"
               @bind="_text" @bind:event="oninput"></textarea>
     @if (Chat.Running)
     {
@@ -29,6 +29,10 @@
     /// <summary>Connected and a folder open.</summary>
     [Parameter]
     public bool Enabled { get; set; }
+
+    /// <summary>What the empty box says (see <see cref="Format.ChatPlaceholder"/>).</summary>
+    [Parameter]
+    public string Placeholder { get; set; } = string.Empty;
 
     /// <summary>Sends the message; the page shows the chat tab and keeps the tabs in step with the session.</summary>
     [Parameter, EditorRequired]
