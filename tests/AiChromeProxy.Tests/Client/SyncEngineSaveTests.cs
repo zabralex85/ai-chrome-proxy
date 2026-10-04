@@ -96,17 +96,33 @@ public sealed class SyncEngineSaveTests : IDisposable
 	[Fact]
 	public async Task Save_ServerChangeWaiting_Refused()
 	{
-		_folder.Write("docs/x.txt", "v1");
 		_folder.Write("keep.txt", "k");
 		await SyncedAsync();
-		await EditMirrorAsync("docs/x.txt", "server");
+		await EditMirrorAsync("docs/new.mmd", "server");
 		_folder.WriteAccess = true;
 		_calls = 0;
 
-		var result = await _engine.SaveFileAsync("docs/x.txt", Made);
+		var result = await _engine.SaveFileAsync("docs/new.mmd", Made);
 
-		Assert.False(result.Ok);
+		Assert.Equal(SyncEngine.ResolveFirst, result.Error);
 		Assert.Equal(0, _calls);
+		Assert.False(_folder.Files.ContainsKey("docs/new.mmd"));
+	}
+
+	[Fact]
+	public async Task Save_FileAppearsWhileTheContentIsMade_RefusedAndNotOverwritten()
+	{
+		await SyncedAsync();
+
+		var result = await _engine.SaveFileAsync("a.mmd", () =>
+		{
+			_folder.Write("a.mmd", "theirs");
+			return Task.FromResult(new byte[] { 1 });
+		});
+
+		Assert.Equal("'a.mmd' already exists here.", result.Error);
+		Assert.Equal("theirs", Encoding.UTF8.GetString(_folder.Files["a.mmd"]));
+		Assert.Contains(_engine.Activity, a => a.Text == "Could not save 'a.mmd': 'a.mmd' already exists here.");
 	}
 
 	[Fact]

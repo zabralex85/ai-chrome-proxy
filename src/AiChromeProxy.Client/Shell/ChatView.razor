@@ -164,6 +164,7 @@
 
         _saving = null;
         _saved = (path, kind != DiagramFileKind.Png, result.Note); // the file viewer shows text only
+        StateHasChanged(); // OnSave is a Func: close the dialog now
         return null;
     }
 

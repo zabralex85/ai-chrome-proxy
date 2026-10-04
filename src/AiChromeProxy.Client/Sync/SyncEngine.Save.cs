@@ -37,7 +37,18 @@ public sealed partial class SyncEngine
 		return await ActAsync(
 			$"save '{path}'",
 			[path],
-			async () => await folder.WriteAsync(path, await content()),
+			async () =>
+			{
+				var bytes = await content();
+
+				// A file may have appeared while the prompt or the cycle lock was waited on.
+				if (await folder.HashNowAsync(path) is not null)
+				{
+					throw new IOException($"'{name}' already exists here.");
+				}
+
+				await folder.WriteAsync(path, bytes);
+			},
 			SyncActivityKind.TreeAction,
 			check.Excluded ? $"Saved '{path}'; excluded from sync." : $"Saved '{path}'.",
 			check.Excluded ? SavedExcludedNote : null);
