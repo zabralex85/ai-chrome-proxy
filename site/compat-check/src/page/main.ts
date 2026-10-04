@@ -105,7 +105,7 @@ function describe(r: CheckResult): string {
 	const t = TEXT[r.id];
 	if (running.has(r.id)) return "Checking…";
 	if (r.status === "pass") return t.pass;
-	if (r.status === "skipped") return FOLDER_CHECKS.includes(r.id) ? "Not run yet: use Pick a test folder below." : "Not run.";
+	if (r.status === "skipped") return FOLDER_CHECKS.includes(r.id) ? (r.id === "folder-write" ? "Not run yet: pick a test folder, then use Test writing below." : "Not run yet: use Pick a test folder below.") : "Not run.";
 	return t.problem() + (r.error === undefined ? "" : ` (${r.error})`);
 }
 
@@ -162,6 +162,8 @@ function updateSend(): void {
 	byId<HTMLButtonElement>("send").disabled = !initialDone || reportSent || running.size > 0;
 }
 
+let picked: FileSystemDirectoryHandle | null = null;
+
 async function pickFolder(): Promise<void> {
 	if (!window.showDirectoryPicker) return;
 	let dir: FileSystemDirectoryHandle;
@@ -172,15 +174,34 @@ async function pickFolder(): Promise<void> {
 		await run("folder-read", async () => ({ id: "folder-read", status: "fail", error: errorName(e) }));
 		return;
 	}
+	picked = null;
 	const pick = byId<HTMLButtonElement>("pick");
+	const write = byId<HTMLButtonElement>("write");
 	pick.disabled = true;
+	write.disabled = true;
 	updateSend();
 	try {
 		await run("folder-read", () => probes.folderRead(dir));
-		await run("folder-write", () => probes.folderWrite(dir));
 		await run("rename", probes.rename);
 	} finally {
 		pick.disabled = false;
+		picked = dir;
+		write.disabled = false;
+		updateSend();
+	}
+}
+
+// A separate click: the picker consumes the user activation that requestPermission needs.
+async function testWriting(): Promise<void> {
+	if (picked === null) return;
+	const dir = picked;
+	const write = byId<HTMLButtonElement>("write");
+	write.disabled = true;
+	updateSend();
+	try {
+		await run("folder-write", () => probes.folderWrite(dir));
+	} finally {
+		write.disabled = false;
 		updateSend();
 	}
 }
@@ -235,6 +256,7 @@ async function start(): Promise<void> {
 	}
 	renderVerdict();
 	byId("pick").addEventListener("click", () => void pickFolder());
+	byId("write").addEventListener("click", () => void testWriting());
 	byId("copy").addEventListener("click", () => void copyResult());
 	byId("send").addEventListener("click", () => void sendReport());
 	await Promise.all([

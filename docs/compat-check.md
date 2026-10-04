@@ -19,7 +19,7 @@ Source: [`site/compat-check/`](../site/compat-check) — a Cloudflare Worker wit
 | 9 | Write to the folder | `readwrite` granted; a 16-byte `.aicp-compat-<8 hex>.tmp` written, read back and removed | **warn**: the app works one way, the server cannot write back |
 | 10 | Rename in place (`move` on `FileSystemHandle`) | available | **warn**: folder rename unavailable |
 
-Checks 1–7 run on load; 8–10 run when the user clicks **Pick a test folder** (cancelling the picker leaves them "Not run"). Verdict: **Ready** (all pass), **Ready with limitations** (warnings only, listed), **Not supported** (any failure, blockers listed). **Copy result** puts a plain-text summary on the clipboard (or shows it selected in a text box when the clipboard is blocked).
+Checks 1–7 run on load; 8 and 10 run when the user clicks **Pick a test folder** (cancelling the picker leaves them "Not run"), 9 on a separate **Test writing** click (the picker consumes the user activation that the write permission prompt needs). Verdict: **Ready** (all pass), **Ready with limitations** (warnings only, listed), **Not supported** (any failure, blockers listed). **Copy result** puts a plain-text summary on the clipboard (or shows it selected in a text box when the clipboard is blocked).
 
 ## Privacy
 
