@@ -60,9 +60,9 @@ For a zone in the same Cloudflare account, uncomment `routes` in `wrangler.jsonc
 
 and deploy again; Cloudflare creates the DNS record and certificate.
 
-### Rate limiting (recommended)
+### Rate limiting
 
-The Worker has no rate limit of its own. Add one in the Cloudflare dashboard: your zone → **Security** → **WAF** → **Rate limiting rules** → a rule for URI path equals `/api/report`, for example 10 requests per 10 seconds per IP, action **Block**. (Rate limiting rules apply to custom domains on a zone, not to `workers.dev`.)
+The Worker limits `POST /api/report` to 10 requests per minute per IP through the Workers rate limiting binding `REPORT_LIMITER` (`ratelimits` in `wrangler.example.jsonc`); over the limit it answers `429`. The IP is only the limiter key and is never stored. Without the binding the endpoint is unlimited. The limit is per Cloudflare location and approximate; for a hard limit add a WAF rate limiting rule on the zone as well.
 
 ## Reading reports
 

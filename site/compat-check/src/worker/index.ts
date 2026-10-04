@@ -4,6 +4,8 @@ import { handleReport } from "../shared/report-handler.js";
 interface Env {
 	DB: D1Database;
 	ASSETS: Fetcher;
+	// Optional: deployments without the "ratelimits" binding run unlimited.
+	REPORT_LIMITER?: RateLimit;
 }
 
 const MAX_MESSAGES = 10;
@@ -27,6 +29,10 @@ async function report(request: Request, env: Env, url: URL): Promise<Response> {
 	if (request.method !== "POST") return err(405, "method not allowed", { Allow: "POST" });
 	const origin = request.headers.get("Origin");
 	if (origin !== null && origin !== url.origin) return err(403, "forbidden");
+	// The IP is only the limiter key; it is never stored.
+	if (env.REPORT_LIMITER && !(await env.REPORT_LIMITER.limit({ key: request.headers.get("CF-Connecting-IP") ?? "unknown" })).success) {
+		return err(429, "too many requests", { "Retry-After": "60" });
+	}
 	const length = Number(request.headers.get("Content-Length") ?? "0");
 	if (length > MAX_REPORT_BYTES) return err(413, "too large");
 	// ponytail: reads the whole body before the size check; Content-Length is capped above, chunked bodies are bounded by the platform
