@@ -211,6 +211,42 @@ public sealed class TransportHubTests : IAsyncDisposable
 		}
 	}
 
+	[Theory]
+	[InlineData(HttpTransportType.LongPolling)]
+	[InlineData(HttpTransportType.ServerSentEvents)]
+	public async Task NoAccess_Development_FallbackTransport_ConnectsAndRoutes(HttpTransportType transportType)
+	{
+		// No Access expiry or email in the request items (Access off; a fallback transport's own context): the hub still connects.
+		var ct = TestContext.Current.CancellationToken;
+		using (var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+		{
+			b.UseEnvironment(Environments.Development);
+			b.UseSetting("Server:PublicHost", string.Empty);
+			b.UseSetting("CloudflareAccess:Enabled", "false");
+			b.UseSetting("CloudflareAccess:TeamDomain", string.Empty);
+			b.UseSetting("CloudflareAccess:Audience", string.Empty);
+		}))
+		{
+			var server = factory.Server;
+			var connection = new HubConnectionBuilder()
+				.WithUrl(new Uri(server.BaseAddress, TransportHub.Path), o =>
+				{
+					o.Transports = transportType;
+					o.HttpMessageHandlerFactory = _ => server.CreateHandler();
+				})
+				.Build();
+			await using (var transport = new SignalRTransport(connection))
+			{
+				await transport.ConnectAsync(ct);
+
+				var reply = await transport.RequestAsync(Envelope.Create(MessageTypes.Ping, new { }), TimeSpan.FromSeconds(10), ct);
+
+				Assert.Equal(TransportState.Connected, transport.State);
+				Assert.Equal(MessageTypes.Pong, reply.Type);
+			}
+		}
+	}
+
 	[Fact]
 	public async Task NoToken_ConnectionRejected()
 	{

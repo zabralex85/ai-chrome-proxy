@@ -22,7 +22,7 @@ public sealed class TransportHub(EnvelopeRouter router, SyncSessions syncSession
 		var caller = Context;
 		var context = new EnvelopeContext(
 			connectionId,
-			Context.GetHttpContext()?.Items[CloudflareAccessMiddleware.EmailItem] as string,
+			Item(CloudflareAccessMiddleware.EmailItem) as string,
 			(e, ct) => hub.Clients.Client(connectionId).SendAsync(ReceiveMethod, e, ct),
 			caller.Abort);
 
@@ -47,7 +47,7 @@ public sealed class TransportHub(EnvelopeRouter router, SyncSessions syncSession
 	public override Task OnConnectedAsync()
 	{
 		// A connection outlives the request that carried the token: drop it when the token expires (the client reconnects through Access).
-		if (Context.GetHttpContext()?.Items[CloudflareAccessMiddleware.ExpiryItem] is DateTimeOffset expiry)
+		if (Item(CloudflareAccessMiddleware.ExpiryItem) is DateTimeOffset expiry)
 		{
 			var context = Context;
 			// exp plus the validator's skew: a token accepted inside the skew window must not be aborted in a reconnect loop.
@@ -65,4 +65,8 @@ public sealed class TransportHub(EnvelopeRouter router, SyncSessions syncSession
 		chat.Unsubscribe(Context.ConnectionId);
 		return base.OnDisconnectedAsync(exception);
 	}
+
+	/// <summary>A request item set by the Access middleware, or null: Access may be off, and a fallback transport's context (long polling, SSE) is a copy whose items may lack it.</summary>
+	private object? Item(string key) =>
+		Context.GetHttpContext()?.Items.TryGetValue(key, out var value) == true ? value : null;
 }
