@@ -69,7 +69,8 @@ public static partial class MarkdownRenderer
 		path = string.Empty;
 		line = 0;
 		symbol = null;
-		var match = PathTarget().Match(text);
+		// Markdig percent-encodes non-ASCII in href. Everything below validates the unescaped text; a "%" left over (double encoding) fails the pattern.
+		var match = PathTarget().Match(Uri.UnescapeDataString(text));
 		if (!match.Success || match.Groups["path"].Value.Split('/').Any(s => s.All(c => c == '.')))
 		{
 			return false;

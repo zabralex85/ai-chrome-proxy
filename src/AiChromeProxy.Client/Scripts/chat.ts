@@ -1,5 +1,5 @@
 // Browser glue of the chat view that C# cannot do: Enter sends (Shift+Enter adds a line), the log follows new text unless the user scrolled up,
-// and a click on a path:line link (href="#open=path:line", made by MarkdownRenderer.cs) opens the file instead of changing the address.
+// and a click on a path:line or path#Symbol link (href="#open=path:line" or "#open=path#Symbol", made by MarkdownRenderer.cs) opens the file instead of changing the address.
 // Called through JsChatView.cs; compiled by MSBuild to wwwroot/js/chat.js.
 
 /** A DotNetObjectReference marshalled to JS (JsChatView.SendCallback). */

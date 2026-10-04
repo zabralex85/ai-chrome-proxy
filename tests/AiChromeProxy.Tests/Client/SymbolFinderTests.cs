@@ -20,6 +20,19 @@ public sealed class SymbolFinderTests
 	public void Find_IsWholeWordOnly() => Assert.Null(SymbolFinder.Find("class FooBar {}\nvar myFoo = 1;\nFoo2()\n", "Foo"));
 
 	[Fact]
+	public void Find_ManyLongLines_ReturnsWithinTheBudget()
+	{
+		var line = string.Join(' ', Enumerable.Repeat("word", 6000)); // 29 999 chars: over the declaration limit, whole-word search only
+		var text = string.Join('\n', Enumerable.Repeat(line, 500));
+		var clock = System.Diagnostics.Stopwatch.StartNew();
+		Assert.Null(SymbolFinder.Find(text, "Missing"));
+		Assert.True(clock.Elapsed < TimeSpan.FromSeconds(2), clock.Elapsed.ToString());
+	}
+
+	[Fact]
+	public void Find_LongLine_StillFindsTheWholeWord() => Assert.Equal(1, SymbolFinder.Find(new string('a', 10_001) + " Target", "Target"));
+
+	[Fact]
 	public void Find_NotFound_IsNull() => Assert.Null(SymbolFinder.Find("a\nb", "Missing"));
 
 	[Theory]

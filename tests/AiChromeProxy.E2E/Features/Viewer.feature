@@ -15,3 +15,9 @@ Examples:
 	| path          | language   |
 	| src/Sample.cs | csharp     |
 	| web/sample.ts | typescript |
+
+Scenario: A diagram still renders after the viewer has loaded Monaco
+	Given the app is connected with a synced folder open
+	When the viewer opens "src/Sample.cs" with line 2 revealed
+	And I type "tour please" and press Enter
+	Then the answer contains a drawn diagram

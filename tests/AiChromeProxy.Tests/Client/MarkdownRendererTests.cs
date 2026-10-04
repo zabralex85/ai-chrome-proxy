@@ -152,6 +152,8 @@ public sealed class MarkdownRendererTests
 	[InlineData("http://localhost:5000/#open=a/b.txt:3", "a/b.txt", 3, null)]
 	[InlineData("#open=src/a.cs#Main", "src/a.cs", 0, "Main")]
 	[InlineData("http://localhost:5000/#open=a/b.txt#A.B", "a/b.txt", 0, "A.B")]
+	[InlineData("#open=docs/%D0%9F%D1%80%D0%B8%D0%B2%D0%B5%D1%82.md:3", "docs/Привет.md", 3, null)]
+	[InlineData("#open=docs/%D0%9F%D1%80%D0%B8%D0%B2%D0%B5%D1%82.md#Main", "docs/Привет.md", 0, "Main")]
 	public void TryParseOpenLink_ReadsThePathAndTheLineOrSymbol(string uri, string path, int line, string? symbol)
 	{
 		Assert.True(MarkdownRenderer.TryParseOpenLink(uri, out var parsedPath, out var parsedLine, out var parsedSymbol));
@@ -166,6 +168,10 @@ public sealed class MarkdownRendererTests
 	[InlineData("http://localhost/#open=a.cs#")]
 	[InlineData("http://localhost/#open=a.cs#1x")]
 	[InlineData("http://localhost/#other")]
+	[InlineData("http://localhost/#open=%2e%2e/x.cs:1")]
+	[InlineData("http://localhost/#open=a/%2e%2e/x.cs:1")]
+	[InlineData("http://localhost/#open=%2fetc/x.cs:1")]
+	[InlineData("http://localhost/#open=a%252e%252e/x.cs:1")]
 	public void TryParseOpenLink_RejectsAnythingElse(string uri) => Assert.False(MarkdownRenderer.TryParseOpenLink(uri, out _, out _, out _));
 
 	[Fact]
