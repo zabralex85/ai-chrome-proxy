@@ -86,10 +86,10 @@ public sealed class ChatUiTests
 	}
 
 	[Theory]
-	[InlineData(0.12, "$0.12")]
-	[InlineData(0.0123, "$0.01")]
-	[InlineData(1234.5, "$1234.50")]
-	[InlineData(0, "$0.00")]
+	[InlineData(0.12, "≈ $0.12 API")]
+	[InlineData(0.0123, "≈ $0.01 API")]
+	[InlineData(1234.5, "≈ $1234.50 API")]
+	[InlineData(0, "≈ $0.00 API")]
 	public void Cost_TwoDecimalsWhateverTheCulture(double cost, string expected)
 	{
 		Assert.Equal(expected, Format.Cost((decimal)cost));

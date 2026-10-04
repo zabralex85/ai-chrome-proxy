@@ -62,7 +62,7 @@ The approval tool is an MCP endpoint, `/mcp/approve`, reachable only from `127.0
 - A message may have up to 16 000 characters and about 30 KB once encoded: non-ASCII characters and quotes are sent as `\uXXXX` (6 bytes each), so a message in Cyrillic, for example, holds about 5 000 characters. A longer one is not sent: "The message is too long; shorten it."
 - One run per repo at a time (a second send gets "busy"). **Stop** kills the run. A run continues if the browser disconnects; reopen the tab to see it. After the `result` event the process is killed if it does not exit within 5 seconds.
 - Replies render as markdown (raw HTML is not rendered), mermaid diagrams (mermaid 12.1.0, vendored) and `path:line` and `path#Symbol` links that open the file's tab in the [code viewer](navigator.md). **Enter** sends, **Shift+Enter** adds a line.
-- The status bar shows "Claude idle" or "Claude working... 0:42" and the last run's cost.
+- The status bar shows "Claude idle" or "Claude working... 0:42" and the last run's cost at API prices ("≈ $0.12 API"): on a Claude subscription runs are not charged, it only shows how heavy a run was.
 
 ## Diagrams
 
@@ -88,7 +88,7 @@ Pictures are saved in the theme you see, with its background. PNG is drawn at tw
 
 - No attachments, no slash commands or TUI.
 - One run per repo.
-- The cost is Claude Code's own report (API-equivalent for subscriptions).
+- The cost is Claude Code's own estimate at API prices, not what a subscription is charged.
 - Edit conflicts behave as in the [back channel](sync.md#back-channel).
 
 ## Manual checklist
