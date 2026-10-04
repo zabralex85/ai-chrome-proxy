@@ -35,6 +35,9 @@ public sealed partial class MarkdownInjectionTests
 		"[a](https://example.com/\"onmouseover=\"alert(1))",
 		"`x` {#app .y}",
 		"* * *\n{onclick=x}",
+		"`a.cs#Foo`{onclick=alert(1)}",
+		"[x](a.cs#Foo\"onmouseover=\"alert(1))",
+		"`a.cs#Foo\" style=\"x`",
 	];
 
 	public static TheoryData<string> Inputs => [.. Corpus];

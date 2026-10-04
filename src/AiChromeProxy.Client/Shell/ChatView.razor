@@ -128,7 +128,7 @@
         {
             if (firstRender)
             {
-                _links = await View.OpenLinksAsync(_log, href => MarkdownRenderer.TryParseOpenLink(href, out var path, out _) ? InvokeAsync(() => OnOpenFile.InvokeAsync(path)) : Task.CompletedTask);
+                _links = await View.OpenLinksAsync(_log, href => MarkdownRenderer.TryParseOpenLink(href, out var path, out _, out _) ? InvokeAsync(() => OnOpenFile.InvokeAsync(path)) : Task.CompletedTask);
             }
 
             await View.RenderDiagramsAsync(_log);

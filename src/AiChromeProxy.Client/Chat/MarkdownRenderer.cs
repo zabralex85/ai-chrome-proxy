@@ -12,8 +12,8 @@ namespace AiChromeProxy.Client.Chat;
 
 /// <summary>
 /// Claude's Markdown as HTML for the chat (shown as a <c>MarkupString</c>): advanced extensions, raw HTML switched off (it is shown as text),
-/// links limited to <c>http(s)</c> and <c>path:line</c>, images dropped. A <c>path:line</c> (a link target, or an inline code span) becomes
-/// <c>#open=path:line</c>, which the page turns into the file's tab; a fenced <c>mermaid</c> block becomes
+/// links limited to <c>http(s)</c>, <c>path:line</c> and <c>path#Symbol</c>, images dropped. A <c>path:line</c> or <c>path#Symbol</c> (a link target, or an inline code span) becomes
+/// <c>#open=path:line</c> or <c>#open=path#Symbol</c>, which the page turns into the file's tab; a fenced <c>mermaid</c> block becomes
 /// <c>&lt;div class="mermaid-source" data-diagram="…"&gt;</c> that <c>Scripts/diagrams.ts</c> renders.
 /// </summary>
 public static partial class MarkdownRenderer
@@ -42,15 +42,16 @@ public static partial class MarkdownRenderer
 		}
 	}
 
-	/// <summary>Reads the <c>#open=path:line</c> link of a rendered <c>path:line</c> out of a URI.</summary>
+	/// <summary>Reads the <c>#open=path:line</c> or <c>#open=path#Symbol</c> link of a rendered code link out of a URI.</summary>
 	/// <param name="uri">The page's URI after the click.</param>
 	/// <param name="path">The repo-relative path, <c>/</c>-separated.</param>
-	/// <param name="line">The line, 1-based.</param>
+	/// <param name="line">The line, 1-based; 0 when the link names a symbol.</param>
+	/// <param name="symbol">The symbol; null when the link names a line.</param>
 	/// <returns>Whether the URI is an open link.</returns>
-	public static bool TryParseOpenLink(string uri, out string path, out int line)
+	public static bool TryParseOpenLink(string uri, out string path, out int line, out string? symbol)
 	{
 		var index = uri.IndexOf(OpenPrefix, StringComparison.Ordinal);
-		return TryParsePathLine(index < 0 ? string.Empty : uri[(index + OpenPrefix.Length)..], out path, out line);
+		return TryParseTarget(index < 0 ? string.Empty : uri[(index + OpenPrefix.Length)..], out path, out line, out symbol);
 	}
 
 	/// <summary>Advanced extensions minus the two that write attributes: generic attributes (<c>{onclick=...}</c> would put event handlers and styles into the page) and auto identifiers (heading ids would clash with the shell's ids).</summary>
@@ -62,12 +63,23 @@ public static partial class MarkdownRenderer
 		return builder.Build();
 	}
 
-	private static bool TryParsePathLine(string text, out string path, out int line)
+	/// <summary>Parses <c>path:line</c> or <c>path#Symbol</c>; the text that comes back is rebuilt from the parts that matched, never the input.</summary>
+	private static bool TryParseTarget(string text, out string path, out int line, out string? symbol)
 	{
 		path = string.Empty;
 		line = 0;
-		var match = PathLine().Match(text);
-		if (!match.Success || match.Groups["path"].Value.Split('/').Any(s => s.All(c => c == '.')) || !int.TryParse(match.Groups["line"].Value, out line))
+		symbol = null;
+		var match = PathTarget().Match(text);
+		if (!match.Success || match.Groups["path"].Value.Split('/').Any(s => s.All(c => c == '.')))
+		{
+			return false;
+		}
+
+		if (match.Groups["symbol"].Success)
+		{
+			symbol = match.Groups["symbol"].Value;
+		}
+		else if (!int.TryParse(match.Groups["line"].Value, out line))
 		{
 			return false;
 		}
@@ -75,6 +87,8 @@ public static partial class MarkdownRenderer
 		path = match.Groups["path"].Value;
 		return true;
 	}
+
+	private static string OpenTarget(string path, int line, string? symbol) => symbol is null ? $"{OpenPrefix}{path}:{line}" : $"{OpenPrefix}{path}#{symbol}";
 
 	private static bool IsHttp(string? url) =>
 		url is not null && (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || url.StartsWith("https://", StringComparison.OrdinalIgnoreCase));
@@ -91,9 +105,9 @@ public static partial class MarkdownRenderer
 			{
 				OpenInNewTab(link);
 			}
-			else if (link.Url is not null && TryParsePathLine(link.Url, out var path, out var line))
+			else if (link.Url is not null && TryParseTarget(link.Url, out var path, out var line, out var symbol))
 			{
-				link.Url = $"{OpenPrefix}{path}:{line}";
+				link.Url = OpenTarget(path, line, symbol);
 			}
 			else
 			{
@@ -140,17 +154,17 @@ public static partial class MarkdownRenderer
 	{
 		foreach (var code in document.Descendants<CodeInline>().ToList())
 		{
-			if (code.Parent is not LinkInline && TryParsePathLine(code.Content, out var path, out var line))
+			if (code.Parent is not LinkInline && TryParseTarget(code.Content, out var path, out var line, out var symbol))
 			{
-				var link = new LinkInline($"{OpenPrefix}{path}:{line}", string.Empty);
+				var link = new LinkInline(OpenTarget(path, line, symbol), string.Empty);
 				code.ReplaceBy(link);
 				link.AppendChild(code);
 			}
 		}
 	}
 
-	[GeneratedRegex(@"^(?<path>(?!/)(?:[\w@+.\-]+/)*[\w@+\-][\w@+.\-]*\.\w+):(?<line>\d{1,9})(?::\d+)?$")]
-	private static partial Regex PathLine();
+	[GeneratedRegex(@"^(?<path>(?!/)(?:[\w@+.\-]+/)*[\w@+\-][\w@+.\-]*\.\w+)(?::(?<line>\d{1,9})(?::\d+)?|#(?<symbol>[A-Za-z_][\w.]*))$")]
+	private static partial Regex PathTarget();
 
 	private sealed class DiagramCodeBlockRenderer(bool streaming) : CodeBlockRenderer
 	{
