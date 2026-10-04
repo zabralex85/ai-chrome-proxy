@@ -21,7 +21,7 @@ public sealed class DiagramFilesTests
 	[InlineData("---\r\nconfig: y\r\n---\r\njourney\r\n", "journey-20261004-0905")]
 	[InlineData("timeline\n a", "timeline-20261004-0905")]
 	[InlineData("C4Context\n", "c4context-20261004-0905")]
-	[InlineData("", "20261004-0905")]
+	[InlineData("", "diagram-20261004-0905")]
 	public void DefaultName_ByType(string source, string expected) => Assert.Equal(expected, DiagramFiles.DefaultName(source, Now));
 
 	[Fact]

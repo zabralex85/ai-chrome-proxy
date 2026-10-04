@@ -27,7 +27,7 @@ public static class DiagramFiles
 		var title = FindTitle(lines);
 		return title is not null
 			? Slug(title)
-			: Slug(TypeSlug(FindType(lines)) + "-" + localNow.ToString("yyyyMMdd-HHmm", CultureInfo.InvariantCulture));
+			: Slug(TypeSlug(FindType(lines))) + "-" + localNow.ToString("yyyyMMdd-HHmm", CultureInfo.InvariantCulture);
 	}
 
 	/// <summary>The default path in <see cref="DefaultFolder"/>.</summary>
