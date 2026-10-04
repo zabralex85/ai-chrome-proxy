@@ -66,4 +66,18 @@ public sealed class DiagramFilesTests
 	[InlineData("x.tar.gz", "x.tar.png")]
 	[InlineData("n.png", "n.png")]
 	public void WithExtension_Enforced(string path, string expected) => Assert.Equal(expected, DiagramFiles.WithExtension(path, DiagramFileKind.Png));
+
+	[Theory]
+	[InlineData(DiagramFileKind.Source, "Save diagram source")]
+	[InlineData(DiagramFileKind.Svg, "Save diagram as SVG")]
+	[InlineData(DiagramFileKind.Png, "Save diagram as PNG")]
+	public void SaveTitle_ByKind(DiagramFileKind kind, string expected) => Assert.Equal(expected, DiagramFiles.SaveTitle(kind));
+
+	[Theory]
+	[InlineData("docs/diagrams/class-diagram.mmd", 14, 27)]
+	[InlineData("name.svg", 0, 4)]
+	[InlineData("a.d/name", 4, 8)]
+	[InlineData("a/.hidden", 2, 9)]
+	[InlineData("", 0, 0)]
+	public void NameRange_AfterFolderBeforeExtension(string path, int start, int end) => Assert.Equal((start, end), DiagramFiles.NameRange(path));
 }

@@ -1,0 +1,102 @@
+@using AiChromeProxy.Client.Chat
+@inject JsTreeUi Ui
+
+@* Where to save a chat diagram in the picked folder: a native modal <dialog> (showModal) like ConfirmDialog, with one path field.
+   Enter submits, Esc cancels; the kind's extension replaces a typed one. A refused path stays here with its reason under the field. *@
+<dialog @ref="_dialog" class="dialog-backdrop" aria-labelledby="save-diagram-title" data-testid="save-diagram-dialog"
+        @oncancel="CancelAsync" @oncancel:preventDefault="true">
+    <form class="dialog" @onsubmit="SaveAsync">
+        <h2 id="save-diagram-title" class="dialog-title">@DiagramFiles.SaveTitle(Kind)</h2>
+        <label class="dialog-field" for="save-diagram-path">Path in the project</label>
+        <input @ref="_input" id="save-diagram-path" class="text-input" data-testid="save-diagram-path" type="text" autocomplete="off" spellcheck="false"
+               aria-busy="@(_busy ? "true" : null)" readonly="@_busy" aria-invalid="@(_error is null ? null : "true")" aria-describedby="@(_error is null ? null : "save-diagram-error")"
+               @bind="_value" @bind:event="oninput" @bind:after="() => _error = null" />
+        @if (_error is not null)
+        {
+            <p id="save-diagram-error" class="dialog-error state-error" role="alert" data-testid="save-diagram-error">@_error</p>
+        }
+        <div class="dialog-actions">
+            <button type="button" class="button secondary" data-testid="save-diagram-cancel" disabled="@_busy" @onclick="CancelAsync">Cancel</button>
+            <button type="submit" class="button primary" data-testid="save-diagram-save" aria-busy="@(_busy ? "true" : null)" disabled="@_busy">@(_busy ? "Saving…" : "Save")</button>
+        </div>
+    </form>
+</dialog>
+
+@code {
+    private ElementReference _dialog;
+    private ElementReference _input;
+    private string _value = string.Empty;
+    private string? _error;
+    private bool _busy;
+
+    [Parameter, EditorRequired]
+    public DiagramFileKind Kind { get; set; }
+
+    /// <summary>The diagram's mermaid source (names the default path).</summary>
+    [Parameter, EditorRequired]
+    public string Source { get; set; } = null!;
+
+    /// <summary>Called with the path (its extension enforced) from the Save click; returns why it was refused, or null when it was saved (the parent then removes the dialog).</summary>
+    [Parameter, EditorRequired]
+    public Func<string, Task<string?>> OnSave { get; set; } = null!;
+
+    [Parameter, EditorRequired]
+    public EventCallback OnCancel { get; set; }
+
+    protected override void OnInitialized() => _value = DiagramFiles.DefaultPath(Source, Kind, DateTime.Now);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        try
+        {
+            await Ui.ShowModalAsync(_dialog);
+            var (start, end) = DiagramFiles.NameRange(_value);
+            await Ui.SelectNameAsync(_input, end, start);
+        }
+        catch (JSException)
+        {
+            // No modal dialog: nothing is saved from a half-shown prompt.
+            await OnCancel.InvokeAsync();
+        }
+    }
+
+    private async Task CancelAsync()
+    {
+        if (!_busy)
+        {
+            await OnCancel.InvokeAsync();
+        }
+    }
+
+    // Straight from the click (or Enter): the engine asks for write access first, which needs the user activation.
+    private async Task SaveAsync()
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        _value = DiagramFiles.WithExtension(_value, Kind);
+        _error = null;
+        _busy = true;
+        try
+        {
+            _error = await OnSave(_value);
+        }
+        finally
+        {
+            _busy = false;
+        }
+
+        if (_error is not null)
+        {
+            StateHasChanged();
+            await _input.FocusAsync();
+        }
+    }
+}

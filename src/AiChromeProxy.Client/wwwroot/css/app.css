@@ -1359,6 +1359,34 @@ h1:focus-visible {
     margin-top: 3px;
 }
 
+/* "Saved to path" after a diagram save, at the end of the log */
+.chat-note {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding: 4px 4px 4px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--bg-elevated);
+    font-size: 12px;
+}
+
+.chat-note > .icon {
+    flex: none;
+    color: var(--ok);
+}
+
+.chat-note-text {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.chat-note code {
+    font-family: var(--font-mono);
+}
+
 /* Markdown inside a message */
 .markdown > :first-child {
     margin-top: 0;
@@ -2114,6 +2142,53 @@ h1:focus-visible {
 .dialog .button:focus-visible {
     outline: 2px solid var(--focus);
     outline-offset: 2px;
+}
+
+/* The save dialog's path field (SaveDiagramDialog) */
+.dialog-field {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--fg);
+}
+
+.dialog .text-input {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    height: 28px;
+    padding: 0 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--bg-input);
+    color: var(--fg-strong);
+    font-family: var(--font-mono);
+    font-size: 12px;
+}
+
+.dialog .text-input:focus {
+    border-color: var(--focus);
+    outline: 1px solid var(--focus);
+    outline-offset: -1px;
+}
+
+.dialog .text-input[aria-invalid="true"] {
+    border-color: var(--error);
+    outline-color: var(--error);
+}
+
+.dialog .text-input[readonly] {
+    opacity: 0.6;
+}
+
+.dialog-error {
+    margin: 6px 0 0;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.dialog .text-input + .dialog-actions,
+.dialog-error + .dialog-actions {
+    margin-top: 16px;
 }
 
 .button.danger {

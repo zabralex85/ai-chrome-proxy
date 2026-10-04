@@ -1,7 +1,10 @@
+@using System.Text
 @using AiChromeProxy.Client.Chat
 @using AiChromeProxy.Client.Navigator
+@using AiChromeProxy.Client.Sync
 @using AiChromeProxy.Domain.Chat
 @inject JsChatView View
+@inject SyncEngine Engine
 @implements IDisposable
 
 @{
@@ -77,7 +80,31 @@
                 </div>
             </div>
         }
+        @if (_saved is { } saved)
+        {
+            <div class="chat-note" role="status" data-testid="diagram-saved">
+                <Icon Name="check" Size="14" />
+                <span class="chat-note-text">
+                    <span data-testid="diagram-saved-text">Saved to <code>@saved.Path</code></span>
+                    @if (saved.Note is not null)
+                    {
+                        <span class="muted"> · @saved.Note</span>
+                    }
+                </span>
+                @if (saved.CanOpen)
+                {
+                    <button type="button" class="button link" data-testid="diagram-saved-open" @onclick="() => OnOpenFile.InvokeAsync(new FileLink(saved.Path, 1, null))">Open</button>
+                }
+                <button type="button" class="icon-button" data-testid="diagram-saved-dismiss" title="Dismiss" aria-label="Dismiss" @onclick="() => _saved = null">
+                    <Icon Name="close" Size="14" />
+                </button>
+            </div>
+        }
     </div>
+    @if (_saving is { } saving)
+    {
+        <SaveDiagramDialog Kind="saving.Kind" Source="@saving.Source" OnSave="SaveDiagramAsync" OnCancel="() => _saving = null" />
+    }
 </section>
 
 @code {
@@ -89,6 +116,8 @@
     private IDisposable? _links;
     private DotNetObjectReference<DiagramCallback>? _diagrams;
     private bool? _folderOpenShown;
+    private (DiagramFileKind Kind, string Source)? _saving;
+    private (string Path, bool CanOpen, string? Note)? _saved;
 
     [Parameter, EditorRequired]
     public ChatEngine Chat { get; set; } = null!;
@@ -111,7 +140,32 @@
     /// A diagram's Save menu item was clicked, with the kind of file and the diagram's mermaid source: the save dialog for the path opens
     /// here, and its own Save click writes the file (the write-access prompt needs a click).
     /// </summary>
-    private Task OnSaveDiagramAsync(DiagramFileKind kind, string source) => Task.CompletedTask;
+    private void OnSaveDiagram(DiagramFileKind kind, string source)
+    {
+        // The menu items are disabled without a folder; a stale click does nothing.
+        if (FolderOpen)
+        {
+            _saving = (kind, source);
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>The dialog's Save: the engine asks for write access, then the bytes are made (the source as UTF-8, SVG and PNG drawn by the page).</summary>
+    private async Task<string?> SaveDiagramAsync(string path)
+    {
+        var (kind, source) = _saving!.Value;
+        var result = await Engine.SaveFileAsync(
+            path,
+            kind == DiagramFileKind.Source ? () => Task.FromResult(Encoding.UTF8.GetBytes(source)) : () => View.ExportDiagramAsync(source, kind));
+        if (!result.Ok)
+        {
+            return result.Error ?? "Not saved.";
+        }
+
+        _saving = null;
+        _saved = (path, kind != DiagramFileKind.Png, result.Note); // the file viewer shows text only
+        return null;
+    }
 
     /// <summary>A finished message is rendered once; the streaming one again on every change (the page coalesces those).</summary>
     private MarkupString Html(ChatItem item)
@@ -147,7 +201,7 @@
             {
                 _links = await View.OpenLinksAsync(_log, href => MarkdownRenderer.TryParseOpenLink(href, out var path, out var line, out var symbol) ? InvokeAsync(() => OnOpenFile.InvokeAsync(new FileLink(path, line, symbol))) : Task.CompletedTask);
                 _diagrams = DotNetObjectReference.Create(new DiagramCallback(
-                    (kind, source) => InvokeAsync(() => OnSaveDiagramAsync(kind, source)),
+                    (kind, source) => InvokeAsync(() => OnSaveDiagram(kind, source)),
                     source => DiagramFiles.DefaultName(source, DateTime.Now)));
             }
 

@@ -1,4 +1,4 @@
-// Browser glue of the file tree's actions that C# cannot do: where to put the menu, selecting the stem of a name, keeping the browser's own
+// Browser glue of the file tree's actions that C# cannot do: where to put the menu, selecting the stem of a name (or the name in a path), keeping the browser's own
 // context menu away from the keyboard gesture, and opening the delete confirmation as a native modal dialog (focus trap, inert background, Esc).
 // Called through JsTreeUi.cs; compiled by MSBuild to wwwroot/js/treeui.js.
 
@@ -21,10 +21,10 @@ export function anchor(element: HTMLElement | null): TreeAnchor {
     };
 }
 
-/** Focuses the input and selects the first stem characters (all of it for a negative stem). */
-export function selectName(input: HTMLInputElement, stem: number): void {
+/** Focuses the input and selects from start up to end (up to the end of the text for a negative end). */
+export function selectName(input: HTMLInputElement, end: number, start = 0): void {
     input.focus();
-    input.setSelectionRange(0, stem < 0 ? input.value.length : stem);
+    input.setSelectionRange(start, end < 0 ? input.value.length : end);
 }
 
 /** Stops the browser from raising its own context menu on Shift+F10 and the Menu key in the tree (the app opens its menu from the keydown). */

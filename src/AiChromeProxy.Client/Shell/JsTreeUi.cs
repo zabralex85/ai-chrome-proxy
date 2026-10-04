@@ -14,8 +14,8 @@ public sealed class JsTreeUi(IJSRuntime js) : IAsyncDisposable
 	public async Task<TreeAnchor> AnchorAsync(ElementReference? element) =>
 		await (await ModuleAsync()).InvokeAsync<TreeAnchor>("anchor", element);
 
-	/// <summary>Focuses the input and selects its first <paramref name="stem"/> characters (all when negative).</summary>
-	public async Task SelectNameAsync(ElementReference input, int stem) => await (await ModuleAsync()).InvokeVoidAsync("selectName", input, stem);
+	/// <summary>Focuses the input and selects from <paramref name="start"/> up to <paramref name="end"/> (up to the end of the text when negative).</summary>
+	public async Task SelectNameAsync(ElementReference input, int end, int start = 0) => await (await ModuleAsync()).InvokeVoidAsync("selectName", input, end, start);
 
 	/// <summary>Keeps the browser's own context menu from opening on Shift+F10 and the Menu key in the tree.</summary>
 	public async Task GuardContextKeysAsync(ElementReference tree) => await (await ModuleAsync()).InvokeVoidAsync("guardContextKeys", tree);

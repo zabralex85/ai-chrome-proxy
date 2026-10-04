@@ -20,6 +20,22 @@ public static class DiagramFiles
 		_ => ".png",
 	};
 
+	/// <summary>The save dialog's title for a kind.</summary>
+	public static string SaveTitle(DiagramFileKind kind) => kind switch
+	{
+		DiagramFileKind.Source => "Save diagram source",
+		DiagramFileKind.Svg => "Save diagram as SVG",
+		_ => "Save diagram as PNG",
+	};
+
+	/// <summary>Where the name is in a path: after the last <c>/</c>, up to its extension (the end of the path when it has none).</summary>
+	public static (int Start, int End) NameRange(string path)
+	{
+		var start = path.LastIndexOf('/') + 1;
+		var dot = path.LastIndexOf('.');
+		return (start, dot > start ? dot : path.Length);
+	}
+
 	/// <summary>The file name without folder and extension: the slugified title, else the type slug and the local time.</summary>
 	public static string DefaultName(string source, DateTime localNow)
 	{
