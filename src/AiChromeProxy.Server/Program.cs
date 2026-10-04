@@ -5,6 +5,7 @@ using AiChromeProxy.Infrastructure.Hosting;
 using AiChromeProxy.Infrastructure.Projects;
 using AiChromeProxy.Infrastructure.Security;
 using AiChromeProxy.Infrastructure.Sync;
+using AiChromeProxy.Server.Chat;
 using AiChromeProxy.Server.Hosting;
 using AiChromeProxy.Server.Security;
 using AiChromeProxy.Server.Transport;
@@ -32,6 +33,7 @@ builder.Services.AddServerLogging(builder.Configuration, dataDir);
 
 var server = builder.Configuration.GetSection(ServerOptions.Section).Get<ServerOptions>() ?? new ServerOptions();
 builder.WebHost.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, server.Port));
+builder.Services.Configure<ServerOptions>(builder.Configuration.GetSection(ServerOptions.Section));
 builder.Services.Configure<HostFilteringOptions>(o => o.AllowedHosts = [.. server.AllowedHosts()]);
 
 builder.Services.AddApplication();
@@ -46,6 +48,7 @@ builder.Services.AddHostedService(sp => new CloudflaredSupervisor(
 	sp.GetRequiredService<TimeProvider>(),
 	CloudflaredProcess.Start));
 builder.Services.AddSignalR();
+builder.Services.AddApprovalMcp(server.Port);
 
 var app = builder.Build();
 
@@ -68,6 +71,8 @@ if (!access.Enabled)
 }
 
 app.UseMiddleware<CloudflareAccessMiddleware>();
+app.UseMiddleware<HubOriginFilter>();
+app.MapApprovalMcp();
 app.MapStaticAssets();
 app.MapHub<TransportHub>(TransportHub.Path);
 app.MapClientPage();

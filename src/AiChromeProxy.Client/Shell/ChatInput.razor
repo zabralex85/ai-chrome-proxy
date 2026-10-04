@@ -1,0 +1,70 @@
+@using AiChromeProxy.Client.Chat
+@using AiChromeProxy.Domain.Chat
+@inject JsChatView View
+@implements IDisposable
+
+@* Enter sends and Shift+Enter adds a line (the keydown handler is in Scripts/chat.ts: Blazor cannot cancel a key conditionally). While Claude works, the send button is Stop. *@
+<div class="chat">
+    <textarea data-testid="chat-input" rows="2" disabled="@(!Enabled)" aria-label="Message to Claude" maxlength="@ChatLimits.MaxTextChars" @ref="_box"
+              placeholder="@Placeholder"
+              @bind="_text" @bind:event="oninput"></textarea>
+    @if (Chat.Running)
+    {
+        <button type="button" class="send stop" data-testid="chat-stop" title="Stop" aria-label="Stop" disabled="@(!Enabled)" @onclick="Chat.StopAsync"><Icon Name="stop" /></button>
+    }
+    else
+    {
+        <button type="button" class="send" data-testid="chat-send" title="Send" aria-label="Send" disabled="@(!Enabled || string.IsNullOrWhiteSpace(_text))" @onclick="() => SubmitAsync(_text)"><Icon Name="send" /></button>
+    }
+</div>
+
+@code {
+    private ElementReference _box;
+    private IDisposable? _callback;
+    private string _text = string.Empty;
+
+    [Parameter, EditorRequired]
+    public ChatEngine Chat { get; set; } = null!;
+
+    /// <summary>Connected and a folder open.</summary>
+    [Parameter]
+    public bool Enabled { get; set; }
+
+    /// <summary>What the empty box says (see <see cref="Format.ChatPlaceholder"/>).</summary>
+    [Parameter]
+    public string Placeholder { get; set; } = string.Empty;
+
+    /// <summary>Sends the message; the page shows the chat tab and keeps the tabs in step with the session.</summary>
+    [Parameter, EditorRequired]
+    public Func<string, Task> OnSend { get; set; } = null!;
+
+    public void Dispose() => _callback?.Dispose();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try
+            {
+                _callback = await View.SendOnEnterAsync(_box, text => InvokeAsync(() => SubmitAsync(text)));
+            }
+            catch (JSException)
+            {
+                // Without the script Enter adds a line; the send button still works.
+            }
+        }
+    }
+
+    private async Task SubmitAsync(string text)
+    {
+        // Enter while Claude works or with an empty box does nothing (the server would answer "busy").
+        if (!Enabled || Chat.Running || string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+
+        _text = string.Empty;
+        StateHasChanged();
+        await OnSend(text.Trim());
+    }
+}

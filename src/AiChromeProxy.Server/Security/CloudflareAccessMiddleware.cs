@@ -1,10 +1,14 @@
 using AiChromeProxy.Infrastructure.Security;
+using AiChromeProxy.Server.Chat;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.JsonWebTokens;
 
 namespace AiChromeProxy.Server.Security;
 
-/// <summary>Rejects every request (static files, hub, WebSocket upgrade) without a valid Access JWT.</summary>
+/// <summary>
+/// Rejects every request (static files, hub, WebSocket upgrade) without a valid Access JWT, except the agent's approval calls from this
+/// machine (<see cref="ApprovalMcp.SkipsAccess"/>), which carry their own token.
+/// </summary>
 public sealed class CloudflareAccessMiddleware(
 	RequestDelegate next,
 	IOptions<CloudflareAccessOptions> options,
@@ -16,9 +20,12 @@ public sealed class CloudflareAccessMiddleware(
 	/// <summary><see cref="HttpContext.Items"/> key holding the validated token's <c>email</c> claim (absent when Access is disabled).</summary>
 	public const string EmailItem = "aicp.access.email";
 
+	/// <summary><see cref="HttpContext.Items"/> key holding the validated token's expiry as a <see cref="DateTimeOffset"/> (absent when Access is disabled).</summary>
+	public const string ExpiryItem = "aicp.access.exp";
+
 	public async Task InvokeAsync(HttpContext context)
 	{
-		if (!options.Value.Enabled)
+		if (!options.Value.Enabled || ApprovalMcp.SkipsAccess(context))
 		{
 			await next(context);
 			return;
@@ -37,7 +44,9 @@ public sealed class CloudflareAccessMiddleware(
 		}
 
 		// Validated above: reading a claim needs no second check.
-		context.Items[EmailItem] = new JsonWebToken(token).TryGetPayloadValue<string>("email", out var email) ? email : null;
+		var jwt = new JsonWebToken(token);
+		context.Items[EmailItem] = jwt.TryGetPayloadValue<string>("email", out var email) ? email : null;
+		context.Items[ExpiryItem] = new DateTimeOffset(jwt.ValidTo);
 		await next(context);
 	}
 }

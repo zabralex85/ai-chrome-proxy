@@ -685,6 +685,8 @@ public sealed class SyncSessionTests : IDisposable
 
 		public Task<string?> GetHashAsync(string repo, string path, CancellationToken ct) => Task.FromResult<string?>(null);
 
+		public string? RepoFolder(string repo) => null;
+
 		public IReadOnlyList<string> ListFiles(string repo) => [];
 
 		public bool HasFiles(string repo, Func<string, bool> excluded) => false;

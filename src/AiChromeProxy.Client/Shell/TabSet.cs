@@ -12,6 +12,7 @@ public sealed class TabSet
 
 	private const string FilePrefix = "file:";
 	private const string ConflictPrefix = "conflict:";
+	private const string ChatPrefix = "chat:";
 
 	private readonly List<string> _open = [Welcome];
 
@@ -34,6 +35,14 @@ public sealed class TabSet
 	/// <summary>The file path of a conflict tab; null for any other tab.</summary>
 	public static string? ConflictPath(string id) => IsConflict(id) ? id[ConflictPrefix.Length..] : null;
 
+	/// <summary>The tab of a chat session; <c>null</c> is the tab of a new chat (nothing sent yet).</summary>
+	public static string ChatTab(string? sessionId) => ChatPrefix + sessionId;
+
+	public static bool IsChat(string id) => id.StartsWith(ChatPrefix, StringComparison.Ordinal);
+
+	/// <summary>The session of a chat tab; null for the tab of a new chat and for any other tab.</summary>
+	public static string? ChatSessionId(string id) => IsChat(id) && id.Length > ChatPrefix.Length ? id[ChatPrefix.Length..] : null;
+
 	/// <summary>The file a tab is about (a file tab or a conflict tab), highlighted in the tree; null for the others.</summary>
 	public static string? SelectedPath(string id) => PathOf(id) ?? ConflictPath(id);
 
@@ -55,6 +64,29 @@ public sealed class TabSet
 		}
 
 		Active = id;
+	}
+
+	/// <summary>The tab of a new chat becomes the tab of the session its first message created (same place in the strip); when that tab is open already, it takes the focus.</summary>
+	public void Rename(string oldId, string newId)
+	{
+		var index = _open.IndexOf(oldId);
+		if (index < 0)
+		{
+			return;
+		}
+
+		if (_open.Contains(newId))
+		{
+			Close(oldId);
+			Show(newId);
+			return;
+		}
+
+		_open[index] = newId;
+		if (Active == oldId)
+		{
+			Active = newId;
+		}
 	}
 
 	/// <summary>Closes a tab (Welcome stays); closing the active one activates the tab that takes its place, else the previous one.</summary>

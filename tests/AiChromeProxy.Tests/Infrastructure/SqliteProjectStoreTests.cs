@@ -23,7 +23,7 @@ public sealed class SqliteProjectStoreTests : IDisposable
 	}
 
 	[Fact]
-	public void NewDatabase_WalAndSchemaVersion1_NothingStored()
+	public void NewDatabase_WalAndSchemaVersion2_NothingStored()
 	{
 		var store = Create();
 
@@ -31,7 +31,7 @@ public sealed class SqliteProjectStoreTests : IDisposable
 		Assert.Empty(store.GetBases("r"));
 		Assert.Equal(ProjectSettings.Default, store.GetSettings("r"));
 		Assert.Equal("wal", Scalar("PRAGMA journal_mode"));
-		Assert.Equal(1L, Scalar("PRAGMA user_version"));
+		Assert.Equal(2L, Scalar("PRAGMA user_version"));
 	}
 
 	[Fact]
@@ -94,6 +94,20 @@ public sealed class SqliteProjectStoreTests : IDisposable
 	}
 
 	[Fact]
+	public void Settings_AgentKeys_ListValueRoundTrips()
+	{
+		var store = Create();
+		store.SaveSettings("r", new ProjectSettings { AgentPermissions = "settings", AgentModel = "opus", AgentAllowedTools = ["Bash(ls)", "Read"] });
+
+		var read = Create().GetSettings("r");
+
+		Assert.Equal("settings", read.AgentPermissions);
+		Assert.Equal("opus", read.AgentModel);
+		Assert.Equal(["Bash(ls)", "Read"], read.AgentAllowedTools);
+		Assert.Null(read.Extra);
+	}
+
+	[Fact]
 	public void Defaults_DataDirOrContentRoot_ConfiguredWins()
 	{
 		var dataDir = new DataDirectory(@"C:\data");
@@ -126,7 +140,7 @@ public sealed class SqliteProjectStoreTests : IDisposable
 
 		Assert.Single(bases);
 		Assert.Equal("1", bases["a.txt"]);
-		Assert.Equal(1L, Scalar("PRAGMA user_version"));
+		Assert.Equal(2L, Scalar("PRAGMA user_version"));
 	}
 
 	private SqliteProjectStore Create() => new(Options.Create(new ProjectsOptions { Database = _path }));

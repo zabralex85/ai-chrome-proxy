@@ -7,18 +7,10 @@ using Microsoft.Extensions.Options;
 
 namespace AiChromeProxy.Infrastructure.Projects;
 
-/// <summary>SQLite (WAL) implementation of <see cref="IProjectStore"/>: one connection per call, schema created once per instance.</summary>
+/// <summary>SQLite (WAL) implementation of <see cref="IProjectStore"/>: one connection per call, schema kept by <see cref="AicpDatabase"/>.</summary>
 public sealed class SqliteProjectStore : IProjectStore
 {
-	private const string CreateTables = """
-		CREATE TABLE IF NOT EXISTS repo (name TEXT PRIMARY KEY, baselined INTEGER NOT NULL DEFAULT 0);
-		CREATE TABLE IF NOT EXISTS base (repo TEXT NOT NULL, path TEXT NOT NULL COLLATE NOCASE, sha256 TEXT NOT NULL, PRIMARY KEY (repo, path));
-		CREATE TABLE IF NOT EXISTS setting (repo TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (repo, key));
-		""";
-
 	private readonly string _path;
-	private readonly Lock _initLock = new();
-	private bool _initialized;
 
 	public SqliteProjectStore(IOptions<ProjectsOptions> options)
 	{
@@ -165,57 +157,5 @@ public sealed class SqliteProjectStore : IProjectStore
 		return command;
 	}
 
-	private SqliteConnection Open()
-	{
-		EnsureSchema();
-		var connection = new SqliteConnection($"Data Source={_path};Pooling=True");
-		connection.Open();
-		return connection;
-	}
-
-	private void EnsureSchema()
-	{
-		lock (_initLock)
-		{
-			if (_initialized)
-			{
-				return;
-			}
-
-			Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-			using (var connection = new SqliteConnection($"Data Source={_path};Pooling=True"))
-			{
-				connection.Open();
-				using (var pragma = Command(connection, "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;"))
-				{
-					pragma.ExecuteNonQuery();
-				}
-
-				using (var version = Command(connection, "PRAGMA user_version"))
-				{
-					if (version.ExecuteScalar() is 0L)
-					{
-						using (var transaction = connection.BeginTransaction())
-						{
-							using (var create = Command(connection, CreateTables))
-							{
-								create.Transaction = transaction;
-								create.ExecuteNonQuery();
-							}
-
-							using (var setVersion = Command(connection, "PRAGMA user_version=1"))
-							{
-								setVersion.Transaction = transaction;
-								setVersion.ExecuteNonQuery();
-							}
-
-							transaction.Commit();
-						}
-					}
-				}
-			}
-
-			_initialized = true;
-		}
-	}
+	private SqliteConnection Open() => AicpDatabase.Open(_path);
 }

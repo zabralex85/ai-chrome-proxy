@@ -1,0 +1,7 @@
+{"type":"system","subtype":"init","session_id":"e2e-tour","cwd":"/srv/mirror/e2e-repo","tools":["Bash"],"model":"fake"}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Looking at "}},"session_id":"e2e-tour"}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"the build setup."}},"session_id":"e2e-tour"}
+{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"Looking at the build setup.\n\n```mermaid\ngraph TD\n  Browser[Browser] --> Server[Server]\n  Server --> Claude[Claude Code]\n```\n\nThe entry point is `README.md:1`.\n\n- first point\n- second point"},{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"dotnet build","description":"Build the solution"}}]},"session_id":"e2e-tour"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"Build succeeded.","is_error":false}]},"session_id":"e2e-tour"}
+#approve Bash {"command":"dotnet build"}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":900,"num_turns":2,"result":"Done.","total_cost_usd":0.12,"session_id":"e2e-tour"}

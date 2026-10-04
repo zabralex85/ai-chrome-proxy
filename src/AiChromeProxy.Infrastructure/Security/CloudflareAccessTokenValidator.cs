@@ -12,6 +12,9 @@ public sealed class CloudflareAccessTokenValidator(
 {
 	public const string JwksHttpClient = "cf-access-jwks";
 
+	/// <summary>Tolerance on token lifetimes; the hub aborts a connection only after <c>exp</c> plus this.</summary>
+	public static readonly TimeSpan ClockSkew = TimeSpan.FromMinutes(1);
+
 	private static readonly TimeSpan MinRefreshInterval = TimeSpan.FromMinutes(1);
 	private static readonly TimeSpan KeysTtl = TimeSpan.FromHours(6);
 	private static readonly TimeSpan JwksTimeout = TimeSpan.FromSeconds(10);
@@ -49,7 +52,7 @@ public sealed class CloudflareAccessTokenValidator(
 			ValidAudience = o.Audience,
 			IssuerSigningKeys = _keys,
 			ValidAlgorithms = [SecurityAlgorithms.RsaSha256],
-			ClockSkew = TimeSpan.FromMinutes(1),
+			ClockSkew = ClockSkew,
 			LifetimeValidator = (notBefore, expires, _, p) =>
 			{
 				var now = time.GetUtcNow().UtcDateTime;

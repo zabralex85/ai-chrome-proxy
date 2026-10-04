@@ -13,6 +13,9 @@ public static class ErrorCodes
 
 	public const string TooLarge = "too_large";
 
+	/// <summary>Another chat run is going in the repo.</summary>
+	public const string Busy = "busy";
+
 	/// <summary>The handler failed unexpectedly; details are only in the server log.</summary>
 	public const string Internal = "internal";
 }

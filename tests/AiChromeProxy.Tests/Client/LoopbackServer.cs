@@ -1,3 +1,4 @@
+using AiChromeProxy.Application.Chat;
 using AiChromeProxy.Application.Projects;
 using AiChromeProxy.Application.Sync;
 using AiChromeProxy.Application.Transport;
@@ -11,7 +12,7 @@ using Microsoft.Extensions.Options;
 namespace AiChromeProxy.Tests.Client;
 
 /// <summary>
-/// The real server-side sync (router, sessions, file-system mirror in a temp folder) behind a <see cref="FakeTransport"/>:
+/// The real server-side sync and chat (router, sessions, file-system mirror in a temp folder, chat service with a scripted agent) behind a <see cref="FakeTransport"/>:
 /// the client engine is tested end to end without SignalR or a browser.
 /// </summary>
 public sealed class LoopbackServer : IDisposable
@@ -24,7 +25,14 @@ public sealed class LoopbackServer : IDisposable
 	{
 		var store = new FileSystemMirrorStore(Options.Create(new MirrorOptions { Root = MirrorRoot }));
 		_sessions = new SyncSessions(store, Projects, new ListLogger<SyncSession>(), TimeProvider.System, Watcher);
-		_router = new EnvelopeRouter([.. SyncHandler.Types.Select(t => (IEnvelopeHandler)new SyncHandler(t, _sessions)), .. ProjectSettingsHandler.Types.Select(t => new ProjectSettingsHandler(t, Projects, _sessions))]);
+		Broker = new PermissionBroker(Projects, TimeProvider.System, new ListLogger<PermissionBroker>());
+		Chat = new ChatService(Chats, store, Projects, Agent, TimeProvider.System, new ListLogger<ChatService>(), Broker, new ApprovalEndpoint());
+		_router = new EnvelopeRouter(
+		[
+			.. SyncHandler.Types.Select(t => (IEnvelopeHandler)new SyncHandler(t, _sessions)),
+			.. ProjectSettingsHandler.Types.Select(t => new ProjectSettingsHandler(t, Projects, _sessions)),
+			.. ChatHandler.Types.Select(t => new ChatHandler(t, Chat)),
+		]);
 		Transport.Reply = ReplyAsync;
 		Transport.SetState(TransportState.Connected);
 	}
@@ -39,6 +47,20 @@ public sealed class LoopbackServer : IDisposable
 	/// <summary>The server's bases, baseline flags and project settings.</summary>
 	public MemoryProjectStore Projects { get; } = new();
 
+	/// <summary>The server's chat sessions and events.</summary>
+	public MemoryChatStore Chats { get; } = new();
+
+	/// <summary>The server's agent: read started runs from it and script their output.</summary>
+	public FakeAgentRunner Agent { get; } = new();
+
+	public ChatService Chat { get; }
+
+	/// <summary>The server's permission broker: a test asks it for an approval the way the approval tool does.</summary>
+	public PermissionBroker Broker { get; }
+
+	/// <summary>When set, pushes are lost (a connection that is down): <see cref="Reconnect"/> and a catch-up bring the client back up to date.</summary>
+	public bool DropPushes { get; set; }
+
 	public string ConnectionId => $"conn-{_connection}";
 
 	public string PathOf(string repo, string path) => Path.Combine(MirrorRoot, repo, path);
@@ -46,8 +68,10 @@ public sealed class LoopbackServer : IDisposable
 	/// <summary>Like SignalR: Reconnecting, a new connection id (the old session is gone on the server), Connected.</summary>
 	public void Reconnect()
 	{
+		DropPushes = false;
 		Transport.SetState(TransportState.Reconnecting);
 		_sessions.Close(ConnectionId);
+		Chat.Unsubscribe(ConnectionId);
 		_connection++;
 		Transport.SetState(TransportState.Connected);
 	}
@@ -57,6 +81,7 @@ public sealed class LoopbackServer : IDisposable
 
 	public void Dispose()
 	{
+		Chat.Dispose();
 		_sessions.Close(ConnectionId);
 		if (Directory.Exists(MirrorRoot))
 		{
@@ -67,7 +92,11 @@ public sealed class LoopbackServer : IDisposable
 	/// <summary>Pushes (<c>sync.remote</c>) reach the client at once, like a reply.</summary>
 	private Task PushAsync(Envelope envelope, CancellationToken ct)
 	{
-		Transport.Push(envelope);
+		if (!DropPushes)
+		{
+			Transport.Push(envelope);
+		}
+
 		return Task.CompletedTask;
 	}
 
@@ -81,5 +110,10 @@ public sealed class LoopbackServer : IDisposable
 		{
 			return EnvelopeRouter.Error(request, new ErrorPayload(ErrorCodes.Internal));
 		}
+	}
+
+	private sealed class ApprovalEndpoint : IApprovalEndpoint
+	{
+		public string? Url => "http://127.0.0.1:5180/mcp/approve";
 	}
 }

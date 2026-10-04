@@ -1,4 +1,6 @@
+using AiChromeProxy.Application.Chat;
 using AiChromeProxy.Application.Sync;
+using AiChromeProxy.Infrastructure.Chat;
 using AiChromeProxy.Infrastructure.Projects;
 using AiChromeProxy.Infrastructure.Security;
 using AiChromeProxy.Infrastructure.Sync;
@@ -11,8 +13,8 @@ namespace AiChromeProxy.Infrastructure;
 public static class DependencyInjection
 {
 	/// <summary>
-	/// Registers the Cloudflare Access options (section <c>CloudflareAccess</c>), the JWKS HttpClient, the token validator and the
-	/// file-system mirror (section <c>Mirror</c>; the host resolves an empty <c>Root</c> with <see cref="MirrorOptions.ResolveRoot"/>).
+	/// Registers the Cloudflare Access options (section <c>CloudflareAccess</c>), the JWKS HttpClient, the token validator, the
+	/// agent runner (section <c>Agent</c>) and the file-system mirror (section <c>Mirror</c>; the host resolves an empty <c>Root</c> with <see cref="MirrorOptions.ResolveRoot"/>).
 	/// </summary>
 	public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
 	{
@@ -25,6 +27,12 @@ public static class DependencyInjection
 		services.AddSingleton<IMirrorWatcher, MirrorWatcher>();
 		services.Configure<ProjectsOptions>(configuration.GetSection(ProjectsOptions.Section));
 		services.AddSingleton<IProjectStore, SqliteProjectStore>();
+		services.AddSingleton<IChatStore, SqliteChatStore>();
+		services.AddOptions<AgentOptions>()
+			.Bind(configuration.GetSection(AgentOptions.Section))
+			.Validate(o => o.HasValidIdleTimeout, "Agent:IdleTimeout must be positive and at most 49 days, or -00:00:00.001 for no limit.")
+			.ValidateOnStart();
+		services.AddSingleton<IAgentRunner, ClaudeRunner>();
 		return services;
 	}
 }

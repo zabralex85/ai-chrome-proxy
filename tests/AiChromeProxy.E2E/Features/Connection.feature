@@ -6,6 +6,7 @@ Scenario: App connects
 	When I open the app
 	Then the connection state is "Connected"
 	And the page loads the fingerprinted Blazor script
+	And the import map applies
 
 Scenario: The ping latency is shown
 	Given the app is connected

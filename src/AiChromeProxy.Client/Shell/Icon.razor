@@ -87,6 +87,15 @@
         case "chat":
             <path d="M2.5 3h11v7.5h-6l-3 2.5v-2.5h-2z" />
             break;
+        case "stop":
+            <rect x="4" y="4" width="8" height="8" rx="1" />
+            break;
+        case "tool":
+            <path d="M10.5 2.5a3 3 0 0 0-2.7 4L2.5 11.8l1.7 1.7 5.3-5.3a3 3 0 0 0 4-2.7l-1.9 1.9-1.7-.4-.4-1.7z" />
+            break;
+        case "plus":
+            <path d="M8 3v10M3 8h10" />
+            break;
         case "file-code":
             <path d="@FileOutline" />
             <path d="M6.5 8.5L5 10l1.5 1.5M9.5 8.5L11 10l-1.5 1.5" />
@@ -120,7 +129,7 @@
 
     /// <summary>
     /// logo, folder, folder-open, chevron-right/down, sun, moon, monitor, warning, error, check, sync, lock, close, send, upload, trash,
-    /// plug, play, flag, history, panel-left/right, gear, conflict, chat, file-code/web/data/doc/image; anything else draws a plain file.
+    /// plug, play, flag, history, panel-left/right, gear, conflict, chat, stop, tool, plus, file-code/web/data/doc/image; anything else draws a plain file.
     /// </summary>
     [Parameter, EditorRequired]
     public string Name { get; set; } = string.Empty;

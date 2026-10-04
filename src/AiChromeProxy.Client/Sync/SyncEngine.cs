@@ -120,6 +120,9 @@ public sealed partial class SyncEngine(ITransport transport, IFolderAccess folde
 
 	public string? FolderName { get; private set; }
 
+	/// <summary>Gets the repo name the server uses for the open folder (set once the session opened, null while there is none); the chat opens on it.</summary>
+	public string? Repo => _repo;
+
 	public SyncPhase Phase { get; private set; }
 
 	/// <summary>

@@ -1,14 +1,17 @@
+@using AiChromeProxy.Client.Chat
 @using AiChromeProxy.Client.Sync
+@inject ChatEngine Chat
 
 <section class="center" aria-label="Main">
     @* aria-activedescendant like the tree: one tab stop, arrows switch tabs, Delete closes the active one. *@
+    <div class="tabbar">
     <div class="tabstrip" role="tablist" tabindex="0" aria-label="Open tabs" data-testid="tabs" aria-activedescendant="@TabId(Tabs.Active)" @onkeydown="OnKeyDown">
         @foreach (var id in Tabs.Open)
         {
             var active = id == Tabs.Active;
             var path = TabSet.SelectedPath(id);
             <div id="@TabId(id)" role="tab" class="tab @(active ? "active" : null)" aria-selected="@(active ? "true" : "false")" aria-controls="tab-panel"
-                 data-testid="@TestId(id)" data-path="@path" title="@path" @onclick="() => ChangeAsync(() => Tabs.Show(id))">
+                 data-testid="@TestId(id)" data-path="@path" title="@path" @onclick="() => SelectAsync(id)">
                 @switch (id)
                 {
                     case TabSet.Welcome:
@@ -27,6 +30,10 @@
                         <Icon Name="conflict" Class="kind-conflict" />
                         <span class="tab-label">Conflict: @FileName(path!)</span>
                         break;
+                    case var _ when TabSet.IsChat(id):
+                        <Icon Name="chat" Class="kind-chat" />
+                        <span class="tab-label">@ChatLabel(id)</span>
+                        break;
                     default:
                         var kind = Format.FileKind(path!);
                         <Icon Name="@("file-" + kind)" Class="@("kind-" + kind)" />
@@ -36,13 +43,49 @@
                 @if (id != TabSet.Welcome)
                 {
                     <button type="button" class="tab-close" tabindex="-1" aria-label="@($"Close {Label(id)}")" title="Close"
-                            @onclick="() => ChangeAsync(() => Tabs.Close(id))" @onclick:stopPropagation="true">
+                            @onclick="() => SelectAsync(id, close: true)" @onclick:stopPropagation="true">
                         <Icon Name="close" Size="14" />
                     </button>
                 }
             </div>
         }
         <span class="tabstrip-fill"></span>
+    </div>
+    <div class="chat-menu-host">
+        <button type="button" class="chat-menu-button" data-testid="chat-menu-button" aria-haspopup="menu" aria-expanded="@(_menuOpen ? "true" : "false")"
+                title="Chats" @onclick="() => _menuOpen = !_menuOpen">
+            <Icon Name="chat" Size="14" /><span>Chats</span><Icon Name="chevron-down" Size="12" />
+        </button>
+        @if (_menuOpen)
+        {
+            <button type="button" class="menu-backdrop" tabindex="-1" aria-label="Close the chats menu" @onclick="() => _menuOpen = false"></button>
+            <div class="chat-menu" role="menu" data-testid="chat-menu" aria-label="Chats" @onkeydown="OnMenuKey">
+                <button type="button" role="menuitem" class="chat-menu-item new-chat" data-testid="new-chat" @onclick="NewChatAsync">
+                    <Icon Name="plus" Size="14" /><span>New chat</span>
+                </button>
+                @foreach (var info in Chat.Sessions)
+                {
+                    <button type="button" role="menuitem" class="chat-menu-item @(info.Id == Chat.Current.Id ? "current" : null)" data-testid="chat-session" @key="info.Id"
+                            @onclick="() => OpenChatAsync(info.Id)">
+                        @if (info.Running)
+                        {
+                            <Icon Name="sync" Size="14" Class="spin" />
+                        }
+                        else
+                        {
+                            <Icon Name="chat" Size="14" />
+                        }
+                        <span class="chat-menu-title">@(info.Title.Length > 0 ? info.Title : "Chat")</span>
+                        <span class="muted chat-menu-time">@Format.Ago(info.Updated, DateTimeOffset.UtcNow)</span>
+                    </button>
+                }
+                @if (Chat.Sessions.Count == 0)
+                {
+                    <div class="chat-menu-empty muted">No earlier chats in this folder.</div>
+                }
+            </div>
+        }
+    </div>
     </div>
 
     <div id="tab-panel" class="tab-panel" role="tabpanel" aria-labelledby="@TabId(Tabs.Active)" data-testid="main">
@@ -91,6 +134,9 @@
             case TabSet.Settings:
                 <ProjectSettingsView Engine="Engine" />
                 break;
+            case var chatTab when TabSet.IsChat(chatTab):
+                <ChatView Chat="Chat" OnOpenFile="OnOpenFile" />
+                break;
             case var conflictTab when TabSet.IsConflict(conflictTab):
                 <ConflictView Engine="Engine" Path="@(TabSet.ConflictPath(conflictTab)!)" />
                 break;
@@ -132,10 +178,7 @@
         }
     </div>
 
-    <div class="chat">
-        <textarea data-testid="chat-input" rows="2" disabled aria-label="Message to Claude" placeholder="Chat with Claude arrives in the next update"></textarea>
-        <button type="button" class="send" disabled title="Send" aria-label="Send"><Icon Name="send" /></button>
-    </div>
+    <ChatInput Chat="Chat" Enabled="ChatEnabled" Placeholder="@Format.ChatPlaceholder(ChatConnected, ChatFolderOpen)" OnSend="SendAsync" />
 </section>
 
 @code {
@@ -145,6 +188,21 @@
     /// <summary>Owned by the page (the tree and the error count open tabs too).</summary>
     [Parameter, EditorRequired]
     public TabSet Tabs { get; set; } = null!;
+
+    /// <summary>A <c>path:line</c> link in the chat was clicked: the page opens the file's tab.</summary>
+    [Parameter]
+    public EventCallback<string> OnOpenFile { get; set; }
+
+    /// <summary>The connection is up.</summary>
+    [Parameter]
+    public bool ChatConnected { get; set; }
+
+    /// <summary>A folder is open and synced.</summary>
+    [Parameter]
+    public bool ChatFolderOpen { get; set; }
+
+    /// <summary>The chat input is enabled: connected, with a folder open.</summary>
+    private bool ChatEnabled => ChatConnected && ChatFolderOpen;
 
     /// <summary>Raised after every tab change so the page re-renders (the tree highlights the active file).</summary>
     [Parameter]
@@ -158,6 +216,7 @@
         TabSet.Errors => "Errors",
         TabSet.Settings => "Project settings",
         _ when TabSet.IsConflict(id) => "Conflict: " + FileName(TabSet.ConflictPath(id)!),
+        _ when TabSet.IsChat(id) => "chat",
         _ => FileName(TabSet.PathOf(id)!),
     };
 
@@ -168,6 +227,7 @@
         TabSet.Errors => "tab-errors",
         TabSet.Settings => "tab-settings",
         _ when TabSet.IsConflict(id) => "tab-conflict",
+        _ when TabSet.IsChat(id) => "tab-chat",
         _ => "tab-file",
     };
 
@@ -181,6 +241,96 @@
 
     private string TabId(string id) => $"tab-{Tabs.Open.ToList().IndexOf(id)}";
 
+    private bool _menuOpen;
+
+    /// <summary>The tab's label: the chat's title, or "New chat" until the first message is sent.</summary>
+    private string ChatLabel(string id)
+    {
+        if (TabSet.ChatSessionId(id) is not { } sessionId)
+        {
+            return "New chat";
+        }
+
+        var title = Chat.Current.Id == sessionId ? Chat.Current.Title : Chat.Sessions.FirstOrDefault(s => s.Id == sessionId)?.Title;
+        return string.IsNullOrEmpty(title) ? "Chat" : title;
+    }
+
+    /// <summary>Focuses (or closes) a tab; a chat tab then shows its session.</summary>
+    private async Task SelectAsync(string id, bool close = false)
+    {
+        if (close)
+        {
+            Tabs.Close(id);
+        }
+        else
+        {
+            Tabs.Show(id);
+        }
+
+        await ChatFollowsTabAsync();
+        await OnChanged.InvokeAsync();
+    }
+
+    /// <summary>The chat on screen is the one of the active chat tab.</summary>
+    private async Task ChatFollowsTabAsync()
+    {
+        if (!TabSet.IsChat(Tabs.Active))
+        {
+            return;
+        }
+
+        if (TabSet.ChatSessionId(Tabs.Active) is { } sessionId)
+        {
+            if (Chat.Current.Id != sessionId)
+            {
+                await Chat.OpenSessionAsync(sessionId);
+            }
+        }
+        else if (!Chat.Current.IsDraft)
+        {
+            Chat.NewChat();
+        }
+    }
+
+    private async Task NewChatAsync()
+    {
+        _menuOpen = false;
+        Chat.NewChat();
+        Tabs.Show(TabSet.ChatTab(null));
+        await OnChanged.InvokeAsync();
+    }
+
+    private async Task OpenChatAsync(string sessionId)
+    {
+        _menuOpen = false;
+        Tabs.Show(TabSet.ChatTab(sessionId));
+        await ChatFollowsTabAsync();
+        await OnChanged.InvokeAsync();
+    }
+
+    private void OnMenuKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            _menuOpen = false;
+        }
+    }
+
+    /// <summary>Sends into the chat on screen; its tab opens (the draft's tab becomes the new session's tab).</summary>
+    private async Task SendAsync(string text)
+    {
+        var tab = TabSet.ChatTab(Chat.Current.Id);
+        Tabs.Show(tab);
+        await OnChanged.InvokeAsync();
+        await Chat.SendAsync(text);
+        if (Chat.Current.Id is { } id && TabSet.ChatTab(id) != tab)
+        {
+            Tabs.Rename(tab, TabSet.ChatTab(id));
+        }
+
+        await OnChanged.InvokeAsync();
+    }
+
     private Task OnKeyDown(KeyboardEventArgs e) => ChangeAsync(() =>
     {
         if (e.Key == "Delete")
@@ -193,9 +343,10 @@
         }
     });
 
-    private Task ChangeAsync(Action change)
+    private async Task ChangeAsync(Action change)
     {
         change();
-        return OnChanged.InvokeAsync();
+        await ChatFollowsTabAsync();
+        await OnChanged.InvokeAsync();
     }
 }

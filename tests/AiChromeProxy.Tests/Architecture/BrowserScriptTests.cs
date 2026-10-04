@@ -6,13 +6,16 @@ namespace AiChromeProxy.Tests.Architecture;
 /// <summary>Browser code is strict TypeScript compiled by MSBuild (<c>src/*/Scripts</c> → <c>wwwroot/js</c>); no hand-written JavaScript.</summary>
 public sealed class BrowserScriptTests
 {
+	/// <summary>The one third-party script that is committed as JavaScript (minified, MIT; version and licence in THIRD-PARTY-NOTICES.md).</summary>
+	private const string VendoredMermaid = "src/AiChromeProxy.Client/wwwroot/lib/mermaid/mermaid.min.js";
+
 	private static readonly Regex AnyType = new(@":\s*any\b|\bas\s+any\b|<any>", RegexOptions.Compiled);
 
 	[Fact]
 	public void Wwwroot_HasNoTrackedJavaScript()
 	{
 		var tracked = Git(FindRepoRoot(), "ls-files", "--", "src")
-			.Where(f => f.Contains("/wwwroot/", StringComparison.Ordinal) && f.EndsWith(".js", StringComparison.OrdinalIgnoreCase))
+			.Where(f => f.Contains("/wwwroot/", StringComparison.Ordinal) && f.EndsWith(".js", StringComparison.OrdinalIgnoreCase) && f != VendoredMermaid)
 			.ToList();
 
 		Assert.True(tracked.Count == 0, "Compiled JavaScript is committed (write it in Scripts/*.ts and gitignore the output):\n" + string.Join('\n', tracked));
@@ -29,7 +32,7 @@ public sealed class BrowserScriptTests
 			var project = Path.GetDirectoryName(wwwroot)!;
 			foreach (var js in Directory.EnumerateFiles(wwwroot, "*.js", SearchOption.AllDirectories))
 			{
-				if (!File.Exists(Path.Combine(project, "Scripts", Path.GetFileNameWithoutExtension(js) + ".ts")))
+				if (Path.GetRelativePath(root, js).Replace('\\', '/') != VendoredMermaid && !File.Exists(Path.Combine(project, "Scripts", Path.GetFileNameWithoutExtension(js) + ".ts")))
 				{
 					offenders.Add(Path.GetRelativePath(root, js));
 				}
@@ -38,6 +41,18 @@ public sealed class BrowserScriptTests
 
 		Assert.True(File.Exists(Path.Combine(root, "src", "AiChromeProxy.Client", "Scripts", "fsaccess.ts")), "Scripts/fsaccess.ts is missing.");
 		Assert.True(offenders.Count == 0, "JavaScript without a Scripts/<name>.ts source:\n" + string.Join('\n', offenders));
+	}
+
+	[Fact]
+	public void VendoredMermaid_IsCommittedAndItsLicenceIsRecorded()
+	{
+		var root = FindRepoRoot();
+		var notices = File.ReadAllText(Path.Combine(root, "THIRD-PARTY-NOTICES.md"));
+
+		Assert.Contains(VendoredMermaid, Git(root, "ls-files", "--", VendoredMermaid));
+		Assert.True(File.Exists(Path.Combine(root, "src", "AiChromeProxy.Client", "wwwroot", "lib", "mermaid", "LICENSE")), "The mermaid licence file is missing.");
+		Assert.Contains("mermaid.min.js", notices);
+		Assert.Contains("MIT", notices);
 	}
 
 	[Fact]

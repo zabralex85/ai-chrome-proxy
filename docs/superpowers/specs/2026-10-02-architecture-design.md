@@ -124,7 +124,7 @@ Each sub-project: its own spec → plan → SDD.
 1.5. **Clean architecture + test layers** ([spec](2026-10-02-clean-arch-and-test-layers-design.md)) — Domain/Application/Infrastructure/Server split with architecture tests; E2E BDD (Reqnroll + Playwright), k6 load, BenchmarkDotNet; only xunit runs in CI.
 2. **Windows host** — 2a ([spec](2026-10-02-windows-host-design.md)): service, tray, installer, releases; 2b ([spec](2026-10-03-remote-access-wizard-design.md)): remote access wizard — Cloudflare API token → tunnel, DNS, Access app; the Server runs `cloudflared` as a child process. Overall scope: Server as a Windows Service under the user's account (auto-start, no login needed), file logging, persistent config in `%ProgramData%`, Avalonia tray: first-run wizard, install/uninstall/start/stop, status, log viewer (current + historical), open UI; Velopack `Setup.exe` built by a tag-triggered release workflow.
 3. **Sync** — 3a ([spec](2026-10-03-sync-and-shell-design.md)): one-way sync (fsaccess.js, SyncEngine, sync handlers, mirror) and the app shell UI; 3b ([spec](2026-10-03-back-channel-design.md)): back channel (FileWatcher, hash-guard, conflict UI) and project settings in SQLite.
-4. **Claude chat** — ClaudeRunner (configurable `Agent:*`, local-model ready), chat handlers, streaming, markdown + mermaid.
+4. **Claude chat** ([spec](2026-10-04-claude-chat-design.md)) — ClaudeRunner (configurable `Agent:*`, local-model ready), chat handlers, streaming, markdown + mermaid.
 5. **Code navigator** — tree, Monaco (read-only), highlighting via `path:line` / `path#Symbol`.
 6. **Mobile app** (`mobile/`, Flutter) — chat, progress, notifications over the same hub; Access service-token auth; push channel choice.
 
@@ -138,8 +138,8 @@ Found in the whole-branch review of sub-project 1; each must land in the sub-pro
 | Error contract: hub catches handler failures and replies `error {code, message?}` with the request's `correlationId` (`bad_request` for null/empty `Type`, `internal` for exceptions). Client `RequestAsync(envelope, timeout)` helper owns correlation. | Today a failing handler or a null `Type` leaves the caller waiting forever. | Sync — **done (3a)** |
 | Message size: keep SignalR's 32 KB `MaximumReceiveMessageSize`; chunk file content explicitly. | DoS-safe default; sync must not raise it blindly. | Sync — **done (3a)** |
 | Reconnect: the default retry policy gives up after ~42 s; sync needs indefinite reconnect + manifest re-exchange. | Long-lived sessions over a home connection. | Sync — **done (3a)** |
-| `Origin` allow-list on `/hub*` against the configured public hostname; docs: Access cookie HttpOnly + SameSite=Lax/Strict + binding cookie. | Auth rides on an ambient cookie; WebSockets aren't covered by CORS → cross-site WebSocket hijacking = RCE once the agent runs commands. | Before Claude chat |
-| Abort a connection when its Access token `exp` passes (store `exp` at upgrade time). | An open socket otherwise outlives the Access session/revocation. | Before Claude chat |
+| `Origin` allow-list on `/hub*` against the configured public hostname; docs: Access cookie HttpOnly + SameSite=Lax/Strict + binding cookie. | Auth rides on an ambient cookie; WebSockets aren't covered by CORS → cross-site WebSocket hijacking = RCE once the agent runs commands. | Before Claude chat — **done (4)** |
+| Abort a connection when its Access token `exp` passes (store `exp` at upgrade time). | An open socket otherwise outlives the Access session/revocation. | Before Claude chat — **done (4)** |
 | `AllowedHosts` restricted to the public host + `127.0.0.1`. | DNS-rebinding hardening on the home machine. | Windows host |
 | JWKS key TTL (coarse periodic refresh); monotonic clock for the throttle (`GetTimestamp`/`GetElapsedTime`); TeamDomain host-format check (wizard). | Retired keys stay trusted until restart; clock jumps stall refresh; misconfig only surfaces at first request. | Windows host |
 

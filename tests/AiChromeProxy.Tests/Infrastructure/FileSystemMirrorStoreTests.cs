@@ -287,6 +287,20 @@ public sealed class FileSystemMirrorStoreTests : IDisposable
 		Assert.True(File.Exists(Path.Combine(outside, "secret.txt")));
 	}
 
+	[Fact]
+	public void RepoFolder_Absolute_NullWhenMissingOrLinked_InvalidRefused()
+	{
+		var outside = Path.Combine(_temp, "outside");
+		Directory.CreateDirectory(outside);
+		Junction(Path.Combine(_root, "linked"), outside);
+
+		Assert.Equal(_repoRoot, _store.RepoFolder(Repo));
+		Assert.True(Path.IsPathFullyQualified(_store.RepoFolder(Repo)!));
+		Assert.Null(_store.RepoFolder("missing"));
+		Assert.Null(_store.RepoFolder("linked"));
+		Assert.Throws<EnvelopeException>(() => _store.RepoFolder(".."));
+	}
+
 	[Theory]
 	[InlineData(Repo, "../outside.txt")]
 	[InlineData(Repo, "a\\b.txt")]

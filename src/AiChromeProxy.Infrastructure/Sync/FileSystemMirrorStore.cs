@@ -85,6 +85,12 @@ public sealed class FileSystemMirrorStore(IOptions<MirrorOptions> options) : IMi
 
 	public long GetSize(string repo, string path) => RegularFile(repo, path)?.Length ?? 0;
 
+	public string? RepoFolder(string repo)
+	{
+		var repoRoot = RepoRoot(repo);
+		return Directory.Exists(repoRoot) && !IsLink(repoRoot) ? repoRoot : null;
+	}
+
 	public IReadOnlyList<string> ListFiles(string repo) => [.. Files(repo)];
 
 	public bool HasFiles(string repo, Func<string, bool> excluded) => Files(repo).Any(p => !excluded(p));

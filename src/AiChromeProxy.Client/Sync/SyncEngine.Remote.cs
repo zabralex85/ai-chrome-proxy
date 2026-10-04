@@ -158,6 +158,35 @@ public sealed partial class SyncEngine
 		Wake();
 	}
 
+	/// <summary>
+	/// Reads the project settings again (<c>project.settings.get</c>): a chat's <b>Allow always</b> or another tab may have changed them
+	/// since <c>sync.opened</c>. A change of the excludes rescans.
+	/// </summary>
+	/// <exception cref="InvalidOperationException">No session is open (not connected).</exception>
+	public async Task<ProjectSettings> ReloadSettingsAsync()
+	{
+		var repo = _repo ?? throw new InvalidOperationException(ConnectionLost);
+		var current = Read<ProjectSettingsPayload>(await RequestAsync(MessageTypes.ProjectSettingsGet, new ProjectSettingsPayload(repo), CancellationToken.None)).Settings ?? ProjectSettings.Default;
+		var rescan = current.Excludes != Settings.Excludes;
+		Settings = current;
+		Raise();
+		if (rescan)
+		{
+			Wake();
+		}
+
+		return current;
+	}
+
+	/// <summary>
+	/// Saves <paramref name="change"/> of the settings read again right before (<see cref="ReloadSettingsAsync"/>), so that what changed on
+	/// the server since the form loaded (an <b>Allow always</b> rule) is not overwritten.
+	/// </summary>
+	/// <param name="change">Applies the user's edits to the current settings.</param>
+	/// <exception cref="InvalidOperationException">No session is open (not connected).</exception>
+	public async Task SaveSettingsAsync(Func<ProjectSettings, ProjectSettings> change) =>
+		await SaveSettingsAsync(change(await ReloadSettingsAsync()));
+
 	private static bool IsVersion(byte[]? content, string sha256) => content is not null && Convert.ToHexStringLower(SHA256.HashData(content)) == sha256;
 
 	/// <summary>A folder change: nothing of the previous folder's server changes or settings applies.</summary>

@@ -47,4 +47,31 @@ public static class MessageTypes
 
 	/// <summary>Server → client: the project settings (<c>Sync.ProjectSettingsPayload</c>).</summary>
 	public const string ProjectSettings = "project.settings";
+
+	/// <summary>Client → server: subscribes to a repo's chat (<c>Chat.ChatOpenPayload</c>); reply <see cref="ChatSessions"/>.</summary>
+	public const string ChatOpen = "chat.open";
+
+	/// <summary>Server → client: the repo's sessions (<c>Chat.ChatSessionsPayload</c>).</summary>
+	public const string ChatSessions = "chat.sessions";
+
+	/// <summary>Client → server: asks for stored events (<c>Chat.ChatHistoryPayload</c>); reply <see cref="ChatEvents"/>.</summary>
+	public const string ChatHistory = "chat.history";
+
+	/// <summary>Server → client: one page of stored events (<c>Chat.ChatEventsPayload</c>).</summary>
+	public const string ChatEvents = "chat.events";
+
+	/// <summary>Client → server: a user message (<c>Chat.ChatSendPayload</c>); reply <see cref="ChatStarted"/>, or <c>busy</c> while a run is going.</summary>
+	public const string ChatSend = "chat.send";
+
+	/// <summary>Server → client: the run was accepted (<c>Chat.ChatStartedPayload</c>).</summary>
+	public const string ChatStarted = "chat.started";
+
+	/// <summary>Client → server: stops a run (<c>Chat.ChatCancelPayload</c>); echoed back.</summary>
+	public const string ChatCancel = "chat.cancel";
+
+	/// <summary>Client → server: answers a permission request (<c>Chat.ChatApprovePayload</c>); echoed back.</summary>
+	public const string ChatApprove = "chat.approve";
+
+	/// <summary>Server → client: a live event of a run (<c>Chat.ChatEvent</c>).</summary>
+	public const string ChatEvent = "chat.event";
 }

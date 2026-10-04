@@ -1,4 +1,5 @@
 @using System.Globalization
+@using AiChromeProxy.Client.Chat
 @using AiChromeProxy.Client.Sync
 @using AiChromeProxy.Client.Transport
 
@@ -31,6 +32,7 @@
             </ol>
         }
     </div>
+    <AgentStatus Chat="Chat" />
     <footer class="status-box" data-testid="connection-status">
         <span class="status-line" role="status">
             <span class="dot dot-@State.ToString().ToLowerInvariant()" aria-hidden="true"></span>
@@ -48,6 +50,9 @@
     [Parameter]
     public bool Collapsed { get; set; }
 
+
+    [Parameter, EditorRequired]
+    public ChatEngine Chat { get; set; } = null!;
 
     [Parameter]
     public TransportState State { get; set; }

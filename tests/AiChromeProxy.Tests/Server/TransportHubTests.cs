@@ -5,6 +5,7 @@ using AiChromeProxy.Application.Transport;
 using AiChromeProxy.Client.Transport;
 using AiChromeProxy.Domain;
 using AiChromeProxy.Infrastructure.Security;
+using AiChromeProxy.Server.Hosting;
 using AiChromeProxy.Server.Security;
 using AiChromeProxy.Server.Transport;
 using AiChromeProxy.Tests.Infrastructure;
@@ -13,7 +14,10 @@ using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Time.Testing;
+using Microsoft.Net.Http.Headers;
 
 namespace AiChromeProxy.Tests.Server;
 
@@ -25,22 +29,7 @@ public sealed class TransportHubTests : IAsyncDisposable
 
 	public TransportHubTests()
 	{
-		_factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
-		{
-			b.UseEnvironment(Environments.Production);
-			b.UseStaticWebAssets();
-
-			// Cache headers as published: with the build manifest MapStaticAssets otherwise sends no-cache for everything.
-			b.UseSetting("ReloadStaticAssetsAtRuntime", "false");
-			b.UseSetting("Server:PublicHost", ServerHostingTests.PublicHost);
-			b.UseSetting("CloudflareAccess:TeamDomain", TestAccessIssuer.TeamDomain);
-			b.UseSetting("CloudflareAccess:Audience", TestAccessIssuer.Audience);
-			b.ConfigureServices(s =>
-			{
-				s.AddHttpClient(CloudflareAccessTokenValidator.JwksHttpClient).ConfigurePrimaryHttpMessageHandler(() => _issuer.Handler());
-				s.AddSingleton<IEnvelopeHandler, ProbeHandler>();
-			});
-		});
+		_factory = Create(_ => { });
 	}
 
 	[Fact]
@@ -132,6 +121,97 @@ public sealed class TransportHubTests : IAsyncDisposable
 	}
 
 	[Fact]
+	public async Task TokenExpiry_AbortsConnection_WhenTheTokenExpires()
+	{
+		var ct = TestContext.Current.CancellationToken;
+		var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+		using (var factory = Create(s =>
+		{
+			s.RemoveAll<TimeProvider>();
+			s.AddSingleton<TimeProvider>(clock);
+		}))
+		{
+			await using (var transport = new SignalRTransport(Connection(_issuer.Token(expires: DateTime.UtcNow.AddSeconds(3)), factory)))
+			{
+				await transport.ConnectAsync(ct);
+
+				clock.Advance(TimeSpan.FromSeconds(1));
+				await Task.Delay(300, ct);
+				Assert.Equal(TransportState.Connected, transport.State);
+
+				// Past exp but inside the validator's clock skew: still accepted, so not aborted.
+				clock.Advance(TimeSpan.FromSeconds(3));
+				await Task.Delay(300, ct);
+				Assert.Equal(TransportState.Connected, transport.State);
+
+				clock.Advance(CloudflareAccessTokenValidator.ClockSkew);
+				await WaitForAsync(() => transport.State != TransportState.Connected, ct);
+				Assert.NotEqual(TransportState.Connected, transport.State);
+			}
+		}
+	}
+
+	[Fact]
+	public async Task TokenExpiry_AfterDisconnect_NothingHappens_AndFarFutureExpiryIsAccepted()
+	{
+		var ct = TestContext.Current.CancellationToken;
+		var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+		using (var factory = Create(s =>
+		{
+			s.RemoveAll<TimeProvider>();
+			s.AddSingleton<TimeProvider>(clock);
+		}))
+		{
+			await using (var first = new SignalRTransport(Connection(_issuer.Token(expires: DateTime.UtcNow.AddSeconds(3)), factory)))
+			{
+				await first.ConnectAsync(ct);
+			}
+
+			// 10 years: beyond the largest timer due time (the token must already be valid).
+			await using (var second = new SignalRTransport(Connection(_issuer.Token(expires: DateTime.UtcNow.AddYears(10), notBefore: DateTime.UtcNow.AddMinutes(-1)), factory)))
+			{
+				await second.ConnectAsync(ct);
+
+				clock.Advance(TimeSpan.FromMinutes(10));
+				await Task.Delay(300, ct);
+
+				Assert.Equal(TransportState.Connected, second.State);
+			}
+		}
+	}
+
+	[Fact]
+	public async Task NoAccess_Development_ConnectionNeverAborted()
+	{
+		var ct = TestContext.Current.CancellationToken;
+		var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+		using (var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+		{
+			b.UseEnvironment(Environments.Development);
+			b.UseSetting("Server:PublicHost", string.Empty);
+			b.UseSetting("CloudflareAccess:Enabled", "false");
+			b.UseSetting("CloudflareAccess:TeamDomain", string.Empty);
+			b.UseSetting("CloudflareAccess:Audience", string.Empty);
+			b.ConfigureServices(s =>
+			{
+				s.RemoveAll<TimeProvider>();
+				s.AddSingleton<TimeProvider>(clock);
+			});
+		}))
+		{
+			await using (var transport = new SignalRTransport(Connection(token: null, factory, "http://localhost:5197")))
+			{
+				await transport.ConnectAsync(ct);
+
+				clock.Advance(TimeSpan.FromDays(30));
+				await Task.Delay(300, ct);
+
+				Assert.Equal(TransportState.Connected, transport.State);
+			}
+		}
+	}
+
+	[Fact]
 	public async Task NoToken_ConnectionRejected()
 	{
 		await using (var transport = new SignalRTransport(Connection(token: null)))
@@ -184,12 +264,24 @@ public sealed class TransportHubTests : IAsyncDisposable
 				Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 				Assert.Equal("text/html", response.Content.Headers.ContentType?.MediaType);
 				Assert.Equal("no-store", response.Headers.CacheControl?.ToString());
+				var policy = Assert.Single(response.Headers.GetValues("Content-Security-Policy"));
+				Assert.Equal(ClientPage.ContentSecurityPolicy(html), policy);
+				var inline = Regex.Matches(html, "<script(?![^>]*\\ssrc=)[^>]*>(.*?)</script>", RegexOptions.Singleline);
+				Assert.NotEmpty(inline);
+				foreach (var body in inline.Select(m => m.Groups[1].Value))
+				{
+					Assert.Contains($"'sha256-{Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(body)))}'", policy, StringComparison.Ordinal);
+				}
+
+				Assert.DoesNotContain("<script>", html, StringComparison.Ordinal);
+				Assert.DoesNotContain("'unsafe-inline'", policy.Split(';').Single(d => d.Trim().StartsWith("script-src", StringComparison.Ordinal)), StringComparison.Ordinal);
 				Assert.DoesNotContain("#[", html, StringComparison.Ordinal);
 				Assert.DoesNotContain("{{", html, StringComparison.Ordinal);
 
 				var script = Assert.Single(Regex.Matches(html, "<script src=\"([^\"]+)\"")).Groups[1].Value;
 				var stylesheet = Assert.Single(Regex.Matches(html, "<link rel=\"stylesheet\" href=\"([^\"]+)\"")).Groups[1].Value;
 				var importMap = Regex.Match(html, "<script type=\"importmap\">(.*?)</script>", RegexOptions.Singleline).Groups[1].Value;
+				Assert.DoesNotContain('\r', importMap);
 				var imports = JsonDocument.Parse(importMap).RootElement.GetProperty("imports");
 				var dotnet = imports.GetProperty("./_framework/dotnet.js").GetString()!;
 				var fsaccess = imports.GetProperty("./js/fsaccess.js").GetString()!;
@@ -271,6 +363,7 @@ public sealed class TransportHubTests : IAsyncDisposable
 		{
 			b.UseEnvironment(Environments.Production);
 			b.UseSetting("Server:PublicHost", ServerHostingTests.PublicHost);
+			b.UseSetting("CloudflareAccess:Enabled", "false");
 			b.UseSetting("CloudflareAccess:TeamDomain", string.Empty);
 			b.UseSetting("CloudflareAccess:Audience", string.Empty);
 		}))
@@ -283,9 +376,36 @@ public sealed class TransportHubTests : IAsyncDisposable
 
 	public async ValueTask DisposeAsync() => await _factory.DisposeAsync();
 
-	private HubConnection Connection(string? token)
+	private static async Task WaitForAsync(Func<bool> condition, CancellationToken ct)
 	{
-		var server = _factory.Server;
+		for (var i = 0; i < 100 && !condition(); i++)
+		{
+			await Task.Delay(50, ct);
+		}
+	}
+
+	private WebApplicationFactory<Program> Create(Action<IServiceCollection> configureServices) =>
+		new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+		{
+			b.UseEnvironment(Environments.Production);
+			b.UseStaticWebAssets();
+
+			// Cache headers as published: with the build manifest MapStaticAssets otherwise sends no-cache for everything.
+			b.UseSetting("ReloadStaticAssetsAtRuntime", "false");
+			b.UseSetting("Server:PublicHost", ServerHostingTests.PublicHost);
+			b.UseSetting("CloudflareAccess:TeamDomain", TestAccessIssuer.TeamDomain);
+			b.UseSetting("CloudflareAccess:Audience", TestAccessIssuer.Audience);
+			b.ConfigureServices(s =>
+			{
+				s.AddHttpClient(CloudflareAccessTokenValidator.JwksHttpClient).ConfigurePrimaryHttpMessageHandler(() => _issuer.Handler());
+				s.AddSingleton<IEnvelopeHandler, ProbeHandler>();
+				configureServices(s);
+			});
+		});
+
+	private HubConnection Connection(string? token, WebApplicationFactory<Program>? factory = null, string? origin = null)
+	{
+		var server = (factory ?? _factory).Server;
 		return new HubConnectionBuilder()
 			.WithUrl(new Uri(server.BaseAddress, TransportHub.Path), o =>
 			{
@@ -294,10 +414,14 @@ public sealed class TransportHubTests : IAsyncDisposable
 				o.WebSocketFactory = async (ctx, ct) =>
 				{
 					var ws = server.CreateWebSocketClient();
-					if (token is not null)
+					ws.ConfigureRequest = r =>
 					{
-						ws.ConfigureRequest = r => r.Headers[CloudflareAccessMiddleware.HeaderName] = token;
-					}
+						r.Headers[HeaderNames.Origin] = origin ?? $"https://{ServerHostingTests.PublicHost}";
+						if (token is not null)
+						{
+							r.Headers[CloudflareAccessMiddleware.HeaderName] = token;
+						}
+					};
 
 					return await ws.ConnectAsync(ctx.Uri, ct);
 				};

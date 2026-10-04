@@ -1,3 +1,4 @@
+using AiChromeProxy.Application.Chat;
 using AiChromeProxy.Application.Projects;
 using AiChromeProxy.Application.Sync;
 using AiChromeProxy.Application.Transport;
@@ -8,7 +9,7 @@ namespace AiChromeProxy.Application;
 
 public static class DependencyInjection
 {
-	/// <summary>Registers the envelope router and its handlers (singletons). Needs an <see cref="IMirrorStore"/> and an <see cref="IProjectStore"/> (Infrastructure) and logging (the host).</summary>
+	/// <summary>Registers the envelope router and its handlers (singletons). Needs an <see cref="IMirrorStore"/>, an <see cref="IProjectStore"/>, an <see cref="IChatStore"/> and an <see cref="IAgentRunner"/> (Infrastructure) and logging (the host); an <see cref="IApprovalEndpoint"/> (the Server) is optional.</summary>
 	public static IServiceCollection AddApplication(this IServiceCollection services)
 	{
 		services.TryAddSingleton(TimeProvider.System);
@@ -22,6 +23,14 @@ public static class DependencyInjection
 		foreach (var type in ProjectSettingsHandler.Types)
 		{
 			services.AddSingleton<IEnvelopeHandler>(sp => new ProjectSettingsHandler(type, sp.GetRequiredService<IProjectStore>(), sp.GetRequiredService<SyncSessions>()));
+		}
+
+		// The container disposes the service when the host stops, which stops the running agents.
+		services.AddSingleton<PermissionBroker>();
+		services.AddSingleton<ChatService>();
+		foreach (var type in ChatHandler.Types)
+		{
+			services.AddSingleton<IEnvelopeHandler>(sp => new ChatHandler(type, sp.GetRequiredService<ChatService>()));
 		}
 
 		services.AddSingleton<EnvelopeRouter>();
