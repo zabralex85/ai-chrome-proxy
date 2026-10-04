@@ -185,11 +185,7 @@ public sealed class SyncHubTests : IAsyncDisposable
 	public async ValueTask DisposeAsync()
 	{
 		await _factory.DisposeAsync();
-		Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_testRoot))
-		{
-			Directory.Delete(_testRoot, recursive: true);
-		}
+		await TestFolder.DeleteAsync(_testRoot);
 	}
 
 	private static string Sha(byte[] content) => Convert.ToHexStringLower(SHA256.HashData(content));
