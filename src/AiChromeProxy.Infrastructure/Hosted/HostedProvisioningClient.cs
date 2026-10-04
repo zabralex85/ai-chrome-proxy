@@ -8,7 +8,8 @@ namespace AiChromeProxy.Infrastructure.Hosted;
 public sealed class HostedProvisioningClient(HttpClient http) : IHostedProvisioning
 {
 	private static readonly TimeSpan _checkTimeout = TimeSpan.FromSeconds(15);
-	private static readonly TimeSpan _redeemTimeout = TimeSpan.FromSeconds(90);
+	// Longer than the service may hold the invite (120 s): giving up earlier could leave a redeemed invite whose answer nobody read.
+	private static readonly TimeSpan _redeemTimeout = TimeSpan.FromSeconds(130);
 
 	/// <summary>The domain subdomains are created under for this invite.</summary>
 	public async Task<string> GetZoneAsync(InviteLink link, CancellationToken cancellationToken)
@@ -55,7 +56,8 @@ public sealed class HostedProvisioningClient(HttpClient http) : IHostedProvision
 				{
 					if (body is not null)
 					{
-						request.Content = JsonContent.Create(body, options: JsonSerializerOptions.Web);
+						// A string body carries Content-Length; the service refuses chunked bodies.
+						request.Content = new StringContent(JsonSerializer.Serialize(body, JsonSerializerOptions.Web), System.Text.Encoding.UTF8, "application/json");
 					}
 
 					using (var response = await http.SendAsync(request, timeoutSource.Token))

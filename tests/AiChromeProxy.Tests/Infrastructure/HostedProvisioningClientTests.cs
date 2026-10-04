@@ -116,6 +116,16 @@ public sealed class HostedProvisioningClientTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Redeem_SendsContentLength()
+	{
+		_handler.Reply = _ => Json(HttpStatusCode.OK, """{"teamDomain":"t","audience":"a","publicHost":"h","tunnelToken":"x"}""");
+
+		await Redeem();
+
+		Assert.Equal(Encoding.UTF8.GetByteCount(_handler.Body!), _handler.ContentLength);
+	}
+
+	[Fact]
 	public async Task NetworkFailure_NamesHost()
 	{
 		_handler.Reply = _ => throw new HttpRequestException("connection refused");
@@ -163,9 +173,12 @@ public sealed class HostedProvisioningClientTests : IDisposable
 
 		public string? Body { get; private set; }
 
+		public long? ContentLength { get; private set; }
+
 		protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
 		{
 			Seen = $"{request.Method} {request.RequestUri}";
+			ContentLength = request.Content?.Headers.ContentLength;
 			Body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
 			return Reply(request);
 		}

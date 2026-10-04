@@ -10,20 +10,20 @@ The remote access wizard offers two ways: **Use my Cloudflare account** (today's
 
 ## Protocol (version 1)
 
-The invite link is `https://<service host>/invite/<code>`; `<code>` is 16–64 characters `[A-Za-z0-9_-]`. The service's base address is the link's origin (`https://<service host>`). Only `https` links are accepted (`http://localhost` too, for development). All bodies are JSON (camelCase, UTF-8).
+The invite link is `https://<service host>/invite/<code>`; `<code>` is 16–64 characters `[A-Za-z0-9_-]`. The service's base address is the link's origin (`https://<service host>`). Only `https` links are accepted (`http://localhost` too, for development). All bodies are JSON (camelCase, UTF-8); a request body is sent with `Content-Length` (at most 4 KB, no chunked encoding).
 
 | Call | Request | Success | Errors |
 |---|---|---|---|
 | `GET /v1/invites/<code>` | — | `200 { "zone": "example.com" }` — the domain subdomains are created under | `404 { "error": "…" }` unknown, used or expired code; `429` |
 | `POST /v1/invites/<code>/redeem` | `{ "subdomain": "alice", "email": "alice@example.org", "machineName": "HOMEPC", "port": 5180 }` | `200 { "teamDomain": "…", "audience": "…", "publicHost": "alice.example.com", "tunnelToken": "…" }` | `400`/`404`/`409`/`429`/`5xx` with `{ "error": "<message for the user>" }` |
 
-`error` texts are shown to the user as they are. A redeem may take up to 60 s. Retrying a failed redeem with the same code is allowed (the service makes it converge).
+`error` texts are shown to the user as they are. A redeem may take up to 120 s; clients wait at least 130 s. Retrying a failed redeem with the same code is allowed (the service makes it converge).
 
 ## Decisions
 
 | Topic | Decision | Why |
 |---|---|---|
-| Where | `Infrastructure/Hosted/`: `InviteLink.TryParse(string, out InviteLink?)` (origin + code, rules above; trims whitespace), `HostedProvisioningClient` (`HttpClient`; `GetZoneAsync(link)`, `RedeemAsync(link, subdomain, email, machineName, port)` → `RemoteAccessResult`; non-2xx → `HostedProvisioningException` with the `error` text, or "The service answered {status}." when there is none; timeouts 15 s for GET, 90 s for redeem; network failure → "Could not reach {host}: {reason}"). | Same layer as the Cloudflare client; testable with a fake handler. |
+| Where | `Infrastructure/Hosted/`: `InviteLink.TryParse(string, out InviteLink?)` (origin + code, rules above; trims whitespace), `HostedProvisioningClient` (`HttpClient`; `GetZoneAsync(link)`, `RedeemAsync(link, subdomain, email, machineName, port)` → `RemoteAccessResult`; non-2xx → `HostedProvisioningException` with the `error` text, or "The service answered {status}." when there is none; timeouts 15 s for GET, 130 s for redeem (longer than the service may hold the invite); network failure → "Could not reach {host}: {reason}"). | Same layer as the Cloudflare client; testable with a fake handler. |
 | Wizard | A choice at the top: **Use my Cloudflare account** / **I have an invite link**. Invite mode: **Invite link** field → on leaving it (or **Check**) the tray calls `GetZoneAsync` and shows "Your address: `<subdomain>.<zone>`" next to the **Subdomain** field; **Email** field (one address); **Set up** runs the redeem with progress "Setting up remote access…" and then applies the result exactly like the token flow (same settings writer, same restart of the service). Subdomain rule: `^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$` checked before calling (the service checks again). Errors show in the wizard's existing error area. | One wizard, one apply path. |
 | Secrets | The tunnel token is written like today (settings file, never logged; `RemoteAccessResult.ToString` already hides it). The invite code is not stored. | Same handling as the token flow. |
 | Machine name / port | `Environment.MachineName` and the configured Server port, as the token flow uses. | Tunnel per machine. |
