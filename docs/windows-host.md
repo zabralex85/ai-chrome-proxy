@@ -49,7 +49,12 @@ Running `Setup.exe` over an existing install (the same or a newer version) works
 
 ## Remote access
 
-**Set up remote access…** publishes the Server as `https://<subdomain>.<your domain>` through a Cloudflare Tunnel, behind Cloudflare Access, without the Zero Trust dashboard. Requirements: a domain (zone) on Cloudflare, and Zero Trust enabled once on the account (https://one.dash.cloudflare.com, free plan — the wizard stops with that hint if it is not).
+**Set up remote access…** publishes the Server as `https://<subdomain>.<domain>` through a Cloudflare Tunnel, behind Cloudflare Access, without the Zero Trust dashboard. The wizard starts with a choice of two ways; both end the same: the same four settings are saved and the service is installed or restarted the same way (steps 3–4 below).
+
+- **Use my Cloudflare account** — everything is created in your own account, on your own domain. Requirements: a domain (zone) on Cloudflare, and Zero Trust enabled once on the account (https://one.dash.cloudflare.com, free plan — the wizard stops with that hint if it is not). Steps 1–4 below.
+- **I have an invite link** — for when you have no Cloudflare account or domain: see [Invite links](#invite-links).
+
+### Your own Cloudflare account
 
 1. **Create an API token** — the **Create token…** button opens https://dash.cloudflare.com/profile/api-tokens. *Create Custom Token* with:
    - Account — **Cloudflare Tunnel: Edit**
@@ -82,6 +87,16 @@ The tunnel runs **inside the service**: the Server starts the bundled `cloudflar
 **Browser Cache TTL.** Cloudflare's zone default (*Caching → Configuration → Browser Cache TTL*, 4 hours) can rewrite the Server's `Cache-Control: no-cache` into `max-age=14400`, which used to keep browsers on the old client for hours after an update. The app no longer depends on it: the page is sent `no-store` and names only fingerprinted (immutable) files, and an open tab offers **Reload** when the Server's version changes. Still, set Browser Cache TTL to **Respect Existing Headers** so the zone does not override the Server's caching. A tab that still runs an old client is fixed by a hard reload (**Ctrl+Shift+R**).
 
 **Removing remote access** (the tray does not delete Cloudflare resources): in the Cloudflare dashboard delete the Access application `AI Chrome Proxy` and the policy `AI Chrome Proxy — <host>` (Zero Trust → Access), the tunnel `ai-chrome-proxy-<computer name>` (Zero Trust → Networks → Tunnels) and the `CNAME` record (your zone → DNS); then remove the `Tunnel` section from `appsettings.json` and restart the service.
+
+### Invite links
+
+A hosted provisioning service (a separate service that implements the [invite protocol](superpowers/specs/2026-10-04-invite-links-design.md#protocol-version-1); this repository names none) can set up remote access for you in **its own** Cloudflare account, under its own domain. It gives you an invite link, `https://<service host>/invite/<code>` (`https` only; `http://localhost` for development). Choose **I have an invite link** and enter:
+
+- **Invite link** — the link you received. Leaving the field (or **Check**) asks the service which domain it creates addresses under; errors, such as an expired or already used invite, show in the wizard.
+- **Subdomain** — lowercase letters, digits and dashes, up to 32 characters, not starting or ending with a dash. Once the link is checked the wizard shows **Your address: `<subdomain>.<domain>`**, for example `alice.example.com`.
+- **Email** — the one address you will sign in with (the service allows only this address in).
+
+**Set up** sends the subdomain, the email, the computer name and the Server port to the service, which creates the tunnel, the DNS record and the Access application and answers with the four settings; the tray saves them exactly like step 3 above (the tunnel token is protected the same way; the invite code is not stored), then offers **Install service…** or **Restart service**. The tunnel then runs inside the service as described above. A redeem can take up to a minute; retrying a failed one with the same link is fine. The resources live in the service's account: to remove remote access, ask the service, then remove the `Tunnel` section from `appsettings.json` and restart the service.
 
 ## Tray menu
 
