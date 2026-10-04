@@ -4,7 +4,7 @@ Use Claude Code on your home server to work on a repo that lives on a locked-dow
 
 Chrome opens a web app (served via Cloudflare Tunnel + Access) that syncs the repo folder to the home server, gives you a VS Code-like navigator and a Claude chat with mermaid diagrams and code highlighting, and writes Claude's edits back.
 
-**Status:** transport + Cloudflare Access, Windows host (service, tray, installer), remote access wizard (Cloudflare Tunnel + Access in one step), folder sync with a back channel (server edits come back to the folder) the app shell (needs Chrome 123+) and a Claude chat with mermaid diagrams, tool rows and approvals. See [architecture](docs/superpowers/specs/2026-10-02-architecture-design.md), [Windows host](docs/windows-host.md), [sync](docs/sync.md) and [chat](docs/chat.md).
+**Status:** transport + Cloudflare Access, Windows host (service, tray, installer), remote access wizard (Cloudflare Tunnel + Access in one step), folder sync with a back channel (server edits come back to the folder), the app shell (needs Chrome 123+) and a Claude chat with mermaid diagrams, tool rows and approvals. See [architecture](docs/superpowers/specs/2026-10-02-architecture-design.md), [Windows host](docs/windows-host.md), [sync](docs/sync.md) and [chat](docs/chat.md).
 
 ## Install on a Windows home server
 

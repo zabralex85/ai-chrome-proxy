@@ -31,7 +31,7 @@ The Server hosts the loopback-only approval endpoint (`/mcp/approve`) that Claud
 
 ## Markdig
 
-- File: `Markdig.dll` (in the Client's WebAssembly files, served by the Server), unmodified.
+- Files: `server\Markdig.dll` (the Server hosts the Client) and `Markdig.wasm` (fingerprinted, in the Client's WebAssembly files under `server\wwwroot\_framework`, which the Server serves to the browser), unmodified.
 - Markdig 1.4.0 — Copyright (c) Alexandre Mutel; License: BSD 2-Clause (https://licenses.nuget.org/BSD-2-Clause)
 - Source: https://github.com/xoofx/markdig
 

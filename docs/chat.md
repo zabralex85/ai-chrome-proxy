@@ -4,7 +4,7 @@ The chat tab runs Claude Code on the mirror of the folder you opened. Claude rea
 
 ## Setup
 
-1. Install Claude Code on the home server so that `claude.exe` is on the `PATH` of the **service account** (the account the Windows service runs as; see [Windows host](windows-host.md)). `claude.exe` is preferred over `claude.cmd`.
+1. Install Claude Code on the home server so that `claude.exe` is on the `PATH` of the **service account** (the account the Windows service runs as; see [Windows host](windows-host.md)). `claude.exe` is preferred over `claude.cmd`. The native installer puts `claude.exe` in `%USERPROFILE%\.local\bin` and adds that folder to the **user** `PATH`, which the service may not see (a service gets the environment Windows had when the service manager started); set `Agent:Command` to the absolute path (e.g. `C:\Users\<you>\.local\bin\claude.exe`) or add the folder to the system `PATH` and restart.
 2. Log in as that account: open a terminal as it and run `claude` once interactively. The service runs under your account, so the chat uses that account's `~/.claude`: your subscription login, plugins, MCP servers and `CLAUDE.md`.
 3. Restart the service, open the app, open a folder and use the **Chat** tab.
 
@@ -46,13 +46,20 @@ The Server runs `claude -p --output-format stream-json --verbose --include-parti
 
 ## Approvals
 
-In the default mode a command Claude wants to run shows a card with **Allow**, **Allow always in this project** and **Deny**. **Allow always** stores an exact rule for the project (`Bash(<command>)`, `PowerShell(<command>)`, the tool name otherwise); commands containing `*`, line breaks or `:*` are allowed once only. A card not answered within 10 minutes is denied, as is any card pending at Stop or shutdown.
+In the default mode a command Claude wants to run shows a card with **Allow**, **Allow always in this project** and **Deny**. **Allow always** stores an exact rule for the project (`Bash(<command>)`, `PowerShell(<command>)`, the tool name for a tool without a command); commands containing `*`, line breaks, `:*` or parentheses that do not nest inside the rule (`a),Bash,(b` would turn into a rule allowing every command), and other tools that take a command, are allowed once only. A card not answered within 10 minutes is denied, as is any card pending at Stop or shutdown.
+
+The card shows the whole command. A request too long to show in full (about 20 KB once encoded) shows its start and only **Deny**, with "The request is too long to show in full; it can only be denied."; the Server refuses to allow it too.
 
 The approval tool is an MCP endpoint, `/mcp/approve`, reachable only from `127.0.0.1` with a per-run token.
+
+### Reviewing and revoking always-allowed rules
+
+**Project settings** → *Always allowed (one rule per line)* lists the project's rules (`agentAllowedTools`, passed to Claude as `--allowedTools`). Delete a line and **Save** to revoke a rule; you can also add rules in Claude Code's syntax (e.g. `Bash(npm test)`). The tab reads the settings again when it opens and right before saving, and a save replaces only the fields you changed, so a rule that a run added while the tab was open is kept unless you edited the list.
 
 ## Sessions and runs
 
 - Sessions are stored in `aicp.db` and survive restarts and page reloads; a new message continues the session with `--resume`. Your messages appear in the history. **New chat** starts another session.
+- A message may have up to 16 000 characters and about 30 KB once encoded: non-ASCII characters and quotes are sent as `\uXXXX` (6 bytes each), so a message in Cyrillic, for example, holds about 5 000 characters. A longer one is not sent: "The message is too long; shorten it."
 - One run per repo at a time (a second send gets "busy"). **Stop** kills the run. A run continues if the browser disconnects; reopen the tab to see it. After the `result` event the process is killed if it does not exit within 5 seconds.
 - Replies render as markdown (raw HTML is not rendered), mermaid diagrams (mermaid 12.1.0, vendored) and `path:line` links that open the file's tab. **Enter** sends, **Shift+Enter** adds a line.
 - The status bar shows "Claude idle" or "Claude working... 0:42" and the last run's cost.
@@ -62,6 +69,10 @@ The approval tool is an MCP endpoint, `/mcp/approve`, reachable only from `127.0
 - The hub accepts only the configured public host as `Origin` (no `Origin` passes, a wrong one gets 403; Development also allows localhost) and closes the connection when the Access token expires.
 - The page ships a Content-Security-Policy; leave Cloudflare Rocket Loader, Zaraz and auto-injected analytics off, they break it.
 - Claude can edit files and run commands as the service account: keep Cloudflare Access on.
+- In *Ask before commands* mode edits are applied without a card, and the back channel writes them into your real folder (turn off *Apply server changes automatically* to review each one first).
+- Approving a build or test command runs whatever build files and scripts Claude may just have edited (`Directory.Build.props`, `package.json` scripts, test code): approving `dotnet build` approves that code. `.git` is never synced in either direction, so hooks Claude writes under `.git/hooks` stay on the mirror, but a `git` command run there would run them.
+- In `-p` mode Claude Code loads the repo's own `.claude/settings.json` (its hooks run without a card, its permissions apply), and Claude can write that file like any other edit, changing what the next run may do. Opt-in hardening: `"Args": [ "--setting-sources", "user" ]` in `Agent` loads only your user settings; the trade-off is that the project's `.claude/settings.json` and `.claude/settings.local.json` (their permissions, hooks and environment) are ignored.
+- The run's approval token is in `--mcp-config` on Claude's command line, so other processes of the same account can read it; with it they can only create approval cards, not answer them.
 
 ## Limitations
 
@@ -83,5 +94,7 @@ Run this before a release that touches the chat. Use a test repository.
 - [ ] **Stop** ends a long run at once; sending during a run says busy.
 - [ ] Reload the page mid-run: the history and the running run reappear; restart the service and the history is still there, and a new message continues the session.
 - [ ] Leave a card unanswered 10 minutes: it is denied.
-- [ ] `curl http://127.0.0.1:<port>/mcp/approve` without the token and from another machine: refused (404).
+- [ ] In *Ask before commands* mode, ask Claude to write `.claude/settings.json`: does it ask? (If not, consider `--setting-sources user`, see Security.)
+- [ ] `curl http://127.0.0.1:<port>/mcp/approve` without the token: 404. From another machine the port does not answer (the Server listens on loopback only: connection refused); through the tunnel, Cloudflare Access asks for a login first.
+- [ ] *Always allowed* in the Project settings lists a rule added with **Allow always**; deleting it and saving brings the card back next time.
 - [ ] Open the app from a page on another origin: the hub refuses it (403).
