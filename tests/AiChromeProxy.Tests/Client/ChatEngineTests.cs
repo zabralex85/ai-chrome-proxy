@@ -274,8 +274,22 @@ public sealed class ChatEngineTests : IDisposable
 		await _chat.SendAsync(new string('x', ChatLimits.MaxTextChars + 1));
 
 		Assert.True(_chat.Current.IsDraft);
-		Assert.Equal(ChatItemKind.Error, Assert.Single(_chat.Current.Items).Kind);
+		Assert.Equal(new ChatItem(ChatItemKind.Error, string.Empty, "The message is too long; shorten it.", IsError: true), Assert.Single(_chat.Current.Items));
 		Assert.Empty(_chat.Sessions);
+	}
+
+	[Theory]
+	[InlineData('\u0436')]
+	[InlineData('"')]
+	public async Task TooBigForTheHubOnceEscaped_RefusedWithoutSending(char c)
+	{
+		await ReadyAsync();
+
+		await _chat.SendAsync(new string(c, ChatLimits.MaxTextChars));
+
+		Assert.True(_chat.Current.IsDraft);
+		Assert.Equal("The message is too long; shorten it.", Assert.Single(_chat.Current.Items).Text);
+		Assert.DoesNotContain(_server.Transport.Sent, e => e.Type == MessageTypes.ChatSend);
 	}
 
 	[Fact]

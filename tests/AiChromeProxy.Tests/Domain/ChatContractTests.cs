@@ -58,6 +58,7 @@ public sealed class ChatContractTests
 		Assert.Equal(2_048, ChatLimits.ToolSummaryBytes);
 		Assert.Equal(20_000, ChatLimits.PermissionSummaryBytes);
 		Assert.Equal(200, ChatLimits.MaxNameBytes);
+		Assert.Equal(30_000, ChatLimits.MaxSendBytes);
 		Assert.Equal("busy", ErrorCodes.Busy);
 		Assert.Equal(
 			["chat.open", "chat.sessions", "chat.history", "chat.events", "chat.send", "chat.started", "chat.cancel", "chat.approve", "chat.event"],

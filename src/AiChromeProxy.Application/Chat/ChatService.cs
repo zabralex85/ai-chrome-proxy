@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Globalization;
+using System.Text.Json;
 using AiChromeProxy.Application.Sync;
 using AiChromeProxy.Application.Transport;
 using AiChromeProxy.Domain;
@@ -113,9 +114,11 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 			throw new EnvelopeException(ErrorCodes.BadRequest, "chat.send needs the message in 'text'.");
 		}
 
-		if (text.Length > ChatLimits.MaxTextChars)
+		// Characters, then bytes once escaped: what the client checks before sending (the hub could not receive more anyway).
+		if (text.Length > ChatLimits.MaxTextChars
+			|| JsonSerializer.SerializeToUtf8Bytes(new ChatEvent(string.Empty, string.Empty, 0, ChatEventKinds.Prompt, Text: text), JsonSerializerOptions.Web).Length > ChatLimits.MaxSendBytes)
 		{
-			throw new EnvelopeException(ErrorCodes.TooLarge, $"A message may have at most {ChatLimits.MaxTextChars} characters.");
+			throw new EnvelopeException(ErrorCodes.TooLarge, $"A message may have at most {ChatLimits.MaxTextChars} characters and {ChatLimits.MaxSendBytes} bytes once encoded.");
 		}
 
 		var sessionId = string.IsNullOrEmpty(payload.SessionId) ? null : payload.SessionId;

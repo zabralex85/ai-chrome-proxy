@@ -373,6 +373,10 @@ public sealed class ChatServiceTests : IDisposable
 		Assert.Equal(ErrorCodes.BadRequest, await ErrorAsync(client, MessageTypes.ChatSend, new ChatSendPayload(string.Empty, null, "Hi")));
 		Assert.Equal(ErrorCodes.BadRequest, await ErrorAsync(client, MessageTypes.ChatSend, new ChatSendPayload(Repo, null, " ")));
 		Assert.Equal(ErrorCodes.TooLarge, await ErrorAsync(client, MessageTypes.ChatSend, new ChatSendPayload(Repo, null, new string('a', ChatLimits.MaxTextChars + 1))));
+
+		// Few characters, but escaped (\uXXXX) they take more bytes than the hub receives.
+		Assert.Equal(ErrorCodes.TooLarge, await ErrorAsync(client, MessageTypes.ChatSend, new ChatSendPayload(Repo, null, new string('"', 6_000))));
+		Assert.Equal(ErrorCodes.TooLarge, await ErrorAsync(client, MessageTypes.ChatSend, new ChatSendPayload(Repo, null, new string('\u0436', 6_000))));
 		Assert.Equal(ErrorCodes.NotFound, await ErrorAsync(client, MessageTypes.ChatSend, new ChatSendPayload(Repo, "missing", "Hi")));
 		Assert.Equal(ErrorCodes.NotFound, await ErrorAsync(client, MessageTypes.ChatSend, new ChatSendPayload(Repo, other.Id, "Hi")));
 		Assert.Equal(ErrorCodes.NotFound, await ErrorAsync(client, MessageTypes.ChatHistory, new ChatHistoryPayload("missing", 0)));
@@ -451,7 +455,7 @@ public sealed class ChatServiceTests : IDisposable
 	public async Task LongestPromptOfEscapes_StoredInPartsWithinTheLimit_BeforeTheRunsEvents()
 	{
 		var client = new Client("c1");
-		var text = new string('"', ChatLimits.MaxTextChars);
+		var text = new string('"', 4_900);
 
 		var started = await SendAsync(client, Repo, null, text);
 		var process = await _runner.NextAsync();

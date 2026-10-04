@@ -20,6 +20,8 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 
 	private const string NoFolder = "Open a folder first.";
 
+	private const string TooLong = "The message is too long; shorten it.";
+
 	private readonly Lock _gate = new();
 	private readonly SemaphoreSlim _opening = new(1, 1);
 	private readonly Dictionary<string, ChatSession> _sessions = new(StringComparer.Ordinal);
@@ -146,7 +148,10 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 		}
 	}
 
-	/// <summary>Sends a message into the session on screen (a new session when it is a draft). A refusal (<c>busy</c>, too long, ...) becomes an error line of the session.</summary>
+	/// <summary>
+	/// Sends a message into the session on screen (a new session when it is a draft). A refusal (<c>busy</c>, too long, ...) becomes an error
+	/// line of the session; so does a message over <see cref="ChatLimits.MaxSendBytes"/> once encoded, which is not sent (the hub would drop the connection).
+	/// </summary>
 	/// <param name="text">The message.</param>
 	public async Task SendAsync(string text)
 	{
@@ -162,16 +167,22 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 		}
 
 		session.ClearErrors();
-		if (repo is null)
+		var send = repo is null ? null : Envelope.Create(MessageTypes.ChatSend, new ChatSendPayload(repo, session.Id, text));
+		if (send is null || JsonSerializer.SerializeToUtf8Bytes(send, JsonSerializerOptions.Web).Length > ChatLimits.MaxSendBytes)
 		{
-			session.AddError(NoFolder);
+			lock (_gate)
+			{
+				_awaitingText = null;
+			}
+
+			session.AddError(send is null ? NoFolder : TooLong);
 			Raise();
 			return;
 		}
 
 		try
 		{
-			var started = Read<ChatStartedPayload>(await RequestAsync(MessageTypes.ChatSend, new ChatSendPayload(repo, session.Id, text), token));
+			var started = Read<ChatStartedPayload>(await transport.RequestAsync(send, RequestTimeout, token));
 			lock (_gate)
 			{
 				if (session == _current && session.IsDraft)
@@ -231,7 +242,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 	private string Describe(Exception ex) => ex switch
 	{
 		RequestFailedException { Code: ErrorCodes.Busy } => "Claude is already working in this folder; wait for it or stop it.",
-		RequestFailedException { Code: ErrorCodes.TooLarge } => $"The message is too long (at most {ChatLimits.MaxTextChars} characters).",
+		RequestFailedException { Code: ErrorCodes.TooLarge } => TooLong,
 		RequestFailedException { Code: ErrorCodes.NotFound } => "This chat no longer exists on the server.",
 		RequestFailedException { Code: ErrorCodes.BadRequest } failed => failed.Message,
 		_ => transport.State == TransportState.Connected ? "Could not reach the server." : SyncEngine.ConnectionLost,

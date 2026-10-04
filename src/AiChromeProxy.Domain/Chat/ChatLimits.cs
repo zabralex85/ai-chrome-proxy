@@ -18,6 +18,12 @@ public static class ChatLimits
 	/// </summary>
 	public const int PermissionSummaryBytes = 20_000;
 
+	/// <summary>
+	/// Largest serialized (<see cref="System.Text.Json.JsonSerializerOptions.Web"/>) <c>chat.send</c>, in bytes: the hub drops a connection
+	/// whose message exceeds 32 KB, and escaping (<c>\uXXXX</c> for non-ASCII and quotes) can take 6 bytes per character.
+	/// </summary>
+	public const int MaxSendBytes = 30_000;
+
 	/// <summary>Longest event <c>name</c> (a tool), in UTF-8 bytes.</summary>
 	public const int MaxNameBytes = 200;
 }
