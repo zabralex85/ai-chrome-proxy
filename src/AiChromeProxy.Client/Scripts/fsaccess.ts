@@ -43,6 +43,7 @@ const HANDLES = 'handles';
 const HASHES = 'hashes';
 const ROOT_KEY = 'root';
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // SyncLimits.MaxFileSize
+const MAX_VIEW_BYTES = 5 * 1024 * 1024; // FileText.MaxBytes
 const MAX_DEPTH = 64;
 
 let root: FileSystemDirectoryHandle | null = null;     // the picked folder
@@ -291,6 +292,35 @@ export async function readText(path: string): Promise<string | null> {
         }
         throw e;
     }
+}
+
+/** AiChromeProxy.Client.Sync.FileBytes (bytes as base64: a byte[] inside an object is read from a JSON string, not a Uint8Array) */
+interface FileBytes {
+    bytes: string;
+    size: number;
+}
+
+/**
+ * The file as it is now (not from the last scan): its first FileText.MaxBytes + 1 bytes (a huge file is never loaded whole) and its
+ * size, or null when it is not there. Throws when it cannot be read or the path is invalid (before any handle is touched).
+ */
+export async function readFile(path: string): Promise<FileBytes | null> {
+    const { folders, name } = splitPath(path);
+    let file: File;
+    try {
+        file = await (await (await parentOf(folders, false)).getFileHandle(name)).getFile();
+    } catch (e) {
+        if (isNotFound(e)) {
+            return null;
+        }
+        throw e;
+    }
+    const head = new Uint8Array(await file.slice(0, MAX_VIEW_BYTES + 1).arrayBuffer());
+    let binary = '';
+    for (let i = 0; i < head.length; i += 0x8000) {
+        binary += String.fromCharCode(...head.subarray(i, i + 0x8000));
+    }
+    return { bytes: btoa(binary), size: file.size };
 }
 
 /**

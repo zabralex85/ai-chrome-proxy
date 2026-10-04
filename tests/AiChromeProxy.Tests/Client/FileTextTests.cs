@@ -97,6 +97,38 @@ public sealed class FileTextTests
 	}
 
 	[Fact]
+	public void Decode_CappedBytesOfAHugeFile_ReportTheRealSize()
+	{
+		var result = FileText.Decode(new byte[FileText.MaxBytes + 1], 12L * 1024 * 1024);
+
+		Assert.Equal(FileTextReason.TooLarge, result.Reason);
+		Assert.Equal("Too large to show (12.0 MB)", result.Message);
+	}
+
+	[Fact]
+	public async Task FakeFolder_ReadFile_AgreesWithDecode()
+	{
+		var folder = new FakeFolder();
+		folder.Files["a.txt"] = "hi"u8.ToArray();
+		folder.Files["big.bin"] = new byte[FileText.MaxBytes + 10];
+		folder.SizeOnly["huge.bin"] = 50L * 1024 * 1024;
+		folder.HashFailures.Add("locked.txt");
+
+		var small = (await folder.ReadFileAsync("a.txt"))!;
+		var big = (await folder.ReadFileAsync("big.bin"))!;
+		var huge = (await folder.ReadFileAsync("huge.bin"))!;
+
+		Assert.Equal("hi", FileText.Decode(small.Bytes, small.Size).Text);
+		Assert.Equal(FileText.MaxBytes + 1, big.Bytes.Length);
+		Assert.Equal(FileText.MaxBytes + 10, FileText.Decode(big.Bytes, big.Size).Size);
+		Assert.Equal(FileTextReason.TooLarge, FileText.Decode(huge.Bytes, huge.Size).Reason);
+		Assert.Equal(50L * 1024 * 1024, FileText.Decode(huge.Bytes, huge.Size).Size);
+		Assert.Null(await folder.ReadFileAsync("missing.txt"));
+		await Assert.ThrowsAsync<Microsoft.JSInterop.JSException>(() => folder.ReadFileAsync("locked.txt"));
+		await Assert.ThrowsAsync<Microsoft.JSInterop.JSException>(() => folder.ReadFileAsync("../a.txt"));
+	}
+
+	[Fact]
 	public void Limit_Is5MiB() => Assert.Equal(5 * 1024 * 1024, FileText.MaxBytes);
 
 	[Theory]
