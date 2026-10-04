@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using AiChromeProxy.Client.Chat;
 using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
 
@@ -11,10 +12,30 @@ public sealed class JsChatView(IJSRuntime js) : IAsyncDisposable
 	private IJSObjectReference? _diagrams;
 	private IJSObjectReference? _chat;
 
-	/// <summary>Draws the mermaid diagrams under the element that were not drawn yet.</summary>
+	/// <summary>Draws the mermaid diagrams under the element that were not drawn yet, each with its toolbar.</summary>
 	/// <param name="container">The chat log.</param>
-	public async Task RenderDiagramsAsync(ElementReference container) =>
-		await (_diagrams ??= await js.InvokeAsync<IJSObjectReference>("import", "./js/diagrams.js")).InvokeVoidAsync("render", container);
+	/// <param name="callback">Receives the Save clicks and names the downloads; without one the Save menu is left out.</param>
+	public async Task RenderDiagramsAsync(ElementReference container, DotNetObjectReference<DiagramCallback>? callback = null) =>
+		await (await DiagramsAsync()).InvokeVoidAsync("render", container, callback);
+
+	/// <summary>The diagram drawn again in the current theme as an SVG or PNG file (the source is saved as its UTF-8 text, without JS).</summary>
+	/// <param name="source">The mermaid source.</param>
+	/// <param name="kind"><see cref="DiagramFileKind.Svg"/> or <see cref="DiagramFileKind.Png"/>.</param>
+	/// <returns>The file's bytes.</returns>
+	public async Task<byte[]> ExportDiagramAsync(string source, DiagramFileKind kind) =>
+		await (await DiagramsAsync()).InvokeAsync<byte[]>(
+			kind switch
+			{
+				DiagramFileKind.Svg => "exportSvg",
+				DiagramFileKind.Png => "exportPng",
+				_ => throw new ArgumentException("Only SVG and PNG are drawn; the source is its own UTF-8 text.", nameof(kind)),
+			},
+			source);
+
+	/// <summary>Enables the diagrams' Save items while a folder is open (else they say "Pick a folder first").</summary>
+	/// <param name="open">A folder is open.</param>
+	public async Task SetFolderOpenAsync(bool open) =>
+		await (await DiagramsAsync()).InvokeVoidAsync("setFolderOpen", open);
 
 	/// <summary>Scrolls the log to its end when the user is at the end.</summary>
 	/// <param name="log">The chat log.</param>
@@ -60,6 +81,8 @@ public sealed class JsChatView(IJSRuntime js) : IAsyncDisposable
 			await _chat.DisposeAsync();
 		}
 	}
+
+	private async Task<IJSObjectReference> DiagramsAsync() => _diagrams ??= await js.InvokeAsync<IJSObjectReference>("import", "./js/diagrams.js");
 
 	private async Task<IJSObjectReference> ChatAsync() => _chat ??= await js.InvokeAsync<IJSObjectReference>("import", "./js/chat.js");
 

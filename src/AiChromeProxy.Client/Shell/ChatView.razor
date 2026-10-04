@@ -87,6 +87,8 @@
     private readonly HashSet<string> _answered = [];
     private ElementReference _log;
     private IDisposable? _links;
+    private DotNetObjectReference<DiagramCallback>? _diagrams;
+    private bool? _folderOpenShown;
 
     [Parameter, EditorRequired]
     public ChatEngine Chat { get; set; } = null!;
@@ -95,7 +97,21 @@
     [Parameter]
     public EventCallback<FileLink> OnOpenFile { get; set; }
 
-    public void Dispose() => _links?.Dispose();
+    /// <summary>A folder is open: the diagrams' Save items are enabled.</summary>
+    [Parameter]
+    public bool FolderOpen { get; set; }
+
+    public void Dispose()
+    {
+        _links?.Dispose();
+        _diagrams?.Dispose();
+    }
+
+    /// <summary>
+    /// A diagram's Save menu item was clicked, with the kind of file and the diagram's mermaid source: the save dialog for the path opens
+    /// here, and its own Save click writes the file (the write-access prompt needs a click).
+    /// </summary>
+    private Task OnSaveDiagramAsync(DiagramFileKind kind, string source) => Task.CompletedTask;
 
     /// <summary>A finished message is rendered once; the streaming one again on every change (the page coalesces those).</summary>
     private MarkupString Html(ChatItem item)
@@ -130,9 +146,18 @@
             if (firstRender)
             {
                 _links = await View.OpenLinksAsync(_log, href => MarkdownRenderer.TryParseOpenLink(href, out var path, out var line, out var symbol) ? InvokeAsync(() => OnOpenFile.InvokeAsync(new FileLink(path, line, symbol))) : Task.CompletedTask);
+                _diagrams = DotNetObjectReference.Create(new DiagramCallback(
+                    (kind, source) => InvokeAsync(() => OnSaveDiagramAsync(kind, source)),
+                    source => DiagramFiles.DefaultName(source, DateTime.Now)));
             }
 
-            await View.RenderDiagramsAsync(_log);
+            if (_folderOpenShown != FolderOpen)
+            {
+                _folderOpenShown = FolderOpen;
+                await View.SetFolderOpenAsync(FolderOpen);
+            }
+
+            await View.RenderDiagramsAsync(_log, _diagrams);
             await View.ScrollToEndAsync(_log);
         }
         catch (JSException)

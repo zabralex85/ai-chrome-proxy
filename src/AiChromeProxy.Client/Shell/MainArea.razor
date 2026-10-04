@@ -136,7 +136,7 @@
                 <ProjectSettingsView Engine="Engine" />
                 break;
             case var chatTab when TabSet.IsChat(chatTab):
-                <ChatView Chat="Chat" OnOpenFile="OnOpenFile" />
+                <ChatView Chat="Chat" OnOpenFile="OnOpenFile" FolderOpen="ChatFolderOpen" />
                 break;
             case var conflictTab when TabSet.IsConflict(conflictTab):
                 <ConflictView Engine="Engine" Path="@(TabSet.ConflictPath(conflictTab)!)" />
