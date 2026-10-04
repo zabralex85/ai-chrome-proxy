@@ -125,7 +125,7 @@ Each sub-project: its own spec → plan → SDD.
 2. **Windows host** — 2a ([spec](2026-10-02-windows-host-design.md)): service, tray, installer, releases; 2b ([spec](2026-10-03-remote-access-wizard-design.md)): remote access wizard — Cloudflare API token → tunnel, DNS, Access app; the Server runs `cloudflared` as a child process. Overall scope: Server as a Windows Service under the user's account (auto-start, no login needed), file logging, persistent config in `%ProgramData%`, Avalonia tray: first-run wizard, install/uninstall/start/stop, status, log viewer (current + historical), open UI; Velopack `Setup.exe` built by a tag-triggered release workflow.
 3. **Sync** — 3a ([spec](2026-10-03-sync-and-shell-design.md)): one-way sync (fsaccess.js, SyncEngine, sync handlers, mirror) and the app shell UI; 3b ([spec](2026-10-03-back-channel-design.md)): back channel (FileWatcher, hash-guard, conflict UI) and project settings in SQLite.
 4. **Claude chat** ([spec](2026-10-04-claude-chat-design.md)) — ClaudeRunner (configurable `Agent:*`, local-model ready), chat handlers, streaming, markdown + mermaid.
-5. **Code navigator** ([spec](2026-10-04-code-navigator-design.md)) — tree, Monaco (read-only), highlighting via `path:line` / `path#Symbol`.
+5. **Code navigator — done** ([spec](2026-10-04-code-navigator-design.md)) — tree, Monaco (read-only), highlighting via `path:line` / `path#Symbol`.
 6. **Mobile app** (`mobile/`, Flutter) — chat, progress, notifications over the same hub; Access service-token auth; push channel choice.
 
 ## Required follow-ups from the skeleton review
