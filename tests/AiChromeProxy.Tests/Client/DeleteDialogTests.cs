@@ -24,6 +24,10 @@ public sealed class DeleteDialogTests
 		Assert.Equal("Delete the folder `src` and its 1 file?", DeleteDialog.For("src", true, 1).Title);
 
 	[Fact]
+	public void For_AFolderCountedOnlyPartly_SaysMoreThan() =>
+		Assert.Equal("Delete the folder `src` and more than 20000 files?", DeleteDialog.For("src", true, 20000, true).Title);
+
+	[Fact]
 	public void For_AnEmptyFolder_SaysZeroFiles()
 	{
 		var dialog = DeleteDialog.For("src", true, 0);

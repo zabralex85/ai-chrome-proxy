@@ -149,7 +149,7 @@ public sealed class FakeFolder : IFolderAccess
 			.Where(f => !Unreadable.Contains(f.Path) && !unlisted.Any(d => f.Path.StartsWith(d, StringComparison.Ordinal)))
 			.ToList();
 		var directories = AllDirectories()
-			.Where(d => !Skipped(d + "/x") && !unlisted.Any(u => d.StartsWith(u, StringComparison.Ordinal)))
+			.Where(d => !Skipped(d + "/x") && !unlisted.Any(u => d.StartsWith(u, StringComparison.Ordinal)) && !unlisted.Contains(d + "/") && !PartlyListedDirectories.Contains(d))
 			.ToList();
 		return new FolderScan(files, Truncated, [.. Unreadable, .. unlisted, .. PartlyListedDirectories.Select(d => d + "/")], directories);
 	}
@@ -385,16 +385,16 @@ public sealed class FakeFolder : IFolderAccess
 	public Task<bool> CanRenameFoldersAsync() => Task.FromResult(FolderMove);
 
 	/// <summary>Counts the files under the folder, at most <paramref name="maxEntries"/> (files only here: a simplification of the real walk, which also counts folders).</summary>
-	public Task<int> CountFilesAsync(string path, int maxEntries)
+	public Task<FileCount> CountFilesAsync(string path, int maxEntries)
 	{
 		if (Invalid(path) || !AllDirectories().Contains(path))
 		{
-			return Task.FromException<int>(new JSException($"NotFoundError: '{path}' is not there."));
+			return Task.FromException<FileCount>(new JSException($"NotFoundError: '{path}' is not there."));
 		}
 
 		var prefix = path + "/";
 		var count = Files.Keys.Concat(SizeOnly.Keys).Count(k => k.StartsWith(prefix, StringComparison.Ordinal));
-		return Task.FromResult(Math.Min(count, maxEntries));
+		return Task.FromResult(new FileCount(Math.Min(count, maxEntries), count > maxEntries));
 	}
 
 	public Task WatchVisibilityAsync(Action<bool> changed)

@@ -273,18 +273,32 @@ public sealed class FakeFolderTreeTests
 		folder.Write(".env", "k");
 		folder.SizeOnly["src/big.bin"] = 99;
 
-		Assert.Equal(4, await folder.CountFilesAsync("src", 1000));
-		Assert.Equal(1, await folder.CountFilesAsync("src/App", 1000));
+		Assert.Equal(new FileCount(4, false), await folder.CountFilesAsync("src", 1000));
+		Assert.Equal(new FileCount(1, false), await folder.CountFilesAsync("src/App", 1000));
 		await Assert.ThrowsAsync<JSException>(() => folder.CountFilesAsync("missing", 1000));
 		await Assert.ThrowsAsync<JSException>(() => folder.CountFilesAsync(string.Empty, 1000));
 	}
 
 	[Fact]
-	public async Task CountFiles_StopsAtTheEntryLimit()
+	public async Task CountFiles_StopsAtTheEntryLimit_AndSaysSo()
 	{
 		var folder = Folder();
 
-		Assert.Equal(2, await folder.CountFilesAsync("src", 2));
+		Assert.Equal(new FileCount(1, true), await folder.CountFilesAsync("src", 1));
+		Assert.Equal(new FileCount(2, false), await folder.CountFilesAsync("src", 2));
+	}
+
+	[Fact]
+	public async Task Scan_LeavesOutFoldersWhoseListingFailed()
+	{
+		var folder = Folder();
+		folder.UnlistedDirectories.Add("src/App");
+		folder.PartlyListedDirectories.Add("src");
+
+		var scan = await folder.ScanAsync([], 1000);
+
+		Assert.Empty(scan.Directories!);
+		Assert.Contains("src/App/", scan.Skipped!);
 	}
 
 	private static FakeFolder Folder()

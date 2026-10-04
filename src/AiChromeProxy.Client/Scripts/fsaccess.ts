@@ -233,7 +233,8 @@ export async function scan(skipDirectories: string[], maxEntries: number): Promi
     await walk(pickedRoot(), '', 0);
     files = found;
     chunkFile = null;
-    return { files: list, truncated, skipped, directories };
+    // a folder that could not be listed is in skipped (as a prefix): it is not reported as seen
+    return { files: list, truncated, skipped, directories: directories.filter(d => !skipped.includes(d + '/')) };
 }
 
 /**
@@ -475,6 +476,10 @@ async function moveEntry(dir: FileSystemDirectoryHandle, kind: 'file' | 'directo
     if (file.size > MAX_FILE_SIZE) {
         throw new Error(`'${from}' is larger than 20 MB; this browser cannot rename it.`);
     }
+    // never open an existing target with create: a file that is there is not ours to overwrite or remove
+    if (await entryKind(dir, to) !== null) {
+        throw new Error(`'${to}' already exists here.`);
+    }
     const target = await dir.getFileHandle(to, { create: true });
     try {
         const writable = await target.createWritable();
@@ -485,11 +490,18 @@ async function moveEntry(dir: FileSystemDirectoryHandle, kind: 'file' | 'directo
             await writable.abort().catch(() => undefined);
             throw e;
         }
+        if ((await target.getFile()).size !== file.size) {
+            throw new Error(`The copy '${to}' is not as large as '${from}'.`);
+        }
     } catch (e) {
         await dir.removeEntry(to).catch(() => undefined);
         throw e;
     }
-    await dir.removeEntry(from);
+    try {
+        await dir.removeEntry(from);
+    } catch (e) {
+        throw new Error(`Copied to '${to}', but '${from}' could not be removed (${e instanceof Error ? e.message : String(e)}); both exist now.`);
+    }
 }
 
 /**
@@ -511,6 +523,7 @@ export async function rename(path: string, newName: string): Promise<void> {
         return;
     }
     if (name.toLowerCase() !== newName.toLowerCase()) {
+        // ponytail: check-then-move is not atomic; another process creating newName in between wins or fails move(). No lock exists in the API.
         if (await entryKind(dir, newName) !== null) {
             throw new Error(`'${newName}' already exists here.`);
         }
@@ -523,9 +536,17 @@ export async function rename(path: string, newName: string): Promise<void> {
     }
     await moveEntry(dir, kind, name, temp);
     try {
+        // on a case-sensitive file system another entry can hold exactly newName: moving over it must not happen
+        if (await entryKind(dir, newName) !== null) {
+            throw new Error(`'${newName}' already exists here.`);
+        }
         await moveEntry(dir, kind, temp, newName);
     } catch (e) {
-        await moveEntry(dir, kind, temp, name).catch(() => undefined);
+        try {
+            await moveEntry(dir, kind, temp, name);
+        } catch {
+            throw new Error(`${e instanceof Error ? e.message : String(e)} '${name}' is left as '${temp}'.`);
+        }
         throw e;
     }
 }
@@ -562,21 +583,25 @@ export async function remove(path: string, recursive = false): Promise<void> {
 
 /**
  * Every file under the folder (no excludes), as it is now; the walk stops after maxEntries entries (files and folders) and below MAX_DEPTH,
- * like scan. Throws when the folder is not there or cannot be listed.
+ * like scan; truncated says it stopped early, so count is a lower bound. Throws when the folder is not there or cannot be listed.
  */
-export async function countFiles(path: string, maxEntries: number): Promise<number> {
+export async function countFiles(path: string, maxEntries: number): Promise<{ count: number; truncated: boolean }> {
     const { folders, name } = splitPath(path);
     let count = 0;
     let seen = 0;
+    let truncated = false;
 
     async function walk(dir: FileSystemDirectoryHandle, depth: number): Promise<void> {
         for await (const [, handle] of dir.entries()) {
             if (++seen > maxEntries) {
+                truncated = true;
                 return;
             }
             if (handle.kind === 'directory') {
                 if (depth < MAX_DEPTH) {
                     await walk(handle, depth + 1);
+                } else {
+                    truncated = true;
                 }
             } else {
                 count++;
@@ -588,7 +613,7 @@ export async function countFiles(path: string, maxEntries: number): Promise<numb
     }
 
     await walk(await (await parentOf(folders, false)).getDirectoryHandle(name), 0);
-    return count;
+    return { count, truncated };
 }
 
 /** Calls callback.Changed(visible) when the tab is shown or hidden and when the window gets focus; replaces an earlier watch. */

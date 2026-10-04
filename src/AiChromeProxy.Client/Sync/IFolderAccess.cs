@@ -75,8 +75,8 @@ public interface IFolderAccess
 	/// <summary>Whether this browser can rename folders (<c>FileSystemHandle.move</c>).</summary>
 	Task<bool> CanRenameFoldersAsync();
 
-	/// <summary>Every file under the folder as it is now, excluded ones too; stops after <paramref name="maxEntries"/> entries (files and folders) like <see cref="ScanAsync"/>. Throws when the folder is not there.</summary>
-	Task<int> CountFilesAsync(string path, int maxEntries);
+	/// <summary>Every file under the folder as it is now, excluded ones too; stops after <paramref name="maxEntries"/> entries (files and folders) like <see cref="ScanAsync"/>. The result says when the walk stopped early (entry limit or depth). Throws when the folder is not there.</summary>
+	Task<FileCount> CountFilesAsync(string path, int maxEntries);
 
 	/// <summary>Calls <paramref name="changed"/> with true when the tab becomes visible or gets focus, false when it is hidden.</summary>
 	Task WatchVisibilityAsync(Action<bool> changed);

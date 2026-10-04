@@ -54,7 +54,7 @@ public sealed class JsFolderAccess(IJSRuntime js) : IFolderAccess, IAsyncDisposa
 
 	public async Task<bool> CanRenameFoldersAsync() => await (await ModuleAsync()).InvokeAsync<bool>("canRenameFolders");
 
-	public async Task<int> CountFilesAsync(string path, int maxEntries) => await (await ModuleAsync()).InvokeAsync<int>("countFiles", path, maxEntries);
+	public async Task<FileCount> CountFilesAsync(string path, int maxEntries) => await (await ModuleAsync()).InvokeAsync<FileCount>("countFiles", path, maxEntries);
 
 	/// <summary>Replaces an earlier watch.</summary>
 	public async Task WatchVisibilityAsync(Action<bool> changed)
