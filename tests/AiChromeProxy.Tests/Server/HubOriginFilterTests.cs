@@ -45,6 +45,7 @@ public sealed class HubOriginFilterTests
 		{
 			b.UseEnvironment(Environments.Development);
 			b.UseSetting("Server:PublicHost", string.Empty);
+			b.UseSetting("CloudflareAccess:Enabled", "false");
 			b.UseSetting("CloudflareAccess:TeamDomain", string.Empty);
 			b.UseSetting("CloudflareAccess:Audience", string.Empty);
 		}))

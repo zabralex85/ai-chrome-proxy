@@ -189,6 +189,7 @@ public sealed class TransportHubTests : IAsyncDisposable
 		{
 			b.UseEnvironment(Environments.Development);
 			b.UseSetting("Server:PublicHost", string.Empty);
+			b.UseSetting("CloudflareAccess:Enabled", "false");
 			b.UseSetting("CloudflareAccess:TeamDomain", string.Empty);
 			b.UseSetting("CloudflareAccess:Audience", string.Empty);
 			b.ConfigureServices(s =>
@@ -362,6 +363,7 @@ public sealed class TransportHubTests : IAsyncDisposable
 		{
 			b.UseEnvironment(Environments.Production);
 			b.UseSetting("Server:PublicHost", ServerHostingTests.PublicHost);
+			b.UseSetting("CloudflareAccess:Enabled", "false");
 			b.UseSetting("CloudflareAccess:TeamDomain", string.Empty);
 			b.UseSetting("CloudflareAccess:Audience", string.Empty);
 		}))
