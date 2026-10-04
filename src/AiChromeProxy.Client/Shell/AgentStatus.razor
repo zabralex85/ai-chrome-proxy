@@ -9,7 +9,7 @@
     </span>
     @if (Chat.LastCost is { } cost)
     {
-        <span class="muted mono" title="Cost of the last run, as Claude Code reports it" data-testid="agent-cost">@Format.Cost(cost)</span>
+        <span class="muted mono" title="The last run at API prices, as Claude Code estimates it. On a Claude subscription runs are not charged; this shows how heavy the run was." data-testid="agent-cost">@Format.Cost(cost)</span>
     }
 </div>
 

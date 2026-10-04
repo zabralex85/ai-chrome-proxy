@@ -19,7 +19,7 @@ Scenario: An answer with a diagram, a tool call and a permission request
 	Then the permission card is gone
 	And Claude's answer says "approve: allow"
 	And the agent status says "Claude idle"
-	And the last run cost is "$0.12"
+	And the last run cost is "≈ $0.12 API"
 	And I save screenshots named "done"
 
 Scenario: An always-allowed command is listed in the project settings and can be removed there

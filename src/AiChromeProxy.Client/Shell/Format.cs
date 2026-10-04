@@ -136,6 +136,6 @@ public static class Format
 		_ => "Waiting for the connection… you can write when it is back",
 	};
 
-	/// <summary>The cost Claude Code reported for a run: "$0.12".</summary>
-	public static string Cost(decimal usd) => string.Create(CultureInfo.InvariantCulture, $"${usd:0.00}");
+	/// <summary>The cost Claude Code estimated for a run at API prices (not what a subscription is charged): "≈ $0.12 API".</summary>
+	public static string Cost(decimal usd) => string.Create(CultureInfo.InvariantCulture, $"≈ ${usd:0.00} API");
 }
