@@ -280,6 +280,7 @@ public sealed class TransportHubTests : IAsyncDisposable
 				var script = Assert.Single(Regex.Matches(html, "<script src=\"([^\"]+)\"")).Groups[1].Value;
 				var stylesheet = Assert.Single(Regex.Matches(html, "<link rel=\"stylesheet\" href=\"([^\"]+)\"")).Groups[1].Value;
 				var importMap = Regex.Match(html, "<script type=\"importmap\">(.*?)</script>", RegexOptions.Singleline).Groups[1].Value;
+				Assert.DoesNotContain('\r', importMap);
 				var imports = JsonDocument.Parse(importMap).RootElement.GetProperty("imports");
 				var dotnet = imports.GetProperty("./_framework/dotnet.js").GetString()!;
 				var fsaccess = imports.GetProperty("./js/fsaccess.js").GetString()!;

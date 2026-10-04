@@ -20,6 +20,15 @@ public sealed class ClientPageTests
 	}
 
 	[Fact]
+	public void ContentSecurityPolicy_HashesTheScriptAsTheBrowserSeesIt_LineBreaksAreLf()
+	{
+		var policy = ClientPage.ContentSecurityPolicy("<script>a\r\nb</script>");
+
+		Assert.Contains(Hash("a\nb"), policy, StringComparison.Ordinal);
+		Assert.DoesNotContain(Hash("a\r\nb"), policy, StringComparison.Ordinal);
+	}
+
+	[Fact]
 	public void ContentSecurityPolicy_HasNoUnsafeInlineScriptAndLocksTheRest()
 	{
 		var directives = ClientPage.ContentSecurityPolicy("<script type=\"importmap\">{}</script>").Split(';', StringSplitOptions.TrimEntries).ToDictionary(d => d.Split(' ')[0], d => d);

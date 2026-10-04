@@ -52,6 +52,13 @@ public sealed partial class ConnectionSteps(IPage page)
 		await Expect(page.Locator("body > script[src]")).ToHaveAttributeAsync("src", BlazorScript());
 	}
 
+	/// <summary>The CSP's hash matches the import map, so the browser used it: dotnet.js (named only there) came with its fingerprint.</summary>
+	[Then("the import map applies")]
+	public async Task ThenTheImportMapAppliesAsync()
+	{
+		await page.WaitForFunctionAsync("performance.getEntriesByType('resource').some(r => /_framework\\/dotnet\\.[a-z0-9]+\\.js/.test(r.name))");
+	}
+
 	/// <summary>Server and client are the same build: the ping answered, and no "new version" banner.</summary>
 	[Then("no update banner is shown")]
 	public async Task ThenNoUpdateBannerIsShownAsync()
