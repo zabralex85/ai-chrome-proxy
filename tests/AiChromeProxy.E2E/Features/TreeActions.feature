@@ -29,6 +29,21 @@ Scenario: A name that is not allowed shows its reason and creates nothing
 	Then the file tree does not show "a"
 	And the file tree does not show "A.TXT"
 
+Scenario: Leaving the name input cancels: nothing is created
+	Given the app is connected with a folder for tree actions
+	When I right-click the empty part of the tree and choose "New File"
+	And I type the name "ghost.txt" without pressing Enter
+	And I click elsewhere
+	Then no name input is open
+	And the file tree does not show "ghost.txt"
+	And the file "ghost.txt" is not in the folder
+	When I right-click the empty part of the tree and choose "New File"
+	And I type the name "a/b" and press Enter
+	Then the name input says "A name cannot contain / or \."
+	When I click elsewhere
+	Then no name input is open
+	And no name error is shown
+
 Scenario: A name sync leaves out is created with a note
 	Given the app is connected with a folder for tree actions
 	When I right-click the empty part of the tree and choose "New File"
@@ -114,6 +129,24 @@ Scenario: Delete a folder shows how many files go with it and Escape cancels
 	And I press the "Delete" button of the dialog
 	Then the file tree does not show "docs"
 	And the mirror no longer has the file "docs/guide.md"
+
+Scenario: The delete dialog is modal: clicking its text and Escape cancel, Tab stays inside
+	Given the app is connected with a folder for tree actions
+	When I right-click "docs" in the file tree and choose "Delete"
+	And I click the text of the dialog
+	Then the dialog asks "Delete the folder docs and its 2 files?"
+	When I press Tab 5 times, the focus never reaches the page behind the dialog
+	When I press Escape
+	Then no dialog is open
+	And the file tree shows "docs"
+	And the file "docs/guide.md" is in the mirror folder
+
+Scenario: Clicking the dimmed part of the dialog cancels
+	Given the app is connected with a folder for tree actions
+	When I right-click "docs" in the file tree and choose "Delete"
+	And I click the dimmed part of the dialog
+	Then no dialog is open
+	And the file tree shows "docs"
 
 Scenario: Keyboard only: Shift+F10, arrows, Enter, F2, Delete and Escape
 	Given the app is connected with a folder for tree actions

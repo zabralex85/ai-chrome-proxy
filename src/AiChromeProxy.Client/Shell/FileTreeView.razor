@@ -1,13 +1,13 @@
 @using AiChromeProxy.Client.Sync
 @using AiChromeProxy.Client.Tree
-@inject IJSRuntime JS
+@inject JsTreeUi Ui
 
 @* Roving tabindex: the active row is the tree's one Tab stop and gets DOM focus on keyboard moves (the browser scrolls it into view).
    ponytail: every visible row is rendered; switch to <Virtualize> if expanded folders with thousands of files feel slow. *@
 @{
     var tabStop = FileTree.TabStop(_rows, _active);
 }
-<div class="tree" role="tree" aria-label="Files" data-testid="tree" @onkeydown="OnKeyDownAsync" @oncontextmenu="e => OpenMenuAsync(null, e)" @oncontextmenu:preventDefault="true">
+<div @ref="_tree" class="tree" role="tree" aria-label="Files" data-testid="tree" @onkeydown="OnKeyDownAsync" @oncontextmenu="e => OpenMenuAsync(null, e)" @oncontextmenu:preventDefault="true">
     @if (_edit is { Kind: EditKind.NewFile or EditKind.NewFolder, Folder.Length: 0 })
     {
         @NewItemInput(_edit, 0)
@@ -76,6 +76,7 @@
 @code {
     private readonly HashSet<string> _expanded = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ElementReference> _rowElements = new(StringComparer.Ordinal);
+    private ElementReference _tree;
     private IReadOnlyList<SyncFile>? _files;
     private IReadOnlyList<string> _directories = [];
     private IReadOnlyList<TreeNode> _roots = [];
@@ -126,7 +127,19 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        var target = _active ?? FileTree.TabStop(_rows, _active);
+        if (firstRender)
+        {
+            try
+            {
+                await Ui.GuardContextKeysAsync(_tree);
+            }
+            catch (JSException)
+            {
+                // The browser's own menu may show beside ours.
+            }
+        }
+
+        var target = Current();
         if (_focusActive && target is not null && _rowElements.TryGetValue(target, out var row))
         {
             _focusActive = false;
@@ -167,6 +180,9 @@
     private bool Conflicted(string path) => Engine.Remote.Any(r => r.Status == RemoteStatus.Conflict && r.Change.Path == path);
 
     private string? ExpandedAttribute(TreeNode node) => node.IsFolder ? (_expanded.Contains(node.Path) ? "true" : "false") : null;
+
+    /// <summary>The active row, or the Tab stop while the active path has no row (a file created but not scanned yet, one that sync leaves out).</summary>
+    private string? Current() => _active is not null && NodeAt(_active) is not null ? _active : FileTree.TabStop(_rows, _active);
 
     private TreeNode? NodeAt(string? path) => path is null ? null : _rows.FirstOrDefault(r => r.Node.Path == path)?.Node;
 
@@ -215,7 +231,7 @@
     /// <summary>Shift+F10 / Menu, F2 and Delete act on the focused row.</summary>
     private async Task RunKeyActionAsync(TreeKeyAction action)
     {
-        var node = NodeAt(_active ?? FileTree.TabStop(_rows, _active));
+        var node = NodeAt(Current());
         if (node is null)
         {
             return;
@@ -225,18 +241,8 @@
         switch (action)
         {
             case TreeKeyAction.OpenMenu:
-                var (x, y) = (40, 40);
-                try
-                {
-                    var rect = await JS.InvokeAsync<Rect>("Element.prototype.getBoundingClientRect.call", _rowElements[node.Path]);
-                    (x, y) = ((int)rect.Left + 24, (int)rect.Bottom);
-                }
-                catch (Exception ex) when (ex is JSException or KeyNotFoundException)
-                {
-                    // Near the top left of the tree.
-                }
-
-                var (px, py) = TreeMenu.Place(x, y, await ViewportAsync("innerWidth"), await ViewportAsync("innerHeight"));
+                var anchor = await AnchorAsync(_rowElements.TryGetValue(node.Path, out var element) ? element : null);
+                var (px, py) = TreeMenu.Place(anchor.X, anchor.Y, anchor.ViewportWidth, anchor.ViewportHeight);
                 await ShowMenuAsync(node, px, py);
                 break;
             case TreeKeyAction.Rename:
@@ -248,15 +254,15 @@
         }
     }
 
-    private async Task<int> ViewportAsync(string property)
+    private async Task<TreeAnchor> AnchorAsync(ElementReference? row)
     {
         try
         {
-            return (int)await JS.GetValueAsync<double>("window." + property);
+            return await Ui.AnchorAsync(row);
         }
         catch (JSException)
         {
-            return 0;
+            return new TreeAnchor(40, 40, 0, 0);
         }
     }
 
@@ -269,7 +275,8 @@
             return;
         }
 
-        var (x, y) = TreeMenu.Place(e.ClientX, e.ClientY, await ViewportAsync("innerWidth"), await ViewportAsync("innerHeight"));
+        var viewport = await AnchorAsync(null);
+        var (x, y) = TreeMenu.Place(e.ClientX, e.ClientY, viewport.ViewportWidth, viewport.ViewportHeight);
         await ShowMenuAsync(node, x, y);
     }
 
@@ -295,7 +302,11 @@
 
     private async Task PickAsync(string id)
     {
-        var menu = _menu!;
+        if (_menu is not { } menu)
+        {
+            return;
+        }
+
         _menu = null;
         var node = NodeAt(menu.Path);
         switch (id)
@@ -363,7 +374,11 @@
     /// <summary>Straight from the Delete button's click, so the write-access prompt (when needed) has its user activation.</summary>
     private async Task ConfirmDeleteAsync()
     {
-        var ask = _delete!;
+        if (_delete is not { } ask)
+        {
+            return;
+        }
+
         var neighbour = FileTree.NeighbourAfterDelete(_rows, ask.Path);
         var result = await Engine.DeleteAsync(ask.Path, ask.IsFolder);
         if (!result.Ok)
@@ -406,7 +421,9 @@
         var path = Join(edit.Folder, name);
         _edit = null;
         _note = result.Note;
-        _active = path;
+
+        // A name sync leaves out never gets a row: the parent folder (or the root's first row) keeps the focus then.
+        _active = result.Note is null ? path : edit.Folder.Length > 0 ? edit.Folder : null;
         _focusActive = true;
         if (edit.Kind == EditKind.NewFile)
         {
@@ -453,7 +470,4 @@
     private sealed record MenuAt(string? Path, bool IsFolder, IReadOnlyList<TreeMenuItem> Items, int X, int Y);
 
     private sealed record DeleteAsk(string Path, bool IsFolder, DeleteDialog Text, string? Error);
-
-    /// <summary>The bits of a DOMRect the menu needs.</summary>
-    private sealed record Rect(double Left, double Bottom);
 }

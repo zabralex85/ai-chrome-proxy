@@ -1,7 +1,10 @@
-@* A modal question: Cancel has the focus, Esc cancels, Tab stays inside. Backticks in the text mark a path (shown as code). *@
-<div class="dialog-backdrop" data-testid="dialog-backdrop" @onclick="() => OnCancel.InvokeAsync()">
-    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title" aria-describedby="dialog-body" data-testid="confirm-dialog"
-         @onclick:stopPropagation="true" @onkeydown="OnKeyDownAsync" @onkeydown:preventDefault="true" @onkeydown:stopPropagation="true">
+@inject JsTreeUi Ui
+
+@* A native modal <dialog> (showModal): the browser traps Tab, makes the rest of the page inert and raises "cancel" on Esc. Cancel has the focus.
+   A click on the dimmed area (the dialog element itself, which fills the viewport) cancels. Backticks in the text mark a path (shown as code). *@
+<dialog @ref="_dialog" class="dialog-backdrop" aria-labelledby="dialog-title" aria-describedby="dialog-body" data-testid="confirm-dialog"
+        @oncancel="() => OnCancel.InvokeAsync()" @oncancel:preventDefault="true" @onclick="() => OnCancel.InvokeAsync()">
+    <div class="dialog" @onclick:stopPropagation="true">
         <h2 id="dialog-title" class="dialog-title" data-testid="dialog-title">
             @foreach (var (text, code) in Segments(Title))
             {
@@ -21,16 +24,15 @@
             <p class="state-error" role="alert" data-testid="dialog-error">@Error</p>
         }
         <div class="dialog-actions">
-            <button type="button" class="button secondary" data-testid="dialog-cancel" @ref="_cancel" @onfocus="() => _focused = 0" @onclick="() => OnCancel.InvokeAsync()">Cancel</button>
-            <button type="button" class="button danger" data-testid="dialog-confirm" @ref="_confirm" @onfocus="() => _focused = 1" @onclick="ConfirmAsync">@ConfirmText</button>
+            <button type="button" class="button secondary" data-testid="dialog-cancel" @ref="_cancel" @onclick="() => OnCancel.InvokeAsync()">Cancel</button>
+            <button type="button" class="button danger" data-testid="dialog-confirm" @onclick="ConfirmAsync">@ConfirmText</button>
         </div>
     </div>
-</div>
+</dialog>
 
 @code {
+    private ElementReference _dialog;
     private ElementReference _cancel;
-    private ElementReference _confirm;
-    private int _focused;
     private bool _busy;
 
     [Parameter, EditorRequired]
@@ -60,33 +62,8 @@
     {
         if (firstRender)
         {
+            await Ui.ShowModalAsync(_dialog);
             await _cancel.FocusAsync();
-        }
-    }
-
-    // Every key is handled here (the default is prevented): Tab and arrows cycle the two buttons, Enter and Space press the focused one.
-    private async Task OnKeyDownAsync(KeyboardEventArgs e)
-    {
-        switch (e.Key)
-        {
-            case "Escape":
-                await OnCancel.InvokeAsync();
-                break;
-            case "Tab" or "ArrowLeft" or "ArrowRight":
-                _focused = 1 - _focused;
-                await (_focused == 0 ? _cancel : _confirm).FocusAsync();
-                break;
-            case "Enter" or " ":
-                if (_focused == 0)
-                {
-                    await OnCancel.InvokeAsync();
-                }
-                else
-                {
-                    await ConfirmAsync();
-                }
-
-                break;
         }
     }
 

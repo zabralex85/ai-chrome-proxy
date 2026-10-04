@@ -1,6 +1,6 @@
-@inject IJSRuntime JS
+@inject JsTreeUi Ui
 
-@* A name typed in place, in a tree row (VS Code style): Enter commits, Esc cancels, leaving the input commits. A name that is refused stays here with its reason under it. *@
+@* A name typed in place, in a tree row (VS Code style): Enter commits, Esc cancels, leaving the input (a click elsewhere, the window losing focus) cancels: nothing is created or renamed without Enter. A name that is refused stays here with its reason under it. *@
 <div class="tree-input-item" role="treeitem" aria-level="@(Depth + 1)" aria-selected="false" aria-label="@Label">
     <div class="tree-row tree-row-input" style="padding-left: @(8 + (Depth * 14))px">
         <span class="chevron"></span>
@@ -59,14 +59,13 @@
             return;
         }
 
-        await _input.FocusAsync();
         try
         {
-            await JS.InvokeVoidAsync("HTMLInputElement.prototype.setSelectionRange.call", _input, 0, SelectedLength ?? _value.Length);
+            await Ui.SelectNameAsync(_input, SelectedLength ?? -1);
         }
         catch (JSException)
         {
-            // The name stays unselected.
+            await _input.FocusAsync();
         }
     }
 
@@ -87,20 +86,16 @@
         }
     }
 
+    // Not while the engine acts: a permission prompt takes the focus away from the input.
     private async Task OnBlurAsync()
     {
-        if (string.IsNullOrWhiteSpace(_value))
+        if (_done || _busy)
         {
-            if (!_done)
-            {
-                _done = true;
-                await OnCancel.InvokeAsync();
-            }
-
             return;
         }
 
-        await CommitAsync();
+        _done = true;
+        await OnCancel.InvokeAsync();
     }
 
     private async Task CommitAsync()

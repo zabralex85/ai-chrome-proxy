@@ -77,6 +77,28 @@ public sealed class TreeActionSteps(IPage page)
 		await Input.PressAsync("Enter");
 	}
 
+	[When("I type the name {string} without pressing Enter")]
+	public async Task WhenITypeWithoutEnterAsync(string name) => await Input.FillAsync(name);
+
+	[When("I click elsewhere")]
+	public async Task WhenIClickElsewhereAsync() => await page.GetByTestId("main").ClickAsync();
+
+	[When("I click the text of the dialog")]
+	public async Task WhenIClickTheDialogTextAsync() => await page.GetByTestId("dialog-body").ClickAsync();
+
+	[When("I click the dimmed part of the dialog")]
+	public async Task WhenIClickTheDimmedPartAsync() => await Dialog.ClickAsync(new() { Position = new() { X = 5, Y = 5 } });
+
+	[When("I press Tab {int} times, the focus never reaches the page behind the dialog")]
+	public async Task WhenIPressTabAsync(int times)
+	{
+		for (var i = 0; i < times; i++)
+		{
+			await page.Keyboard.PressAsync("Tab");
+			Xunit.Assert.True(await InsideDialogAsync(), "The focus reached the page behind the dialog.");
+		}
+	}
+
 	[When("I press {word}")]
 	public async Task WhenIPressAsync(string key) => await page.Keyboard.PressAsync(key);
 
@@ -106,6 +128,15 @@ public sealed class TreeActionSteps(IPage page)
 		await Expect(page.GetByTestId("tree-error")).ToHaveTextAsync(text);
 		await Expect(Input).ToBeVisibleAsync();
 	}
+
+	[Then("no name input is open")]
+	public async Task ThenNoInputAsync() => await Expect(Input).ToHaveCountAsync(0);
+
+	[Then("no name error is shown")]
+	public async Task ThenNoErrorAsync() => await Expect(page.GetByTestId("tree-error")).ToHaveCountAsync(0);
+
+	[Then("the file {string} is in the mirror folder")]
+	public async Task ThenTheMirrorHasAsync(string path) => await WaitMirrorAsync(path, present: true);
 
 	[Then("the name input says a failure")]
 	public async Task ThenTheNameInputSaysAFailureAsync()
@@ -168,7 +199,7 @@ public sealed class TreeActionSteps(IPage page)
 	[Then("the dialog has the focus on {string}")]
 	public async Task ThenTheDialogFocusAsync(string button)
 	{
-		await Expect(Dialog).ToHaveAttributeAsync("aria-modal", "true");
+		Xunit.Assert.True(await Dialog.EvaluateAsync<bool>("d => d.matches(':modal')"), "The dialog is not modal.");
 		await Expect(Dialog.GetByRole(AriaRole.Button, new() { Name = button, Exact = true })).ToBeFocusedAsync();
 	}
 
@@ -228,6 +259,10 @@ public sealed class TreeActionSteps(IPage page)
 			}
 		}
 	}
+
+	/// <summary>Inside the dialog, or nowhere (the browser's own UI took it: the page behind is inert, so no element of it is focused).</summary>
+	private async Task<bool> InsideDialogAsync() =>
+		await page.EvaluateAsync<bool>("document.activeElement === null || document.activeElement === document.body || document.activeElement.closest('dialog') !== null");
 
 	private ILocator Row(string path) => page.Locator($"[role=treeitem][title='{path}']");
 
