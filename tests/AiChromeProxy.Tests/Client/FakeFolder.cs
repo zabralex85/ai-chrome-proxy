@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using AiChromeProxy.Client.Navigator;
 using AiChromeProxy.Client.Sync;
+using AiChromeProxy.Domain.Sync;
 using Microsoft.JSInterop;
 
 namespace AiChromeProxy.Tests.Client;
@@ -63,6 +64,21 @@ public sealed class FakeFolder : IFolderAccess
 
 	/// <summary>Path of every <see cref="ReadChunkAsync"/> call, in order.</summary>
 	public List<string> ChunkReads { get; } = [];
+
+	/// <summary>Folders that exist without files (empty ones); a folder with files exists anyway.</summary>
+	public HashSet<string> Directories { get; } = new(StringComparer.Ordinal);
+
+	/// <summary>Whether files can be moved natively (<c>FileSystemHandle.move</c>); without it a rename copies, then removes the old file.</summary>
+	public bool FileMove { get; set; } = true;
+
+	/// <summary>Whether folders can be renamed (<c>FileSystemHandle.move</c>).</summary>
+	public bool FolderMove { get; set; } = true;
+
+	/// <summary>Thrown by <see cref="CreateFileAsync"/>, <see cref="CreateFolderAsync"/>, <see cref="RenameAsync"/> and <see cref="DeleteAsync"/> (e.g. the browser refusing).</summary>
+	public Exception? OperationFailure { get; set; }
+
+	/// <summary>Makes the copy of a rename without <see cref="FileMove"/> fail while writing: the partial new file is removed, the old one stays.</summary>
+	public bool CopyFailure { get; set; }
 
 	public int Scans { get; private set; }
 
@@ -132,7 +148,10 @@ public sealed class FakeFolder : IFolderAccess
 			.Where(f => !Skipped(f.Path))
 			.Where(f => !Unreadable.Contains(f.Path) && !unlisted.Any(d => f.Path.StartsWith(d, StringComparison.Ordinal)))
 			.ToList();
-		return new FolderScan(files, Truncated, [.. Unreadable, .. unlisted, .. PartlyListedDirectories.Select(d => d + "/")]);
+		var directories = AllDirectories()
+			.Where(d => !Skipped(d + "/x") && !unlisted.Any(u => d.StartsWith(u, StringComparison.Ordinal)))
+			.ToList();
+		return new FolderScan(files, Truncated, [.. Unreadable, .. unlisted, .. PartlyListedDirectories.Select(d => d + "/")], directories);
 	}
 
 	public Task<IReadOnlyList<string?>> HashAsync(IReadOnlyList<string> paths)
@@ -222,11 +241,44 @@ public sealed class FakeFolder : IFolderAccess
 		return Task.CompletedTask;
 	}
 
-	public Task DeleteAsync(string path)
+	public Task DeleteAsync(string path, bool recursive = false)
 	{
 		if (!WriteAccess)
 		{
 			return Task.FromException(new JSException($"NotAllowedError: '{path}' cannot be deleted."));
+		}
+
+		if (OperationFailure is not null)
+		{
+			return Task.FromException(OperationFailure);
+		}
+
+		if (Invalid(path))
+		{
+			return Fail($"Invalid path '{path}'.");
+		}
+
+		if (AllDirectories().Contains(path))
+		{
+			if (!recursive)
+			{
+				return Fail($"'{path}' is a folder.");
+			}
+
+			var prefix = path + "/";
+			foreach (var file in Files.Keys.Where(k => k.StartsWith(prefix, StringComparison.Ordinal)).ToList())
+			{
+				Files.Remove(file);
+			}
+
+			foreach (var file in SizeOnly.Keys.Where(k => k.StartsWith(prefix, StringComparison.Ordinal)).ToList())
+			{
+				SizeOnly.Remove(file);
+			}
+
+			Directories.RemoveWhere(d => d == path || d.StartsWith(prefix, StringComparison.Ordinal));
+			Writes.Add(path);
+			return Task.CompletedTask;
 		}
 
 		if (Files.Remove(path))
@@ -237,9 +289,188 @@ public sealed class FakeFolder : IFolderAccess
 		return Task.CompletedTask;
 	}
 
+	public Task CreateFileAsync(string path)
+	{
+		var refusal = Refusal(path, forCreate: true);
+		if (refusal is not null)
+		{
+			return Task.FromException(refusal);
+		}
+
+		Files[path] = [];
+		Writes.Add(path);
+		return Task.CompletedTask;
+	}
+
+	public Task CreateFolderAsync(string path)
+	{
+		var refusal = Refusal(path, forCreate: true);
+		if (refusal is not null)
+		{
+			return Task.FromException(refusal);
+		}
+
+		Directories.Add(path);
+		Writes.Add(path);
+		return Task.CompletedTask;
+	}
+
+	public Task RenameAsync(string path, string newName)
+	{
+		var refusal = Refusal(path, forCreate: false);
+		if (refusal is not null)
+		{
+			return Task.FromException(refusal);
+		}
+
+		if (Invalid(newName) || newName.Contains('/'))
+		{
+			return Fail($"Invalid name '{newName}'.");
+		}
+
+		var isFolder = AllDirectories().Contains(path);
+		var isFile = Files.ContainsKey(path) || SizeOnly.ContainsKey(path);
+		if (!isFolder && !isFile)
+		{
+			return Fail($"'{path}' is not there.");
+		}
+
+		if (newName == Last(path))
+		{
+			return Task.CompletedTask;
+		}
+
+		if (isFolder && !FolderMove)
+		{
+			return Fail("This browser cannot rename folders.");
+		}
+
+		var parent = path.Contains('/') ? path[..path.LastIndexOf('/')] + "/" : string.Empty;
+		var target = parent + newName;
+		if (Siblings(parent).Any(s => string.Equals(s, newName, StringComparison.OrdinalIgnoreCase) && s != Last(path)))
+		{
+			return Fail($"'{newName}' already exists here.");
+		}
+
+		if (isFolder)
+		{
+			var prefix = path + "/";
+			Move(Files, prefix, target + "/");
+			Move(SizeOnly, prefix, target + "/");
+			var moved = Directories.Where(d => d == path || d.StartsWith(prefix, StringComparison.Ordinal)).ToList();
+			Directories.ExceptWith(moved);
+			Directories.UnionWith(moved.Select(d => target + d[path.Length..]));
+		}
+		else
+		{
+			if (!FileMove && SizeOnly.TryGetValue(path, out var size) && size > SyncLimits.MaxFileSize)
+			{
+				return Fail($"'{path}' is larger than 20 MB; this browser cannot rename it.");
+			}
+
+			if (!FileMove && CopyFailure)
+			{
+				return Fail($"NotAllowedError: '{target}' cannot be written.");
+			}
+
+			Move(Files, path, target);
+			Move(SizeOnly, path, target);
+		}
+
+		Writes.Add(path);
+		Writes.Add(target);
+		return Task.CompletedTask;
+	}
+
+	public Task<bool> CanRenameFoldersAsync() => Task.FromResult(FolderMove);
+
+	/// <summary>Counts the files under the folder, at most <paramref name="maxEntries"/> (files only here: a simplification of the real walk, which also counts folders).</summary>
+	public Task<int> CountFilesAsync(string path, int maxEntries)
+	{
+		if (Invalid(path) || !AllDirectories().Contains(path))
+		{
+			return Task.FromException<int>(new JSException($"NotFoundError: '{path}' is not there."));
+		}
+
+		var prefix = path + "/";
+		var count = Files.Keys.Concat(SizeOnly.Keys).Count(k => k.StartsWith(prefix, StringComparison.Ordinal));
+		return Task.FromResult(Math.Min(count, maxEntries));
+	}
+
 	public Task WatchVisibilityAsync(Action<bool> changed)
 	{
 		Visibility = changed;
 		return Task.CompletedTask;
+	}
+
+	private static bool Invalid(string path) => path.Split('/').Any(s => s is "" or "." or ".." || s.Contains('\\'));
+
+	private static string Last(string path) => path[(path.LastIndexOf('/') + 1)..];
+
+	private static Task Fail(string message) => Task.FromException(new JSException(message));
+
+	private static void Move<T>(Dictionary<string, T> map, string from, string to)
+	{
+		foreach (var key in map.Keys.Where(k => k == from || (from.EndsWith('/') && k.StartsWith(from, StringComparison.Ordinal))).ToList())
+		{
+			var value = map[key];
+			map.Remove(key);
+			map[to + key[from.Length..]] = value;
+		}
+	}
+
+	/// <summary>Every folder: the empty ones and the folders of the files.</summary>
+	private HashSet<string> AllDirectories()
+	{
+		var all = new HashSet<string>(Directories, StringComparer.Ordinal);
+		foreach (var path in Files.Keys.Concat(SizeOnly.Keys).Concat(Directories.Select(d => d + "/x")))
+		{
+			for (var slash = path.IndexOf('/'); slash >= 0; slash = path.IndexOf('/', slash + 1))
+			{
+				all.Add(path[..slash]);
+			}
+		}
+
+		return all;
+	}
+
+	/// <summary>Names inside the folder (<paramref name="parent"/> is empty or ends with <c>/</c>).</summary>
+	private IEnumerable<string> Siblings(string parent) =>
+		Files.Keys.Concat(SizeOnly.Keys).Concat(AllDirectories())
+			.Where(k => k.Length > parent.Length && k.StartsWith(parent, StringComparison.Ordinal) && !k[parent.Length..].Contains('/'))
+			.Select(k => k[parent.Length..]);
+
+	/// <summary>The failure a create, rename or delete of <paramref name="path"/> meets first, like the browser: no write access, a forced failure, an invalid path, a missing folder or a taken name.</summary>
+	private JSException? Refusal(string path, bool forCreate)
+	{
+		if (!WriteAccess)
+		{
+			return new JSException($"NotAllowedError: '{path}' cannot be changed.");
+		}
+
+		if (OperationFailure is not null)
+		{
+			return new JSException(OperationFailure.Message);
+		}
+
+		if (Invalid(path))
+		{
+			return new JSException($"Invalid path '{path}'.");
+		}
+
+		if (!forCreate)
+		{
+			return null;
+		}
+
+		var parent = path.Contains('/') ? path[..path.LastIndexOf('/')] : string.Empty;
+		if (parent.Length > 0 && !AllDirectories().Contains(parent))
+		{
+			return new JSException($"NotFoundError: '{parent}' is not there.");
+		}
+
+		return Siblings(parent.Length == 0 ? string.Empty : parent + "/").Any(s => string.Equals(s, Last(path), StringComparison.OrdinalIgnoreCase))
+			? new JSException($"'{path}' already exists.")
+			: null;
 	}
 }

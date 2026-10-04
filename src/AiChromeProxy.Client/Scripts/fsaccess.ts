@@ -16,6 +16,7 @@ interface FolderScan {
     files: FileMeta[];
     truncated: boolean;
     skipped: string[];
+    directories: string[];
 }
 
 /** AiChromeProxy.Client.Sync.FolderGrant */
@@ -175,9 +176,10 @@ export async function requestAccess(): Promise<boolean> {
 
 /**
  * Walks the folder, not descending into the given directories (IgnoreRules.SkipDirectories: a name is skipped at any depth,
- * '/a/b' only at that path; case-insensitive). Returns { files: [{ path, size, modified }], truncated, skipped }.
+ * '/a/b' only at that path; case-insensitive). Returns { files: [{ path, size, modified }], truncated, skipped, directories }.
  * Files and folders count toward maxEntries. skipped lists what the walk could not see, so C# never mistakes it for a deletion:
  * unreadable files by path, and folders that could not be listed (or are deeper than MAX_DEPTH) as a prefix ending in '/'.
+ * directories lists the folder paths seen (not the skipped ones; empty folders included).
  * Throws when the picked folder itself cannot be listed (lost access must never look like an empty folder).
  */
 export async function scan(skipDirectories: string[], maxEntries: number): Promise<FolderScan> {
@@ -186,6 +188,7 @@ export async function scan(skipDirectories: string[], maxEntries: number): Promi
     const list: FileMeta[] = [];
     let seen = 0;
     const skipped: string[] = [];
+    const directories: string[] = [];
     let truncated = false;
 
     async function walk(dir: FileSystemDirectoryHandle, prefix: string, depth: number): Promise<void> {
@@ -204,6 +207,7 @@ export async function scan(skipDirectories: string[], maxEntries: number): Promi
                         skipped.push(path + '/');
                         continue;
                     }
+                    directories.push(path);
                     await walk(handle, path + '/', depth + 1);
                     if (truncated) {
                         return;
@@ -229,7 +233,7 @@ export async function scan(skipDirectories: string[], maxEntries: number): Promi
     await walk(pickedRoot(), '', 0);
     files = found;
     chunkFile = null;
-    return { files: list, truncated, skipped };
+    return { files: list, truncated, skipped, directories };
 }
 
 /**
@@ -399,20 +403,192 @@ export async function write(path: string, bytes: Uint8Array<ArrayBuffer>): Promi
     }
 }
 
-/** Deletes the file; no-op when it is not there. Never removes a folder. */
-export async function remove(path: string): Promise<void> {
+/** Minimal typing of FileSystemHandle.move (Chrome 110+; not in every TypeScript lib, absent from some browsers). */
+interface Movable {
+    move(newName: string): Promise<void>;
+}
+
+/** The handle's move function when this browser has one (feature-detected per handle). */
+function moveOf(handle: FileSystemHandle): ((newName: string) => Promise<void>) | null {
+    const candidate = handle as FileSystemHandle & Partial<Movable>;
+    return 'move' in candidate && typeof candidate.move === 'function' ? candidate.move.bind(candidate) : null;
+}
+
+/** What the folder holds under the name (the file system decides about case): a file, a directory or nothing. */
+async function entryKind(dir: FileSystemDirectoryHandle, name: string): Promise<'file' | 'directory' | null> {
+    try {
+        await dir.getFileHandle(name);
+        return 'file';
+    } catch (e) {
+        if (e instanceof DOMException && e.name === 'TypeMismatchError') {
+            return 'directory';
+        }
+        if (isNotFound(e)) {
+            return null;
+        }
+        throw e;
+    }
+}
+
+/** Creates an empty file in an existing folder; throws when the name is taken (by a file or a folder) or the path is invalid. */
+export async function createFile(path: string): Promise<void> {
+    const { folders, name } = splitPath(path);
+    const dir = await parentOf(folders, false);
+    if (await entryKind(dir, name) !== null) {
+        throw new Error(`'${path}' already exists.`);
+    }
+    await dir.getFileHandle(name, { create: true });
+}
+
+/** Creates a folder in an existing folder; throws when the name is taken or the path is invalid. */
+export async function createFolder(path: string): Promise<void> {
+    const { folders, name } = splitPath(path);
+    const dir = await parentOf(folders, false);
+    if (await entryKind(dir, name) !== null) {
+        throw new Error(`'${path}' already exists.`);
+    }
+    await dir.getDirectoryHandle(name, { create: true });
+}
+
+/** Whether this browser can move (rename) folders: FileSystemHandle.move exists. */
+export function canRenameFolders(): boolean {
+    return typeof FileSystemDirectoryHandle !== 'undefined' && 'move' in FileSystemDirectoryHandle.prototype;
+}
+
+/** Renames within the folder: a file with move, else copy (create, never overwriting) then remove the old one, up to 20 MB; a folder only with move. */
+async function moveEntry(dir: FileSystemDirectoryHandle, kind: 'file' | 'directory', from: string, to: string): Promise<void> {
+    if (kind === 'directory') {
+        const move = moveOf(await dir.getDirectoryHandle(from));
+        if (move === null) {
+            throw new Error('This browser cannot rename folders.');
+        }
+        await move(to);
+        return;
+    }
+    const handle = await dir.getFileHandle(from);
+    const move = moveOf(handle);
+    if (move !== null) {
+        await move(to);
+        return;
+    }
+    const file = await handle.getFile();
+    if (file.size > MAX_FILE_SIZE) {
+        throw new Error(`'${from}' is larger than 20 MB; this browser cannot rename it.`);
+    }
+    const target = await dir.getFileHandle(to, { create: true });
+    try {
+        const writable = await target.createWritable();
+        try {
+            await writable.write(file);
+            await writable.close();
+        } catch (e) {
+            await writable.abort().catch(() => undefined);
+            throw e;
+        }
+    } catch (e) {
+        await dir.removeEntry(to).catch(() => undefined);
+        throw e;
+    }
+    await dir.removeEntry(from);
+}
+
+/**
+ * Renames the file or folder at the path to newName (a single name) in the same folder; never overwrites, never touches the picked root
+ * (an empty path is invalid). A change of case only goes through a temporary name, because the file system sees one name.
+ */
+export async function rename(path: string, newName: string): Promise<void> {
+    const { folders, name } = splitPath(path);
+    const target = splitPath(newName);
+    if (target.folders.length > 0) {
+        throw new Error(`Invalid name '${newName}'.`);
+    }
+    const dir = await parentOf(folders, false);
+    const kind = await entryKind(dir, name);
+    if (kind === null) {
+        throw new Error(`'${path}' is not there.`);
+    }
+    if (name === newName) {
+        return;
+    }
+    if (name.toLowerCase() !== newName.toLowerCase()) {
+        if (await entryKind(dir, newName) !== null) {
+            throw new Error(`'${newName}' already exists here.`);
+        }
+        await moveEntry(dir, kind, name, newName);
+        return;
+    }
+    const temp = `${name}.aicp-rename`;
+    if (await entryKind(dir, temp) !== null) {
+        throw new Error(`'${temp}' already exists here.`);
+    }
+    await moveEntry(dir, kind, name, temp);
+    try {
+        await moveEntry(dir, kind, temp, newName);
+    } catch (e) {
+        await moveEntry(dir, kind, temp, name).catch(() => undefined);
+        throw e;
+    }
+}
+
+/**
+ * Deletes the file, or the folder with everything in it when recursive is true (a folder without it throws); no-op when it is not there.
+ * The picked root is never removed (an empty path is invalid).
+ */
+export async function remove(path: string, recursive = false): Promise<void> {
     const { folders, name } = splitPath(path);
     let dir: FileSystemDirectoryHandle;
+    let kind: 'file' | 'directory' | null;
     try {
         dir = await parentOf(folders, false);
-        await dir.getFileHandle(name);
+        kind = await entryKind(dir, name);
     } catch (e) {
-        if (e instanceof DOMException && e.name === 'NotFoundError') {
+        if (isNotFound(e)) {
             return;
         }
         throw e;
     }
+    if (kind === null) {
+        return;
+    }
+    if (kind === 'directory') {
+        if (!recursive) {
+            throw new Error(`'${path}' is a folder.`);
+        }
+        await dir.removeEntry(name, { recursive: true });
+        return;
+    }
     await dir.removeEntry(name);
+}
+
+/**
+ * Every file under the folder (no excludes), as it is now; the walk stops after maxEntries entries (files and folders) and below MAX_DEPTH,
+ * like scan. Throws when the folder is not there or cannot be listed.
+ */
+export async function countFiles(path: string, maxEntries: number): Promise<number> {
+    const { folders, name } = splitPath(path);
+    let count = 0;
+    let seen = 0;
+
+    async function walk(dir: FileSystemDirectoryHandle, depth: number): Promise<void> {
+        for await (const [, handle] of dir.entries()) {
+            if (++seen > maxEntries) {
+                return;
+            }
+            if (handle.kind === 'directory') {
+                if (depth < MAX_DEPTH) {
+                    await walk(handle, depth + 1);
+                }
+            } else {
+                count++;
+            }
+            if (seen > maxEntries) {
+                return;
+            }
+        }
+    }
+
+    await walk(await (await parentOf(folders, false)).getDirectoryHandle(name), 0);
+    return count;
 }
 
 /** Calls callback.Changed(visible) when the tab is shown or hidden and when the window gets focus; replaces an earlier watch. */
