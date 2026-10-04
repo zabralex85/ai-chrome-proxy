@@ -1,6 +1,6 @@
 # Windows host
 
-One `Setup.exe` installs everything on a Windows home server. The Server then runs as a Windows service that starts after power-on **without anyone logging in**, under your own account (so `claude` sees your `~/.claude`). A tray app shows the status, starts and stops the service, edits the settings, shows the logs and installs updates.
+One `Setup.exe` installs everything on a Windows home server. The Server then runs as a Windows service that starts after power-on **without anyone logging in**, under your own account (so `claude` sees your `~/.claude`). The service account must be the one logged in to `claude` (run `claude` once interactively as it): see [Claude chat](chat.md#setup). A tray app shows the status, starts and stops the service, edits the settings, shows the logs and installs updates.
 
 Remote access (Cloudflare Tunnel + Cloudflare Access) is set up by the tray: [Remote access](#remote-access). The manual dashboard path stays in [setup/cloudflare.md](setup/cloudflare.md).
 
