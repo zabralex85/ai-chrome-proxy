@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json.Nodes;
+using AiChromeProxy.Infrastructure.Hosted;
 using AiChromeProxy.Infrastructure.Hosting;
 using AiChromeProxy.Tests.Infrastructure;
 using AiChromeProxy.Tray.Services;
@@ -467,7 +468,7 @@ public sealed class RemoteAccessViewModelTests : IDisposable
 	private static bool NeedsSetup(DataDirectory dataDir) => RemoteAccessViewModel.NeedsSetup(dataDir, _ => null);
 
 	private RemoteAccessViewModel Create() =>
-		new(_dataDir, _http, _service, command =>
+		new(_dataDir, _http, new HostedProvisioningClient(_http), _service, command =>
 		{
 			_elevated.Add(command);
 			return Task.FromResult(_elevatedExitCode);

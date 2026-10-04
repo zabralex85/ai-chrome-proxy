@@ -5,7 +5,7 @@ using AiChromeProxy.Infrastructure.Cloudflare;
 namespace AiChromeProxy.Infrastructure.Hosted;
 
 /// <summary>Client of the hosted provisioning protocol (version 1). Never logs bodies: the redeem answer carries the tunnel token.</summary>
-public sealed class HostedProvisioningClient(HttpClient http)
+public sealed class HostedProvisioningClient(HttpClient http) : IHostedProvisioning
 {
 	private static readonly TimeSpan _checkTimeout = TimeSpan.FromSeconds(15);
 	private static readonly TimeSpan _redeemTimeout = TimeSpan.FromSeconds(90);

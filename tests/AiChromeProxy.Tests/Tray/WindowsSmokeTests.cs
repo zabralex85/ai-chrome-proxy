@@ -1,3 +1,4 @@
+using AiChromeProxy.Infrastructure.Hosted;
 using AiChromeProxy.Infrastructure.Hosting;
 using AiChromeProxy.Tests.Infrastructure;
 using AiChromeProxy.Tray;
@@ -60,7 +61,7 @@ public sealed class WindowsSmokeTests : IDisposable
 						.On("GET", "user/tokens/verify", """{"status":"active"}""")
 						.On("GET", "zones?status=active&page=1&per_page=50", """[{"id":"z1","name":"example.com","account":{"id":"a1","name":"Jane"}}]""", totalPages: 1)))
 					{
-						var wizardVm = new RemoteAccessViewModel(_dataDir, http, new FakeServiceControl(), _ => Task.FromResult<int?>(0), "HOMEPC") { ApiToken = "api-token" };
+						var wizardVm = new RemoteAccessViewModel(_dataDir, http, new HostedProvisioningClient(http), new FakeServiceControl(), _ => Task.FromResult<int?>(0), "HOMEPC") { ApiToken = "api-token" };
 						var wizard = new RemoteAccessWindow { DataContext = wizardVm };
 						wizard.Show();
 						Assert.Contains(TextBoxes(wizard), t => t.PasswordChar == '●' && t.Text == "api-token");

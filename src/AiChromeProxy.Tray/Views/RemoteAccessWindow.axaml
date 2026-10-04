@@ -10,8 +10,14 @@
         WindowStartupLocation="CenterScreen">
   <StackPanel Margin="16" Spacing="8">
 
-    <!-- 1. Token -->
-    <StackPanel Spacing="8" IsVisible="{Binding IsTokenStage}">
+    <!-- 1. Which way -->
+    <StackPanel Spacing="4" IsVisible="{Binding IsTokenStage}" IsEnabled="{Binding !IsBusy}">
+      <RadioButton GroupName="Way" Content="Use my Cloudflare account" IsChecked="{Binding IsTokenMode}" />
+      <RadioButton GroupName="Way" Content="I have an invite link" IsChecked="{Binding IsInviteMode}" />
+    </StackPanel>
+
+    <!-- 1a. Token -->
+    <StackPanel Spacing="8" IsVisible="{Binding ShowsTokenInput}">
       <TextBlock TextWrapping="Wrap"
                  Text="Publishes this server at https://&lt;subdomain&gt;.&lt;your domain&gt; through Cloudflare Tunnel, behind Cloudflare Access (only the emails you list can sign in). Zero Trust must be enabled once on the account (free plan)." />
       <TextBlock TextWrapping="Wrap" Text="Create a Cloudflare API token (Custom token) with these permissions; it is used only in this window and never saved:" />
@@ -20,6 +26,22 @@
       <Button Content="Create token…" Click="OnCreateToken" />
       <TextBlock Text="Cloudflare API token" />
       <TextBox Text="{Binding ApiToken}" PasswordChar="●" />
+    </StackPanel>
+
+    <!-- 1b. Invite link -->
+    <StackPanel Spacing="8" IsVisible="{Binding ShowsInviteInput}" IsEnabled="{Binding !IsBusy}">
+      <TextBlock TextWrapping="Wrap"
+                 Text="A hosted service creates the tunnel, the address and the sign-in in its own Cloudflare account. Paste the invite link it gave you, pick a subdomain and the email address you will sign in with." />
+      <TextBlock Text="Invite link" />
+      <DockPanel>
+        <Button DockPanel.Dock="Right" Margin="8,0,0,0" Content="Check" Command="{Binding CheckInviteCommand}" />
+        <TextBox Text="{Binding InviteLinkText}" LostFocus="OnInviteLinkLostFocus" />
+      </DockPanel>
+      <TextBlock Text="Subdomain" />
+      <TextBox Text="{Binding InviteSubdomain}" />
+      <TextBlock Text="{Binding InviteAddress}" FontWeight="SemiBold" />
+      <TextBlock Text="Email" />
+      <TextBox Text="{Binding InviteEmail}" />
     </StackPanel>
 
     <!-- 2. Details -->
@@ -62,8 +84,9 @@
 
     <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
       <Button Content="Back" Command="{Binding BackCommand}" IsVisible="{Binding CanGoBack}" />
-      <Button Content="Continue" Command="{Binding ContinueCommand}" IsVisible="{Binding IsTokenStage}" IsDefault="True" />
+      <Button Content="Continue" Command="{Binding ContinueCommand}" IsVisible="{Binding ShowsTokenInput}" IsDefault="True" />
       <Button Content="Set up" Command="{Binding SetUpCommand}" IsVisible="{Binding IsDetailsStage}" />
+      <Button Content="Set up" Command="{Binding SetUpInviteCommand}" IsVisible="{Binding ShowsInviteInput}" />
       <Button Content="Install service…" Command="{Binding InstallServiceCommand}" IsVisible="{Binding IsInstallOffered}" />
       <Button Content="Restart service" Command="{Binding RestartServiceCommand}" IsVisible="{Binding IsRestartOffered}" />
       <Button Content="Open" Click="OnOpen" IsVisible="{Binding Succeeded}" />

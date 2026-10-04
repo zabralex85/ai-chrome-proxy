@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Reflection;
+using AiChromeProxy.Infrastructure.Hosted;
 using AiChromeProxy.Infrastructure.Hosting;
 using AiChromeProxy.Tray.Services;
 using AiChromeProxy.Tray.Updates;
@@ -19,6 +20,9 @@ public partial class App : Avalonia.Application
 
 	/// <summary>The remote access wizard's connection to api.cloudflare.com (one per tray, shared by its windows).</summary>
 	private static readonly HttpClient CloudflareHttp = new() { Timeout = TimeSpan.FromSeconds(30) };
+
+	/// <summary>The wizard's connection to an invite link's service; no overall timeout: the client sets one per call (a redeem may take a minute).</summary>
+	private static readonly HostedProvisioningClient HostedProvisioning = new(new HttpClient { Timeout = Timeout.InfiniteTimeSpan });
 
 	public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
@@ -87,7 +91,7 @@ public partial class App : Avalonia.Application
 
 		void ShowRemoteAccess() => ShowSingle(desktop, () => new RemoteAccessWindow
 		{
-			DataContext = new RemoteAccessViewModel(dataDir, CloudflareHttp, service, admin, Environment.MachineName),
+			DataContext = new RemoteAccessViewModel(dataDir, CloudflareHttp, HostedProvisioning, service, admin, Environment.MachineName),
 		});
 
 		var menu = new NativeMenu
