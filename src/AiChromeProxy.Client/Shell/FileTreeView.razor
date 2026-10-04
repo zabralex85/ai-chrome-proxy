@@ -458,7 +458,8 @@
             _expanded.UnionWith(moved);
         }
 
-        _active = newPath;
+        // Renamed to a name sync leaves out: the row is gone, so the parent folder (or the root's first row) keeps the focus.
+        _active = result.Note != SyncEngine.RenamedExcludedNote ? newPath : edit.Folder.Length > 0 ? edit.Folder : null;
         _focusActive = true;
         await OnRenamed.InvokeAsync((edit.Path, newPath, edit.IsFolder));
         return null;

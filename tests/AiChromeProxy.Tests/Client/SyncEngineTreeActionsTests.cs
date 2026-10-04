@@ -298,6 +298,93 @@ public sealed class SyncEngineTreeActionsTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Delete_NotTheLast_ThenTheFolderLooksEmpty_TheCycleStillWarns()
+	{
+		_folder.Write("a.txt", "a");
+		_folder.Write("b.txt", "b");
+		await SyncedAsync();
+		Assert.True((await _engine.DeleteAsync("a.txt", isFolder: false)).Ok);
+
+		_folder.Files.Remove("b.txt");
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.StartsWith("The folder looks empty", _engine.Problem, StringComparison.Ordinal);
+		Assert.True(File.Exists(_server.PathOf(Repo, "b.txt")));
+	}
+
+	[Fact]
+	public async Task Rename_IntoAnExcludedName_NotesIt_TheMirrorDropsTheOldPath()
+	{
+		_folder.Write("a.txt", "a");
+		_folder.Write("keep.txt", "k");
+		await SyncedAsync();
+
+		var result = await _engine.RenameAsync("a.txt", ".env");
+
+		Assert.Equal(new TreeActionResult(true, null, "Renamed; excluded from sync"), result);
+		Assert.Contains(_engine.Activity, a => a.Text == "Renamed 'a.txt' to '.env'; excluded from sync.");
+		await _engine.SyncOnceAsync(Ct);
+		Assert.False(File.Exists(_server.PathOf(Repo, "a.txt")));
+		Assert.False(File.Exists(_server.PathOf(Repo, ".env")));
+	}
+
+	[Fact]
+	public async Task Rename_IntoAnInvalidName_RefusedWithTheSyncRule()
+	{
+		_folder.Write("a.txt", "a");
+		await SyncedAsync();
+		_folder.WriteAccess = true;
+
+		Assert.Equal(SyncPath.GetError("CON"), (await _engine.RenameAsync("a.txt", "CON")).Error);
+		Assert.Empty(_folder.Writes);
+	}
+
+	[Fact]
+	public async Task Action_WhileACycleRuns_WaitsForIt_ThenActs()
+	{
+		_folder.Write("a.txt", "a");
+		_folder.Write("keep.txt", "k");
+		await SyncedAsync();
+		_folder.WriteAccess = true;
+		var gate = new TaskCompletionSource();
+		_folder.ScanGate = gate.Task;
+		var cycle = _engine.SyncOnceAsync(Ct);
+
+		var rename = _engine.RenameAsync("a.txt", "b.txt");
+		await Task.Delay(200, Ct);
+
+		Assert.False(rename.IsCompleted);
+		Assert.True(_folder.Files.ContainsKey("a.txt"));
+		gate.SetResult();
+		await cycle;
+		Assert.Equal(new TreeActionResult(true), await rename);
+		Assert.True(_folder.Files.ContainsKey("b.txt"));
+		Assert.False(_folder.Files.ContainsKey("a.txt"));
+	}
+
+	[Fact]
+	public async Task Action_ServerChangeArrivesWhileWaitingForTheCycle_Refused()
+	{
+		_folder.Write("a.txt", "a");
+		_folder.Write("keep.txt", "k");
+		await SyncedAsync();
+		_folder.WriteAccess = true;
+		var gate = new TaskCompletionSource();
+		_folder.ScanGate = gate.Task;
+		var cycle = _engine.SyncOnceAsync(Ct);
+
+		var rename = _engine.RenameAsync("a.txt", "b.txt");
+		await EditMirrorAsync("a.txt", "server a");
+		Assert.True(_engine.HasServerChange("a.txt"));
+		gate.SetResult();
+		await cycle;
+
+		Assert.Equal(new TreeActionResult(false, ResolveFirst), await rename);
+		Assert.True(_folder.Files.ContainsKey("a.txt"));
+		Assert.False(_folder.Files.ContainsKey("b.txt"));
+	}
+
+	[Fact]
 	public async Task Rename_ForgetsABackedOffFailure_SoRenamingBackUploads()
 	{
 		_folder.Write("keep.txt", "k");

@@ -40,6 +40,41 @@ public sealed class TabSetTreeTests
 	}
 
 	[Fact]
+	public void FollowRename_OntoAStaleFileTab_ClosesIt_NoDuplicateIds()
+	{
+		var tabs = Open("a.txt", "b.txt", "c.txt");
+
+		tabs.FollowRename("a.txt", "b.txt", false);
+
+		Assert.Equal([TabSet.Welcome, TabSet.FileTab("b.txt"), TabSet.FileTab("c.txt")], tabs.Open);
+		Assert.Equal(TabSet.FileTab("c.txt"), tabs.Active);
+	}
+
+	[Fact]
+	public void FollowRename_ActiveStaleTargetTab_TheRenamedTabTakesTheFocus()
+	{
+		var tabs = Open("b.txt", "a.txt");
+		tabs.Show(TabSet.FileTab("a.txt"));
+
+		tabs.FollowRename("a.txt", "b.txt", false);
+
+		Assert.Equal([TabSet.Welcome, TabSet.FileTab("b.txt")], tabs.Open);
+		Assert.Equal(TabSet.FileTab("b.txt"), tabs.Active);
+	}
+
+	[Fact]
+	public void FollowRename_AFolderOntoStaleTabs_ClosesTheTargetsTabs_NoDuplicateIds()
+	{
+		var tabs = Open("lib", "lib/a.cs", "src/a.cs", "lib/old.cs", "src/b.cs");
+
+		tabs.FollowRename("src", "lib", true);
+
+		Assert.Equal([TabSet.Welcome, TabSet.FileTab("lib/a.cs"), TabSet.FileTab("lib/b.cs")], tabs.Open);
+		Assert.Equal(TabSet.FileTab("lib/b.cs"), tabs.Active);
+		Assert.Equal(tabs.Open.Count, tabs.Open.Distinct().Count());
+	}
+
+	[Fact]
 	public void CloseDeleted_AFile_ClosesOnlyThatTab()
 	{
 		var tabs = Open("a.txt", "b.txt");

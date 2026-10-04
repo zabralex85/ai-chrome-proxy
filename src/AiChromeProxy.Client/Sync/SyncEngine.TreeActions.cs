@@ -12,12 +12,18 @@ public sealed partial class SyncEngine
 {
 	public const string ResolveFirst = "Resolve the server change first";
 	public const string ExcludedNote = "Created; excluded from sync";
+	public const string RenamedExcludedNote = "Renamed; excluded from sync";
 
 	/// <summary>Said after a delete that leaves nothing to sync; also the cycle's problem then (instead of <c>LooksEmpty</c>).</summary>
 	public const string KeepsLastFiles = "The server keeps the last synced files while the folder has none to sync.";
 
 	private const string WriteRefused = "Write access to the folder was not granted; nothing was changed.";
 	private const string RootRefused = "The picked folder itself cannot be changed.";
+	private const string Busy = "Sync is busy; try again in a moment.";
+	private const string FolderChanged = "Another folder was picked; nothing was changed.";
+
+	/// <summary>How long a tree action waits for a running sync cycle before it gives up.</summary>
+	private static readonly TimeSpan CycleWait = TimeSpan.FromSeconds(15);
 
 	/// <summary>The last successful tree action was a delete: an empty folder is then no sign of lost access.</summary>
 	private bool _deletedLast;
@@ -45,14 +51,20 @@ public sealed partial class SyncEngine
 		}
 
 		var parent = ParentOf(path);
-		var check = TreeNames.Check(parent, newName, Siblings(parent).Where(s => s != NameOf(path)));
+		var check = TreeNames.Check(parent, newName, Siblings(parent).Where(s => s != NameOf(path)), _rules, isFolder: !_fileIndex.ContainsKey(path));
 		if (check.Error is not null)
 		{
 			return Task.FromResult(new TreeActionResult(false, check.Error));
 		}
 
 		var target = parent.Length == 0 ? newName : parent + "/" + newName;
-		return ActAsync($"rename '{path}'", [path, target], () => folder.RenameAsync(path, newName), SyncActivityKind.TreeAction, $"Renamed '{path}' to '{target}'.");
+		return ActAsync(
+			$"rename '{path}'",
+			[path, target],
+			() => folder.RenameAsync(path, newName),
+			SyncActivityKind.TreeAction,
+			check.Excluded ? $"Renamed '{path}' to '{target}'; excluded from sync." : $"Renamed '{path}' to '{target}'.",
+			check.Excluded ? RenamedExcludedNote : null);
 	}
 
 	/// <summary>Deletes a file, or a folder with everything in it (permanent). Call it straight from the click, after the user confirmed.</summary>
@@ -88,9 +100,9 @@ public sealed partial class SyncEngine
 	{
 		var last = NothingLeftWithout(path);
 		var result = await ActAsync($"delete '{path}'", [path], () => folder.DeleteAsync(path, isFolder), SyncActivityKind.TreeAction, $"Deleted '{path}'.");
-		_deletedLast = result.Ok;
 		if (result.Ok && last)
 		{
+			_deletedLast = true;
 			Log(SyncActivityKind.TreeAction, KeepsLastFiles);
 			return result with { Note = KeepsLastFiles };
 		}
@@ -145,8 +157,8 @@ public sealed partial class SyncEngine
 
 	/// <summary>
 	/// Checks the paths against the server's waiting changes, asks for write access when needed (that is the first await, so the click's user
-	/// activation is still valid), acts, logs and wakes the scan. ponytail: runs beside a cycle, not inside its guard: a scan that overlaps sees
-	/// the folder half-way and the next one (woken here) corrects it; take <c>ExclusiveAsync</c>'s guard if that ever shows.
+	/// activation is still valid), then takes the cycle guard (waiting up to <see cref="CycleWait"/> for a running cycle), checks again,
+	/// acts, logs, and wakes the scan: no server write lands between the steps of an action, and no scan sees it half-way.
 	/// </summary>
 	private async Task<TreeActionResult> ActAsync(string what, string[] paths, Func<Task> act, SyncActivityKind kind, string logged, string? note = null)
 	{
@@ -154,6 +166,8 @@ public sealed partial class SyncEngine
 		{
 			return new TreeActionResult(false, ResolveFirst);
 		}
+
+		var generation = _generation;
 
 		// CanWrite may be stale (no awaited permission check before the prompt, which would use up the click's user activation): a failed write re-reads it below.
 		if (!CanWrite)
@@ -172,32 +186,54 @@ public sealed partial class SyncEngine
 			}
 		}
 
+		if (!await EnterCycleAsync(CycleWait))
+		{
+			return new TreeActionResult(false, Busy);
+		}
+
 		try
 		{
-			await act();
-		}
-		catch (Exception ex) when (ex is not OperationCanceledException)
-		{
-			if (ex is JSException)
+			// While waiting, another folder may have been picked or a server change may have arrived (pushed, or applied by the cycle waited for).
+			if (generation != _generation)
 			{
-				CanWrite = await folder.HasWriteAccessAsync();
+				return new TreeActionResult(false, FolderChanged);
 			}
 
-			var error = ex.Message.Split('\n')[0].Trim();
-			Log(SyncActivityKind.Error, $"Could not {what}: {error}");
-			Raise();
-			return new TreeActionResult(false, error);
-		}
+			if (paths.Any(RemoteTouches))
+			{
+				return new TreeActionResult(false, ResolveFirst);
+			}
 
-		foreach (var touched in paths)
+			try
+			{
+				await act();
+			}
+			catch (Exception ex) when (ex is not OperationCanceledException)
+			{
+				if (ex is JSException)
+				{
+					CanWrite = await folder.HasWriteAccessAsync();
+				}
+
+				var error = ex.Message.Split('\n')[0].Trim();
+				Log(SyncActivityKind.Error, $"Could not {what}: {error}");
+				return new TreeActionResult(false, error);
+			}
+
+			foreach (var touched in paths)
+			{
+				ForgetFailures(touched);
+			}
+
+			_deletedLast = false;
+			Log(kind, logged);
+			return new TreeActionResult(true, null, note);
+		}
+		finally
 		{
-			ForgetFailures(touched);
+			Volatile.Write(ref _cycleRunning, 0);
+			Raise();
+			Wake();
 		}
-
-		_deletedLast = false;
-		Log(kind, logged);
-		Raise();
-		Wake();
-		return new TreeActionResult(true, null, note);
 	}
 }
