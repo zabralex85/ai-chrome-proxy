@@ -38,15 +38,22 @@ public sealed class PermissionBroker
 		_logger = logger;
 	}
 
-	/// <summary>The allow-always rule for a request: <c>Bash(&lt;command&gt;)</c> for a shell command, the tool name otherwise; null for a shell call without a command.</summary>
+	/// <summary>
+	/// The allow-always rule for a request: <c>Bash(&lt;command&gt;)</c> for a shell command, the tool name otherwise. Null (allow once,
+	/// no rule) whenever the rule could match more than this request: a command with <c>*</c> (Claude Code reads it, and a trailing
+	/// <c>:*</c>, as wildcards), a line break, or none at all; a tool name other than letters, digits and underscores.
+	/// </summary>
 	public static string? Rule(string tool, JsonNode? input)
 	{
 		if (tool != "Bash")
 		{
-			return tool;
+			return tool.Length > 0 && tool.All(c => char.IsAsciiLetterOrDigit(c) || c == '_') ? tool : null;
 		}
 
-		return input is JsonObject o && o["command"] is JsonValue v && v.TryGetValue<string>(out var command) ? $"Bash({command})" : null;
+		return input is JsonObject o && o["command"] is JsonValue v && v.TryGetValue<string>(out var command)
+			&& command.Length > 0 && command.IndexOfAny(['*', '\n', '\r']) < 0
+			? $"Bash({command})"
+			: null;
 	}
 
 	/// <summary>Lets the run ask; returns its token (sent as a bearer token by the agent, never logged).</summary>
@@ -91,13 +98,25 @@ public sealed class PermissionBroker
 		}
 
 		var rule = Rule(tool, input);
-		if (rule is not null && Allowed(run.Repo).Contains(rule, StringComparer.Ordinal))
+		try
 		{
-			return true;
+			if (rule is not null && Allowed(run.Repo).Contains(rule, StringComparer.Ordinal))
+			{
+				return true;
+			}
+		}
+		catch (Exception ex)
+		{
+			_logger.LogError(ex, "Chat run {RunId}: reading the allowed tools failed; denied", run.Id);
+			return false;
 		}
 
 		var requestId = Guid.NewGuid().ToString("N");
 		var pending = new Pending(rule);
+		var summary = StreamJsonParser.Summarize(tool, input, run.Folder);
+		bool published;
+
+		// Registered and published under the run's lock: a run that ends meanwhile either never sees the request or denies it after its card.
 		lock (run)
 		{
 			if (run.Closed)
@@ -106,10 +125,10 @@ public sealed class PermissionBroker
 			}
 
 			run.Requests[requestId] = pending;
+			published = Publish(run, new ChatEvent(string.Empty, run.Id, 0, ChatEventKinds.Permission, Name: tool, Summary: summary, RequestId: requestId));
 		}
 
-		var summary = StreamJsonParser.Summarize(tool, input, run.Folder);
-		if (!Publish(run, new ChatEvent(string.Empty, run.Id, 0, ChatEventKinds.Permission, Name: tool, Summary: summary, RequestId: requestId)))
+		if (!published)
 		{
 			// Nobody can see the question: deny now rather than after the timeout.
 			Resolve(run, requestId, ChatDecisions.Deny);
@@ -177,9 +196,10 @@ public sealed class PermissionBroker
 			}
 		}
 
-		if (decision == ChatDecisions.AllowAlways && pending.Rule is not null)
+		// Allow always without a saved rule is reported as what it was: allowed once.
+		if (decision == ChatDecisions.AllowAlways && (pending.Rule is null || !AddRule(run, pending.Rule)))
 		{
-			AddRule(run, pending.Rule);
+			decision = ChatDecisions.Allow;
 		}
 
 		Publish(run, new ChatEvent(string.Empty, run.Id, 0, ChatEventKinds.PermissionResolved, RequestId: requestId, Decision: decision));
@@ -187,7 +207,8 @@ public sealed class PermissionBroker
 		return true;
 	}
 
-	private void AddRule(RunState run, string rule)
+	/// <returns>False when saving failed.</returns>
+	private bool AddRule(RunState run, string rule)
 	{
 		try
 		{
@@ -200,11 +221,14 @@ public sealed class PermissionBroker
 					_projects.SaveSettings(run.Repo, settings with { AgentAllowedTools = [.. allowed, rule] });
 				}
 			}
+
+			return true;
 		}
 		catch (Exception ex)
 		{
 			// Allowed this time anyway; the user can add the rule in the settings.
 			_logger.LogError(ex, "Chat run {RunId}: saving an allow-always rule failed", run.Id);
+			return false;
 		}
 	}
 

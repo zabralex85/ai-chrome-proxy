@@ -26,6 +26,17 @@ public sealed class ClaudeArgumentsTests
 		Assert.Equal(["--append-system-prompt", ClaudeArguments.Convention], args.Skip(13));
 	}
 
+	[Fact]
+	public void AgentRun_ToString_HidesTheToken()
+	{
+		var text = Run("ask", "http://127.0.0.1:5180/mcp/approve", "tok123").ToString();
+
+		Assert.DoesNotContain("tok123", text, StringComparison.Ordinal);
+		Assert.Contains("ApprovalToken = ***", text, StringComparison.Ordinal);
+		Assert.Contains("ApprovalUrl = http://127.0.0.1:5180/mcp/approve", text, StringComparison.Ordinal);
+		Assert.Contains("ApprovalToken =  }", new AgentRun("C:/r", "hi").ToString(), StringComparison.Ordinal);
+	}
+
 	[Theory]
 	[InlineData("ask")]
 	[InlineData("unknown")]

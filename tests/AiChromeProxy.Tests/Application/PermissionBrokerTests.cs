@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using AiChromeProxy.Application.Chat;
+using AiChromeProxy.Application.Sync;
 using AiChromeProxy.Application.Transport;
 using AiChromeProxy.Domain;
 using AiChromeProxy.Domain.Chat;
@@ -218,7 +219,90 @@ public sealed class PermissionBrokerTests
 	{
 		Assert.Equal("Bash(git status)", PermissionBroker.Rule("Bash", new JsonObject { ["command"] = "git status" }));
 		Assert.Equal("WebFetch", PermissionBroker.Rule("WebFetch", new JsonObject { ["url"] = "https://example.com" }));
+		Assert.Equal("mcp__server__tool_2", PermissionBroker.Rule("mcp__server__tool_2", null));
 		Assert.Null(PermissionBroker.Rule("Bash", null));
+	}
+
+	[Theory]
+	[InlineData("rm -f build/*.o")]
+	[InlineData("git:*")]
+	[InlineData("npm run test:*")]
+	[InlineData("echo a\nrm -rf /")]
+	[InlineData("echo a\rrm -rf /")]
+	[InlineData("")]
+	public void Rule_BashCommandThatCouldMatchMore_None(string command)
+	{
+		Assert.Null(PermissionBroker.Rule("Bash", new JsonObject { ["command"] = command }));
+	}
+
+	[Theory]
+	[InlineData("Web Fetch")]
+	[InlineData("Bash(ls)")]
+	[InlineData("Read*")]
+	[InlineData("")]
+	[InlineData("mcp__x__y(z)")]
+	public void Rule_ToolNameOutsideLettersDigitsUnderscores_None(string tool)
+	{
+		Assert.Null(PermissionBroker.Rule(tool, new JsonObject()));
+	}
+
+	[Theory]
+	[InlineData("Bash", "rm -f build/*.o")]
+	[InlineData("Bash", "git:*")]
+	[InlineData("Bash", "ls\nrm x")]
+	[InlineData("Web Fetch", "x")]
+	public async Task AllowAlways_WithoutASafeRule_AllowedOnce_ReportedAllow_NothingSaved(string tool, string command)
+	{
+		var input = new JsonObject { ["command"] = command };
+		var request = _broker.RequestAsync(RunId, tool, input, TestContext.Current.CancellationToken);
+
+		_broker.Answer(RunId, (await PermissionAsync()).RequestId, ChatDecisions.AllowAlways);
+
+		Assert.True(await request);
+		Assert.Equal(ChatDecisions.Allow, Published[^1].Decision);
+		Assert.Null(_projects.GetSettings(Repo).AgentAllowedTools);
+		Assert.False(_broker.RequestAsync(RunId, tool, input.DeepClone(), TestContext.Current.CancellationToken).IsCompleted);
+	}
+
+	[Fact]
+	public async Task SettingsUnreadable_DeniedWithoutAPrompt_Logged()
+	{
+		var broker = new PermissionBroker(new BrokenProjectStore(), _time, _logger);
+		var events = new List<ChatEvent>();
+		broker.StartRun("r", Repo, null, events.Add);
+
+		Assert.False(await broker.RequestAsync("r", "Bash", Ls, TestContext.Current.CancellationToken));
+		Assert.Empty(events);
+		Assert.Contains(_logger.Messages, m => m.Contains("denied", StringComparison.Ordinal));
+	}
+
+	[Fact]
+	public async Task RunEndsWhilePublishingTheCard_DenyFollowsTheCard()
+	{
+		var events = new List<ChatEvent>();
+		Task? cancel = null;
+		_broker.StartRun("r", Repo, null, e =>
+		{
+			lock (events)
+			{
+				events.Add(e);
+			}
+
+			if (e.Kind == ChatEventKinds.Permission)
+			{
+				// The run ends on another thread while the card is being published.
+				cancel = Task.Run(() => _broker.CancelRun("r"), TestContext.Current.CancellationToken);
+				Thread.Sleep(100);
+			}
+		});
+
+		Assert.False(await _broker.RequestAsync("r", "Bash", Ls, TestContext.Current.CancellationToken));
+		await cancel!;
+		lock (events)
+		{
+			Assert.Equal([ChatEventKinds.Permission, ChatEventKinds.PermissionResolved], events.Select(e => e.Kind));
+			Assert.Equal(ChatDecisions.Deny, events[1].Decision);
+		}
 	}
 
 	private void Publish(ChatEvent e)
@@ -237,5 +321,23 @@ public sealed class PermissionBrokerTests
 		}
 
 		return Published.Last(e => e.Kind == ChatEventKinds.Permission);
+	}
+
+	/// <summary>A project store whose reads fail (e.g. the database is locked).</summary>
+	private sealed class BrokenProjectStore : IProjectStore
+	{
+		public bool IsBaselined(string repo) => throw new IOException("locked");
+
+		public void SetBaselined(string repo) => throw new IOException("locked");
+
+		public IReadOnlyDictionary<string, string> GetBases(string repo) => throw new IOException("locked");
+
+		public void SetBases(string repo, IReadOnlyCollection<KeyValuePair<string, string?>> changes) => throw new IOException("locked");
+
+		public void ForgetBases(string repo) => throw new IOException("locked");
+
+		public ProjectSettings GetSettings(string repo) => throw new IOException("locked");
+
+		public ProjectSettings SaveSettings(string repo, ProjectSettings settings) => throw new IOException("locked");
 	}
 }

@@ -58,11 +58,15 @@ public static class ApprovalMcp
 	}
 
 	/// <summary>
-	/// A request from this machine: loopback and not forwarded by the tunnel (<c>cloudflared</c> connects over loopback too, and Cloudflare
-	/// adds <c>Cf-Connecting-IP</c> to every request it forwards).
+	/// A request from this machine to the approval URL: loopback, addressed to <c>127.0.0.1</c> (as the URL is; the tunnel's requests carry the
+	/// public host) and not forwarded by the tunnel (<c>cloudflared</c> connects over loopback too, and Cloudflare adds <c>Cf-Connecting-IP</c>
+	/// to every request it forwards).
 	/// </summary>
 	public static bool IsLocal(HttpContext context) =>
-		context.Connection.RemoteIpAddress is { } ip && IPAddress.IsLoopback(ip) && !context.Request.Headers.ContainsKey("Cf-Connecting-IP");
+		context.Connection.RemoteIpAddress is { } ip
+		&& IPAddress.IsLoopback(ip)
+		&& context.Request.Host.Host == "127.0.0.1"
+		&& !context.Request.Headers.ContainsKey("Cf-Connecting-IP");
 
 	/// <summary>Whether the Access check is skipped: exactly <see cref="Path"/> from this machine (the endpoint checks its own token).</summary>
 	public static bool SkipsAccess(HttpContext context) => context.Request.Path.Equals(Path, StringComparison.OrdinalIgnoreCase) && IsLocal(context);

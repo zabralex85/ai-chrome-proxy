@@ -18,9 +18,10 @@ namespace AiChromeProxy.Application.Chat;
 /// Every run ends with exactly one stored <c>result</c>: Claude's own, or <c>ok:false</c> for a cancel, the idle timeout, the server stopping,
 /// a start failure, an exit without a result line or an unexpected error.
 /// Streaming <c>text</c> deltas are pushed with <c>seq</c> 0 and never stored: the following <c>message</c> replaces them, and catching up
-/// after a reconnect (<c>chat.history</c>) uses stored events only. Disposing (the host shutting down) stops the runs.
+/// after a reconnect (<c>chat.history</c>) uses stored events only. Disposing (the host shutting down) stops the runs and waits for them
+/// (at most <see cref="ShutdownWait"/>), so that their results are stored before the stores go away.
 /// </summary>
-public sealed class ChatService : IDisposable
+public sealed class ChatService : IDisposable, IAsyncDisposable
 {
 	/// <summary>Pushes a connection may have pending; beyond that it is dropped (and aborted) so that it reconnects and catches up.</summary>
 	public const int MaxPendingPushes = 1_000;
@@ -32,6 +33,9 @@ public sealed class ChatService : IDisposable
 	private const int StoredEventBytes = ChatLimits.MaxEventBytes - PageReserveBytes;
 
 	private const int TitleChars = 60;
+
+	/// <summary>How long disposing waits for the stopped runs.</summary>
+	private static readonly TimeSpan ShutdownWait = TimeSpan.FromSeconds(5);
 
 	/// <summary>How long a process may take to exit once its output is over.</summary>
 	private static readonly TimeSpan ExitGrace = TimeSpan.FromSeconds(5);
@@ -174,17 +178,23 @@ public sealed class ChatService : IDisposable
 	/// <summary><c>chat.approve</c>: answers a pending permission request (<c>not_found</c> when there is none, <c>bad_request</c> for an unknown decision).</summary>
 	public void Approve(ChatApprovePayload payload) => _broker.Answer(payload.RunId, payload.RequestId, payload.Decision);
 
-	/// <summary>Stops every run (each ends with a stored <c>result</c>) and waits a few seconds for them.</summary>
+	/// <summary>Stops every run (each ends with a stored <c>result</c>) and waits up to <see cref="ShutdownWait"/> for them.</summary>
 	public void Dispose()
 	{
-		if (_stopping.IsCancellationRequested)
+		if (!Task.WaitAll(Stop(), ShutdownWait))
 		{
-			return;
+			_logger.LogWarning("Chat runs did not finish within 5 seconds of shutdown");
 		}
+	}
 
-		_stopping.Cancel();
-		var running = _runs.Values.Select(r => r.Task ?? Task.CompletedTask).ToArray();
-		if (!Task.WaitAll(running, TimeSpan.FromSeconds(5)))
+	/// <summary>Like <see cref="Dispose"/> without blocking a thread (the host disposes this way), so the runs' continuations are not starved.</summary>
+	public async ValueTask DisposeAsync()
+	{
+		try
+		{
+			await Task.WhenAll(Stop()).WaitAsync(ShutdownWait);
+		}
+		catch (TimeoutException)
 		{
 			_logger.LogWarning("Chat runs did not finish within 5 seconds of shutdown");
 		}
@@ -212,6 +222,13 @@ public sealed class ChatService : IDisposable
 	/// <summary>The event with the run's ids, split so that each part still fits a page once stored (the widest seq is assumed).</summary>
 	private static IEnumerable<ChatEvent> Parts(Run run, ChatEvent e) =>
 		ChatEventSplitter.Split(e with { SessionId = run.SessionId!, RunId = run.Id, Seq = long.MaxValue }, StoredEventBytes).Select(p => p with { Seq = 0 });
+
+	/// <summary>Cancels every run (again harmless) and returns the tasks of those not finished yet, so every disposal waits for them.</summary>
+	private Task[] Stop()
+	{
+		_stopping.Cancel();
+		return [.. _runs.Values.Select(r => r.Task ?? Task.CompletedTask)];
+	}
 
 	/// <summary>The approval endpoint and the run's token for <c>ask</c> when the Server hosts the endpoint; otherwise none.</summary>
 	private (string? Url, string? Token) Approval(Run run, string folder, string permissions)

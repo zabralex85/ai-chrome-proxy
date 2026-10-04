@@ -34,12 +34,16 @@ public sealed class ApprovalMcpTests : IAsyncDisposable
 
 	private static readonly string FakeAgent = Path.Combine(AppContext.BaseDirectory, "AiChromeProxy.FakeAgent.exe");
 
+	/// <summary>Requests addressed like the approval URL (<c>Host: 127.0.0.1</c>).</summary>
+	private static readonly WebApplicationFactoryClientOptions Local = new() { BaseAddress = new Uri("http://127.0.0.1") };
+
 	private readonly TestAccessIssuer _issuer = new();
 	private readonly FakeAgentRunner _agent = new();
 	private readonly string _testRoot = Path.Combine(TempRootCleanup.Root, Guid.NewGuid().ToString("N"));
 	private readonly string _mirror;
 	private readonly List<Envelope> _pushed = [];
 	private WebApplicationFactory<Program> _factory;
+	private ChatService? _chat;
 
 	public ApprovalMcpTests()
 	{
@@ -54,25 +58,13 @@ public sealed class ApprovalMcpTests : IAsyncDisposable
 
 	private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-	private ChatService Chat => _factory.Services.GetRequiredService<ChatService>();
+	private ChatService Chat => _chat ??= _factory.Services.GetRequiredService<ChatService>();
 
 	public async ValueTask DisposeAsync()
 	{
-		await _factory.DisposeAsync();
+		await StopAsync();
 		Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-
-		// A run stopped by the shutdown may still be closing the database under a loaded parallel run; TempRootCleanup sweeps what is left.
-		for (var i = 0; i < 20 && Directory.Exists(_testRoot); i++)
-		{
-			try
-			{
-				Directory.Delete(_testRoot, recursive: true);
-			}
-			catch (IOException)
-			{
-				await Task.Delay(100, CancellationToken.None);
-			}
-		}
+		Directory.Delete(_testRoot, recursive: true);
 	}
 
 	[Fact]
@@ -116,6 +108,30 @@ public sealed class ApprovalMcpTests : IAsyncDisposable
 			request.Headers.Add(CloudflareAccessMiddleware.HeaderName, _issuer.Token());
 
 			Assert.Equal(HttpStatusCode.NotFound, await SendAsync(request));
+		}
+	}
+
+	[Fact]
+	public async Task LoopbackWithThePublicHost_NotLocal_AccessRequired()
+	{
+		var (_, process) = await StartRunAsync();
+
+		foreach (var host in new[] { ServerHostingTests.PublicHost, "localhost" })
+		{
+			using (var request = Post(process.Run.ApprovalToken))
+			{
+				request.Headers.Host = host;
+
+				Assert.Equal(HttpStatusCode.Unauthorized, await SendAsync(request));
+			}
+
+			using (var request = Post(process.Run.ApprovalToken))
+			{
+				request.Headers.Host = host;
+				request.Headers.Add(CloudflareAccessMiddleware.HeaderName, _issuer.Token());
+
+				Assert.Equal(HttpStatusCode.NotFound, await SendAsync(request));
+			}
 		}
 	}
 
@@ -226,7 +242,7 @@ public sealed class ApprovalMcpTests : IAsyncDisposable
 	[Fact]
 	public async Task FakeAgent_ApprovesThroughTheRealEndpoint_RunEndsNormally()
 	{
-		await _factory.DisposeAsync();
+		await StopAsync();
 		var port = FreePort();
 		var script = Path.Combine(_testRoot, "approve.jsonl");
 		await File.WriteAllLinesAsync(
@@ -287,6 +303,21 @@ public sealed class ApprovalMcpTests : IAsyncDisposable
 		return request;
 	}
 
+	/// <summary>
+	/// Ends the runs, then the host. The factory's DisposeAsync returns before the app's own thread has disposed the services, so runs
+	/// left going would still be writing their results to aicp.db while the test deletes it.
+	/// </summary>
+	private async Task StopAsync()
+	{
+		if (_chat is not null)
+		{
+			await _chat.DisposeAsync();
+			_chat = null;
+		}
+
+		await _factory.DisposeAsync();
+	}
+
 	private WebApplicationFactory<Program> Factory(Action<IWebHostBuilder> configure) =>
 		new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
 		{
@@ -302,7 +333,7 @@ public sealed class ApprovalMcpTests : IAsyncDisposable
 
 	private async Task<HttpStatusCode> SendAsync(HttpRequestMessage request)
 	{
-		using (var client = _factory.CreateClient())
+		using (var client = _factory.CreateClient(Local))
 		{
 			using (var response = await client.SendAsync(request, Ct))
 			{
@@ -313,7 +344,7 @@ public sealed class ApprovalMcpTests : IAsyncDisposable
 
 	private async Task<McpClient> ClientAsync(string token)
 	{
-		var http = _factory.CreateClient();
+		var http = _factory.CreateClient(Local);
 		var transport = new HttpClientTransport(
 			new HttpClientTransportOptions
 			{
