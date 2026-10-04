@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Sockets;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
@@ -8,7 +10,7 @@ using Microsoft.Extensions.Hosting;
 
 namespace AiChromeProxy.E2E.Hooks;
 
-/// <summary>The real Server on a Kestrel listener (random loopback port) so a real browser can reach it.</summary>
+/// <summary>The real Server on a Kestrel listener (a free loopback port) so a real browser can reach it.</summary>
 public sealed class AppServer : IAsyncDisposable
 {
 	private readonly WebApplicationFactory<Program> _factory;
@@ -21,9 +23,16 @@ public sealed class AppServer : IAsyncDisposable
 		{
 			b.UseEnvironment(Environments.Development);
 			b.UseSetting("CloudflareAccess:Enabled", "false");
-			b.UseSetting("Server:Port", "0");
+
+			// A free port, not 0: the approval endpoint's address that the agent is given comes from the configured port.
+			b.UseSetting("Server:Port", FreePort().ToString(System.Globalization.CultureInfo.InvariantCulture));
 			b.UseSetting("Mirror:Root", Path.Combine(root, "mirror"));
 			b.UseSetting("Projects:Database", Path.Combine(root, "aicp.db"));
+
+			// Claude is a fake agent: it prints the fixture named after the first word of the message (Fixtures/tour.jsonl, slow.jsonl), a little slowly.
+			b.UseSetting("Agent:Command", Path.Combine(AppContext.BaseDirectory, "AiChromeProxy.FakeAgent.exe"));
+			b.UseSetting("Agent:Env:FAKE_AGENT_SCRIPT_DIR", Path.Combine(AppContext.BaseDirectory, "Fixtures"));
+			b.UseSetting("Agent:Env:FAKE_AGENT_DELAY_MS", "120");
 		});
 		_factory.UseKestrel();
 		_factory.StartServer();
@@ -35,4 +44,18 @@ public sealed class AppServer : IAsyncDisposable
 	public string BaseUrl { get; }
 
 	public ValueTask DisposeAsync() => _factory.DisposeAsync();
+
+	private static int FreePort()
+	{
+		var listener = new TcpListener(IPAddress.Loopback, 0);
+		listener.Start();
+		try
+		{
+			return ((IPEndPoint)listener.LocalEndpoint).Port;
+		}
+		finally
+		{
+			listener.Stop();
+		}
+	}
 }

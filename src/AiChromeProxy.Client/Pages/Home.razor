@@ -1,10 +1,12 @@
 @page "/"
 @using System.Diagnostics
+@using AiChromeProxy.Client.Chat
 @using AiChromeProxy.Client.Sync
 @using AiChromeProxy.Client.Transport
 @using AiChromeProxy.Domain
 @inject ITransport Transport
 @inject SyncEngine Engine
+@inject ChatEngine Chat
 @inject HttpClient Http
 @inject IJSRuntime JS
 @inject TimeProvider Time
@@ -29,8 +31,8 @@
              @onpointerdown="e => StartDragAsync(Side.Left, e)" @onkeydown="e => ResizeByKeyAsync(Side.Left, e)"></div>
     }
     @* An EventCallback re-renders the component that created it once the handler ran: the tree then highlights the active tab's file. *@
-    <MainArea Engine="Engine" Tabs="_tabs" OnChanged="StateHasChanged" />
-    <ActionsHistory Engine="Engine" Collapsed="@(!_historyOpen)" State="@Transport.State" PingMs="@_pingMs" />
+    <MainArea Engine="Engine" Tabs="_tabs" ChatEnabled="@(Transport.State == TransportState.Connected && Engine.Folder == FolderStatus.Ready && Engine.FolderName is not null)" OnOpenFile="OpenFile" OnChanged="StateHasChanged" />
+    <ActionsHistory Engine="Engine" Chat="Chat" Collapsed="@(!_historyOpen)" State="@Transport.State" PingMs="@_pingMs" />
     @if (_historyOpen)
     {
         <div class="resizer resizer-right" data-testid="history-resizer" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize the actions history"
@@ -78,6 +80,7 @@
     {
         Transport.StateChanged -= OnStateChanged;
         Engine.Changed -= OnEngineChanged;
+        Chat.Changed -= OnEngineChanged;
         _render?.Dispose();
         _stop.Cancel();
         _stop.Dispose();
@@ -88,6 +91,7 @@
         _render = new RenderCoalescer(Time, RenderInterval, () => _ = InvokeAsync(StateHasChanged));
         Transport.StateChanged += OnStateChanged;
         Engine.Changed += OnEngineChanged;
+        Chat.Changed += OnEngineChanged;
         _theme = await ReadThemeAsync();
         await ReadViewportAsync();
         if (Transport.State == TransportState.Disconnected)
@@ -97,6 +101,7 @@
 
         _ = LoadUserAsync();
         await Engine.InitializeAsync();
+        await Chat.InitializeAsync();
         _ = Engine.RunAsync(_stop.Token);
         _ = PingEveryAsync(TimeSpan.FromSeconds(15));
     }

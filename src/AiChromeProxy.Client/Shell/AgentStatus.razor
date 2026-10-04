@@ -1,0 +1,51 @@
+@using AiChromeProxy.Client.Chat
+@implements IDisposable
+
+@* Status 2 (right panel): Claude idle / working with the elapsed time, and the cost of the last run. *@
+<div class="status-box" data-testid="agent-status">
+    <span class="status-line status-@(Chat.Running ? "info" : "muted")">
+        <Icon Name="@(Chat.Running ? "sync" : "chat")" Class="@(Chat.Running ? "spin" : null)" />
+        <span class="status-text" role="status" data-testid="agent-state">@Format.AgentStatus(Chat.Running, Chat.Elapsed)</span>
+    </span>
+    @if (Chat.LastCost is { } cost)
+    {
+        <span class="muted mono" title="Cost of the last run, as Claude Code reports it" data-testid="agent-cost">@Format.Cost(cost)</span>
+    }
+</div>
+
+@code {
+    private readonly CancellationTokenSource _stop = new();
+
+    [Parameter, EditorRequired]
+    public ChatEngine Chat { get; set; } = null!;
+
+    public void Dispose()
+    {
+        _stop.Cancel();
+        _stop.Dispose();
+    }
+
+    protected override void OnInitialized() => _ = TickAsync();
+
+    /// <summary>Re-renders only this box once a second while Claude works (the elapsed time).</summary>
+    private async Task TickAsync()
+    {
+        using (var timer = new PeriodicTimer(TimeSpan.FromSeconds(1)))
+        {
+            try
+            {
+                while (await timer.WaitForNextTickAsync(_stop.Token))
+                {
+                    if (Chat.Running)
+                    {
+                        StateHasChanged();
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Disposed.
+            }
+        }
+    }
+}

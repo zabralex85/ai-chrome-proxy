@@ -40,6 +40,17 @@ public sealed class ClaudeRunnerTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Start_ScriptDir_PicksTheScriptNamedAfterTheFirstWordOfThePrompt()
+	{
+		await File.WriteAllLinesAsync(Path.Combine(_folder, "tour.jsonl"), ["{\"type\":\"tour\"}"], TestContext.Current.CancellationToken);
+		var runner = Runner(new AgentOptions { Env = { ["FAKE_AGENT_SCRIPT_DIR"] = _folder } });
+
+		Assert.Equal(["{\"type\":\"tour\"}"], await LinesAsync(runner, "tour please"));
+		Assert.Empty(await LinesAsync(runner, "..\\tour"));
+		Assert.Empty(await LinesAsync(runner, "missing"));
+	}
+
+	[Fact]
 	public async Task Start_NonZeroExit_ReportsExitCodeAndStderr()
 	{
 		var runner = Runner(new AgentOptions { Env = { ["FAKE_AGENT_EXIT_CODE"] = "3", ["FAKE_AGENT_STDERR"] = "not logged in" } });
@@ -133,5 +144,19 @@ public sealed class ClaudeRunnerTests : IDisposable
 		}
 
 		return new ClaudeRunner(Options.Create(options), NullLogger<ClaudeRunner>.Instance);
+	}
+
+	private async Task<List<string>> LinesAsync(ClaudeRunner runner, string prompt)
+	{
+		var lines = new List<string>();
+		using (var process = await runner.StartAsync(new AgentRun(_folder, prompt), TestContext.Current.CancellationToken))
+		{
+			await foreach (var line in process.Lines.WithCancellation(TestContext.Current.CancellationToken))
+			{
+				lines.Add(line);
+			}
+		}
+
+		return lines;
 	}
 }

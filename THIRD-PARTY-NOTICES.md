@@ -28,3 +28,19 @@ The Server keeps the agreed hash per synced file and the project settings in `ai
 - Source: https://github.com/modelcontextprotocol/csharp-sdk (tag `v2.2.0`)
 
 The Server hosts the loopback-only approval endpoint (`/mcp/approve`) that Claude Code calls to ask for permissions in the chat.
+
+## Markdig
+
+- File: `Markdig.dll` (in the Client's WebAssembly files, served by the Server), unmodified.
+- Markdig 1.4.0 — Copyright (c) Alexandre Mutel; License: BSD 2-Clause (https://licenses.nuget.org/BSD-2-Clause)
+- Source: https://github.com/xoofx/markdig
+
+The browser renders Claude's Markdown answers with it (raw HTML switched off).
+
+## mermaid
+
+- File: `lib\mermaid\mermaid.min.js` (served at `/lib/mermaid/mermaid.min.js`; committed as `src/AiChromeProxy.Client/wwwroot/lib/mermaid/mermaid.min.js`, `dist/mermaid.min.js` of the npm package `mermaid` 12.1.0, unmodified); the licence text is next to it in `LICENSE`
+- Copyright (c) 2014 - 2022 Knut Sveidqvist; License: MIT (https://licenses.nuget.org/MIT). The minified file bundles mermaid's own dependencies; their notices stay in the comments of the file.
+- Source: https://github.com/mermaid-js/mermaid
+
+The browser draws the diagrams of Claude's answers with it (`securityLevel: 'strict'`).

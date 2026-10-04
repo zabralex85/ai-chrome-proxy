@@ -12,6 +12,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\AiChromeProxy.Server\AiChromeProxy.Server.csproj" />
+    <!-- The stand-in for the agent CLI (Agent:Command) and the stream-json it prints, one fixture per first word of the message. -->
+    <ProjectReference Include="..\AiChromeProxy.FakeAgent\AiChromeProxy.FakeAgent.csproj" />
+    <None Include="Fixtures\*.jsonl" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

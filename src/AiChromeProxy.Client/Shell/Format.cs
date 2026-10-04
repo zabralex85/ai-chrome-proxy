@@ -113,4 +113,21 @@ public static class Format
 		".png" or ".jpg" or ".jpeg" or ".gif" or ".ico" or ".webp" or ".bmp" => "image",
 		_ => "file",
 	};
+
+	/// <summary>Status 2: "Claude idle", or "Claude working… 0:42" with the time since the run started.</summary>
+	public static string AgentStatus(bool running, TimeSpan? elapsed)
+	{
+		if (!running)
+		{
+			return "Claude idle";
+		}
+
+		var time = elapsed is { } e && e > TimeSpan.Zero ? e : TimeSpan.Zero;
+		return time.TotalHours >= 1
+			? string.Create(CultureInfo.InvariantCulture, $"Claude working… {(int)time.TotalHours}:{time.Minutes:00}:{time.Seconds:00}")
+			: string.Create(CultureInfo.InvariantCulture, $"Claude working… {time.Minutes}:{time.Seconds:00}");
+	}
+
+	/// <summary>The cost Claude Code reported for a run: "$0.12".</summary>
+	public static string Cost(decimal usd) => string.Create(CultureInfo.InvariantCulture, $"${usd:0.00}");
 }

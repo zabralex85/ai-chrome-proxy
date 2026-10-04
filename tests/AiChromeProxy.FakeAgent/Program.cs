@@ -2,6 +2,8 @@
 //   FAKE_AGENT_SCRIPT       path of the file whose lines are printed to stdout; a line `#approve <tool> <json-input>` instead calls the
 //                           approval tool from the `--mcp-config` argument (MCP Streamable HTTP: initialize, tools/call) and prints
 //                           an assistant message "approve: <behavior>" (allow, deny, or error: <reason>)
+//   FAKE_AGENT_SCRIPT_DIR   when set, the script is `<dir>/<first word of the stdin text>.jsonl` (one fixture per message, so one host can serve
+//                           several scenarios); overrides FAKE_AGENT_SCRIPT; a first word with other characters than letters, digits, - and _ runs nothing
 //   FAKE_AGENT_DELAY_MS     pause before each line (default 0)
 //   FAKE_AGENT_STDIN_FILE   when set, the stdin text is written to this file
 //   FAKE_AGENT_STDERR       when set, this text is written to stderr first
@@ -37,8 +39,15 @@ if (!string.IsNullOrEmpty(stderr))
 }
 
 var script = Environment.GetEnvironmentVariable("FAKE_AGENT_SCRIPT");
+var scriptDir = Environment.GetEnvironmentVariable("FAKE_AGENT_SCRIPT_DIR");
+if (!string.IsNullOrEmpty(scriptDir))
+{
+	var word = stdin.Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? string.Empty;
+	script = word.Length > 0 && word.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_') ? Path.Combine(scriptDir, word + ".jsonl") : null;
+}
+
 var delay = int.TryParse(Environment.GetEnvironmentVariable("FAKE_AGENT_DELAY_MS"), out var ms) ? ms : 0;
-if (!string.IsNullOrEmpty(script))
+if (!string.IsNullOrEmpty(script) && File.Exists(script))
 {
 	foreach (var line in await File.ReadAllLinesAsync(script))
 	{

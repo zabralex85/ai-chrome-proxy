@@ -1,0 +1,131 @@
+@using AiChromeProxy.Client.Chat
+@using AiChromeProxy.Domain.Chat
+@inject JsChatView View
+@implements IDisposable
+
+@{
+    var session = Chat.Current;
+    var items = session.Items;
+    var approvals = session.Approvals;
+}
+<section class="chat-view" data-testid="chat-view" aria-label="@(session.Title.Length > 0 ? session.Title : "Chat")">
+    <div class="chat-log" data-testid="chat-log" role="log" aria-live="polite" aria-relevant="additions" @ref="_log">
+        @if (items.Count == 0 && approvals.Count == 0)
+        {
+            <div class="empty-state chat-empty" data-testid="chat-empty">
+                <Icon Name="chat" Size="32" Class="empty-icon" />
+                <p>Ask Claude about this repository. Diagrams are drawn, and code references open the file.</p>
+            </div>
+        }
+        @for (var i = 0; i < items.Count; i++)
+        {
+            var item = items[i];
+            <div @key="i" class="chat-row">
+                @switch (item.Kind)
+                {
+                    case ChatItemKind.User:
+                        <div class="msg msg-user" data-testid="chat-user">@item.Text</div>
+                        break;
+                    case ChatItemKind.Assistant:
+                        <div class="msg msg-assistant markdown @(item.Streaming ? "streaming" : null)" data-testid="chat-assistant">@Html(item)</div>
+                        break;
+                    case ChatItemKind.Tool:
+                        <details class="tool-row @(item.IsError ? "tool-error" : null)" data-testid="chat-tool">
+                            <summary>
+                                <Icon Name="tool" Size="14" Class="tool-icon" />
+                                <span class="tool-name">@item.Name</span>
+                                <span class="tool-summary mono">@item.Text</span>
+                                @if (item.Result is null)
+                                {
+                                    <Icon Name="sync" Size="14" Class="spin tool-state" />
+                                }
+                                else
+                                {
+                                    <Icon Name="@(item.IsError ? "error" : "check")" Size="14" Class="@("tool-state " + (item.IsError ? "state-error" : "state-ok"))" />
+                                }
+                            </summary>
+                            <pre class="tool-result" data-testid="chat-tool-result">@(item.Result ?? "Running…")</pre>
+                        </details>
+                        break;
+                    default:
+                        <div class="msg msg-error" role="alert" data-testid="chat-error"><Icon Name="error" Size="14" />@item.Text</div>
+                        break;
+                }
+            </div>
+        }
+        @foreach (var approval in approvals)
+        {
+            var answered = _answered.Contains(approval.RequestId);
+            <div @key="approval.RequestId" class="approval" role="group" aria-label="Permission request" data-testid="approval-card">
+                <div class="approval-title"><Icon Name="lock" Size="14" />Claude wants to use <strong>@approval.Tool</strong></div>
+                <pre class="approval-summary mono" data-testid="approval-summary">@approval.Summary</pre>
+                <div class="approval-actions">
+                    <button type="button" class="button primary" data-testid="approval-allow" disabled="@answered"
+                            @onclick="() => AnswerAsync(approval, ChatDecisions.Allow)">Allow</button>
+                    <button type="button" class="button secondary" data-testid="approval-allow-always" disabled="@answered"
+                            @onclick="() => AnswerAsync(approval, ChatDecisions.AllowAlways)">Allow always in this project</button>
+                    <button type="button" class="button secondary" data-testid="approval-deny" disabled="@answered"
+                            @onclick="() => AnswerAsync(approval, ChatDecisions.Deny)">Deny</button>
+                </div>
+            </div>
+        }
+    </div>
+</section>
+
+@code {
+    private const int CacheLimit = 200;
+
+    private readonly Dictionary<(string Text, bool Streaming), MarkupString> _html = [];
+    private readonly HashSet<string> _answered = [];
+    private ElementReference _log;
+    private IDisposable? _links;
+
+    [Parameter, EditorRequired]
+    public ChatEngine Chat { get; set; } = null!;
+
+    /// <summary>A <c>path:line</c> link was clicked: open the file's tab.</summary>
+    [Parameter]
+    public EventCallback<string> OnOpenFile { get; set; }
+
+    public void Dispose() => _links?.Dispose();
+
+    /// <summary>A finished message is rendered once; the streaming one again on every change (the page coalesces those).</summary>
+    private MarkupString Html(ChatItem item)
+    {
+        if (!_html.TryGetValue((item.Text, item.Streaming), out var html))
+        {
+            if (_html.Count >= CacheLimit)
+            {
+                _html.Clear();
+            }
+
+            _html[(item.Text, item.Streaming)] = html = new MarkupString(MarkdownRenderer.Render(item.Text, item.Streaming));
+        }
+
+        return html;
+    }
+
+    private async Task AnswerAsync(ChatApproval approval, string decision)
+    {
+        _answered.Add(approval.RequestId);
+        await Chat.ApproveAsync(approval.RequestId, decision);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        try
+        {
+            if (firstRender)
+            {
+                _links = await View.OpenLinksAsync(_log, href => MarkdownRenderer.TryParseOpenLink(href, out var path, out _) ? InvokeAsync(() => OnOpenFile.InvokeAsync(path)) : Task.CompletedTask);
+            }
+
+            await View.RenderDiagramsAsync(_log);
+            await View.ScrollToEndAsync(_log);
+        }
+        catch (JSException)
+        {
+            // The page is going away, or a script failed; the text is shown either way.
+        }
+    }
+}

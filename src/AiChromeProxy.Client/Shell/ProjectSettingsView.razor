@@ -16,6 +16,24 @@
             <input type="checkbox" data-testid="settings-apply" @bind="_form.Apply" />
             Apply server changes automatically
         </label>
+        <fieldset class="permissions" data-testid="settings-permissions">
+            <legend class="field">Permissions</legend>
+            <label class="choice">
+                <input type="radio" name="permissions" value="ask" checked="@(_form.Permissions == "ask")" @onchange="@(() => _form.Permissions = "ask")" />
+                <span>Ask before commands (edits are applied)</span>
+            </label>
+            <label class="choice">
+                <input type="radio" name="permissions" value="all" checked="@(_form.Permissions == "all")" @onchange="@(() => _form.Permissions = "all")" />
+                <span>Allow everything</span>
+            </label>
+            <label class="choice">
+                <input type="radio" name="permissions" value="settings" checked="@(_form.Permissions == "settings")" @onchange="@(() => _form.Permissions = "settings")" />
+                <span>Only what my Claude Code settings allow</span>
+            </label>
+        </fieldset>
+        <label class="field" for="settings-model">Model</label>
+        <input id="settings-model" class="text-input" type="text" spellcheck="false" autocomplete="off" placeholder="Claude Code's default"
+               data-testid="settings-model" @bind="_form.Model" @bind:event="oninput" />
         <div class="settings-actions">
             <button type="submit" class="button primary" data-testid="settings-save" disabled="@(!_form.IsDirty)">Save</button>
             <span role="status" class="@(_failed ? "state-error" : "muted")" data-testid="settings-status">@_status</span>
