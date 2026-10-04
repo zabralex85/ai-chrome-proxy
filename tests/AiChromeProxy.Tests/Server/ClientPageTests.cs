@@ -43,5 +43,15 @@ public sealed class ClientPageTests
 		Assert.Equal("connect-src 'self'", directives["connect-src"]);
 	}
 
+	[Fact]
+	public void ContentSecurityPolicy_LetsTheCodeViewerRun_ItsWorkerFromABlobAndItsIconFontFromData()
+	{
+		var directives = ClientPage.ContentSecurityPolicy(string.Empty).Split(';', StringSplitOptions.TrimEntries).ToDictionary(d => d.Split(' ')[0], d => d);
+
+		Assert.Equal("worker-src 'self' blob:", directives["worker-src"]);
+		Assert.Equal("font-src 'self' data:", directives["font-src"]);
+		Assert.Equal("style-src 'self' 'unsafe-inline'", directives["style-src"]);
+	}
+
 	private static string Hash(string script) => $"'sha256-{Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(script)))}'";
 }

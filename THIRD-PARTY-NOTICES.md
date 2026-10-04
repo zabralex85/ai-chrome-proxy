@@ -44,3 +44,11 @@ The browser renders Claude's Markdown answers with it (raw HTML switched off).
 - Source: https://github.com/mermaid-js/mermaid
 
 The browser draws the diagrams of Claude's answers with it (`securityLevel: 'strict'`).
+
+## Monaco Editor
+
+- Files: `lib\monaco\vs\**` (served at `/lib/monaco/vs/`; committed as `src/AiChromeProxy.Client/wwwroot/lib/monaco/vs/`, the AMD build `min/vs` of the npm package `monaco-editor` 0.57.0). Each file is unmodified; the files a read-only viewer does not load are left out: the TypeScript, CSS, HTML and JSON language-service workers (`assets/ts.worker-*`, `css.worker-*`, `html.worker-*`, `json.worker-*`), the legacy `language/` folder and the non-English `nls/` translations. The licence text and the package's third-party notices are next to it in `LICENSE` and `ThirdPartyNotices.txt`.
+- Copyright (c) 2016 - present Microsoft Corporation; License: MIT (https://licenses.nuget.org/MIT). The bundled components' notices are in `ThirdPartyNotices.txt`.
+- Source: https://github.com/microsoft/monaco-editor (tag `v0.57.0`)
+
+The browser shows the files of the picked folder with it, read-only, highlighted by its Monarch grammars.

@@ -1691,3 +1691,12 @@ h1:focus-visible {
 .loading-progress-text:after {
     content: var(--blazor-load-percentage-text, "Loading");
 }
+
+/* Code viewer (Monaco, Scripts/viewer.ts): the revealed line, and the lines that just changed (marked for 2 s). */
+.viewer-revealed-line {
+    background: light-dark(rgba(255, 196, 0, 0.28), rgba(255, 196, 0, 0.2));
+}
+
+.viewer-changed-line {
+    background: light-dark(rgba(46, 125, 50, 0.2), rgba(137, 209, 133, 0.2));
+}
