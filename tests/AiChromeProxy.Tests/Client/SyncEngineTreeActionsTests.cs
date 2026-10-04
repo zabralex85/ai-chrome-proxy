@@ -8,6 +8,7 @@ namespace AiChromeProxy.Tests.Client;
 public sealed class SyncEngineTreeActionsTests : IDisposable
 {
 	private const string Repo = "My_Repo";
+	private const string ResolveFirst = SyncEngine.ResolveFirst;
 
 	private readonly LoopbackServer _server = new();
 	private readonly FakeFolder _folder = new();
@@ -206,6 +207,111 @@ public sealed class SyncEngineTreeActionsTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Create_WhereARemoteChangeWaits_RefusedByTheRemoteCheck()
+	{
+		_folder.Write("keep.txt", "k");
+		await SyncedAsync();
+		await EditMirrorAsync("new.txt", "from the server");
+		_folder.WriteAccess = true;
+		Assert.DoesNotContain(_engine.Files, f => f.Path == "new.txt");
+
+		var result = await _engine.CreateFileAsync(string.Empty, "new.txt");
+
+		Assert.Equal(new TreeActionResult(false, "Resolve the server change first"), result);
+		Assert.False(_folder.Files.ContainsKey("new.txt"));
+	}
+
+	[Fact]
+	public async Task Rename_TargetWithAWaitingChangeUnderIt_Refused()
+	{
+		_folder.Write("a.txt", "a");
+		_folder.Write("keep.txt", "k");
+		await SyncedAsync();
+		await EditMirrorAsync("docs/new.txt", "from the server");
+		_folder.WriteAccess = true;
+
+		var result = await _engine.RenameAsync("a.txt", "docs");
+
+		Assert.Equal(new TreeActionResult(false, "Resolve the server change first"), result);
+		Assert.True(_folder.Files.ContainsKey("a.txt"));
+	}
+
+	[Fact]
+	public async Task Action_PathDiffersInCaseFromAWaitingChange_Refused()
+	{
+		_folder.Write("a.txt", "v1");
+		_folder.Write("keep.txt", "k");
+		await SyncedAsync();
+		await EditMirrorAsync("a.txt", "server a");
+		_folder.WriteAccess = true;
+
+		Assert.Equal(ResolveFirst, (await _engine.DeleteAsync("A.TXT", isFolder: false)).Error);
+		Assert.Equal(ResolveFirst, (await _engine.RenameAsync("A.TXT", "b.txt")).Error);
+	}
+
+	[Fact]
+	public async Task DeleteLastSyncedFile_SaysTheServerKeepsIt_AndTheCycleDoesNotBlameAccess()
+	{
+		_folder.Write("only.txt", "x");
+		await SyncedAsync();
+
+		var result = await _engine.DeleteAsync("only.txt", isFolder: false);
+
+		Assert.Equal(new TreeActionResult(true, null, SyncEngine.KeepsLastFiles), result);
+		Assert.Contains(_engine.Activity, a => a.Text == SyncEngine.KeepsLastFiles);
+		await _engine.SyncOnceAsync(Ct);
+		Assert.Equal(SyncEngine.KeepsLastFiles, _engine.Problem);
+		Assert.True(File.Exists(_server.PathOf(Repo, "only.txt")));
+	}
+
+	[Fact]
+	public async Task Delete_NotTheLastFile_NoKeepNote()
+	{
+		_folder.Write("a.txt", "a");
+		_folder.Write("b.txt", "b");
+		await SyncedAsync();
+
+		Assert.Null((await _engine.DeleteAsync("a.txt", isFolder: false)).Note);
+	}
+
+	[Fact]
+	public async Task Rename_ForgetsABackedOffFailure_SoRenamingBackUploads()
+	{
+		_folder.Write("keep.txt", "k");
+		_folder.Write("b.txt", "bb");
+		_folder.ReadFailures.Add("b.txt");
+		await SyncedAsync();
+		Assert.Equal(FileSyncState.Error, _engine.FileAt("b.txt")!.State);
+
+		Assert.True((await _engine.RenameAsync("b.txt", "c.txt")).Ok);
+		_folder.ReadFailures.Clear();
+		await _engine.SyncOnceAsync(Ct);
+		Assert.True(File.Exists(_server.PathOf(Repo, "c.txt")));
+		Assert.True((await _engine.RenameAsync("c.txt", "b.txt")).Ok);
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(FileSyncState.Synced, _engine.FileAt("b.txt")!.State);
+		Assert.True(File.Exists(_server.PathOf(Repo, "b.txt")));
+	}
+
+	[Fact]
+	public async Task Delete_ForgetsFailuresUnderTheFolder()
+	{
+		_folder.Write("keep.txt", "k");
+		_folder.Write("d/b.txt", "bb");
+		_folder.ReadFailures.Add("d/b.txt");
+		await SyncedAsync();
+		Assert.Equal(FileSyncState.Error, _engine.FileAt("d/b.txt")!.State);
+
+		Assert.True((await _engine.DeleteAsync("d", isFolder: true)).Ok);
+		_folder.ReadFailures.Clear();
+		_folder.Write("d/b.txt", "bb");
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(FileSyncState.Synced, _engine.FileAt("d/b.txt")!.State);
+	}
+
+	[Fact]
 	public async Task Action_WhileInConflict_Refused()
 	{
 		_folder.Write("a.txt", "v1");
@@ -256,7 +362,8 @@ public sealed class SyncEngineTreeActionsTests : IDisposable
 		Assert.All(results, r => Assert.Equal(new TreeActionResult(false, "Write access to the folder was not granted; nothing was changed."), r));
 		Assert.Equal(["a.txt", "keep.txt"], _folder.Files.Keys.Order(StringComparer.Ordinal));
 		Assert.Empty(_folder.Directories);
-		Assert.Contains(_engine.Activity, a => a.Kind == SyncActivityKind.Error && a.Text.StartsWith("Write access to the folder was not granted", StringComparison.Ordinal));
+		Assert.Equal(4, _engine.Activity.Count(a => a.Kind == SyncActivityKind.Error && a.Text.StartsWith("Could not get write access", StringComparison.Ordinal)));
+		Assert.Equal(4, _engine.Activity.Count(a => a.Kind == SyncActivityKind.Error));
 	}
 
 	[Fact]

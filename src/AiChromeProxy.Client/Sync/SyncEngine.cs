@@ -251,6 +251,7 @@ public sealed partial class SyncEngine(ITransport transport, IFolderAccess folde
 		SetFiles([]);
 		_unlistedDirectories = [];
 		_directories = [];
+		_deletedLast = false;
 		_known = new(StringComparer.Ordinal);
 		_failures.Clear();
 		_repo = null;
@@ -660,7 +661,7 @@ public sealed partial class SyncEngine(ITransport transport, IFolderAccess folde
 
 		if (entries.Count == 0 && keep.Count == 0 && _known.Count > 0)
 		{
-			Problem = LooksEmpty;
+			Problem = _deletedLast ? KeepsLastFiles : LooksEmpty;
 			return null;
 		}
 

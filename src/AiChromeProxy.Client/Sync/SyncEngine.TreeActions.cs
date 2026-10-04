@@ -13,8 +13,14 @@ public sealed partial class SyncEngine
 	public const string ResolveFirst = "Resolve the server change first";
 	public const string ExcludedNote = "Created; excluded from sync";
 
+	/// <summary>Said after a delete that leaves nothing to sync; also the cycle's problem then (instead of <c>LooksEmpty</c>).</summary>
+	public const string KeepsLastFiles = "The server keeps the last synced files while the folder has none to sync.";
+
 	private const string WriteRefused = "Write access to the folder was not granted; nothing was changed.";
 	private const string RootRefused = "The picked folder itself cannot be changed.";
+
+	/// <summary>The last successful tree action was a delete: an empty folder is then no sign of lost access.</summary>
+	private bool _deletedLast;
 
 	private IReadOnlyList<string> _directories = [];
 
@@ -53,7 +59,7 @@ public sealed partial class SyncEngine
 	public Task<TreeActionResult> DeleteAsync(string path, bool isFolder) =>
 		path.Length == 0
 			? Task.FromResult(new TreeActionResult(false, RootRefused))
-			: ActAsync($"delete '{path}'", [path], () => folder.DeleteAsync(path, isFolder), SyncActivityKind.Deleted, $"Deleted '{path}'.");
+			: DeleteCoreAsync(path, isFolder);
 
 	/// <summary>How many files are inside a folder as it is now, excluded ones too (for the delete confirmation); null when it cannot be counted.</summary>
 	public async Task<FileCount?> CountFilesAsync(string path)
@@ -72,6 +78,20 @@ public sealed partial class SyncEngine
 
 	private static string NameOf(string path) => path[(path.LastIndexOf('/') + 1)..];
 
+	private async Task<TreeActionResult> DeleteCoreAsync(string path, bool isFolder)
+	{
+		var last = NothingLeftWithout(path);
+		var result = await ActAsync($"delete '{path}'", [path], () => folder.DeleteAsync(path, isFolder), SyncActivityKind.TreeAction, $"Deleted '{path}'.");
+		_deletedLast = result.Ok;
+		if (result.Ok && last)
+		{
+			Log(SyncActivityKind.TreeAction, KeepsLastFiles);
+			return result with { Note = KeepsLastFiles };
+		}
+
+		return result;
+	}
+
 	private Task<TreeActionResult> CreateAsync(string parent, string name, bool isFolder)
 	{
 		var check = TreeNames.Check(parent, name, Siblings(parent), _rules, isFolder);
@@ -88,6 +108,19 @@ public sealed partial class SyncEngine
 			SyncActivityKind.TreeAction,
 			check.Excluded ? $"Created '{path}'; excluded from sync." : $"Created '{path}'.",
 			check.Excluded ? ExcludedNote : null);
+	}
+
+	/// <summary>Whether no file to sync is left once <paramref name="path"/> (a file, or a folder with everything in it) is gone, going by the last scan.</summary>
+	private bool NothingLeftWithout(string path) =>
+		!_files.Any(f => f.Path != path && !f.Path.StartsWith(path + "/", StringComparison.Ordinal) && f.State != FileSyncState.TooLarge && f.State != FileSyncState.Error);
+
+	/// <summary>A path changed here: its failed upload (and those under it) is not remembered, so the same content coming back is tried at once.</summary>
+	private void ForgetFailures(string path)
+	{
+		foreach (var key in _failures.Keys.Where(k => string.Equals(k, path, StringComparison.OrdinalIgnoreCase) || k.StartsWith(path + "/", StringComparison.OrdinalIgnoreCase)).ToList())
+		{
+			_failures.Remove(key);
+		}
 	}
 
 	/// <summary>The names directly inside <paramref name="parent"/> (files and folders), for the duplicate check.</summary>
@@ -116,12 +149,19 @@ public sealed partial class SyncEngine
 			return new TreeActionResult(false, ResolveFirst);
 		}
 
+		// CanWrite may be stale (no awaited permission check before the prompt, which would use up the click's user activation): a failed write re-reads it below.
 		if (!CanWrite)
 		{
+			var logged0 = _activityCount;
 			await AllowWritingAsync();
 			if (!CanWrite)
 			{
-				Log(SyncActivityKind.Error, WriteRefused);
+				// A thrown permission request already logged why (ClickFailed): one entry per failure.
+				if (_activityCount == logged0)
+				{
+					Log(SyncActivityKind.Error, WriteRefused);
+				}
+
 				return new TreeActionResult(false, WriteRefused);
 			}
 		}
@@ -143,6 +183,12 @@ public sealed partial class SyncEngine
 			return new TreeActionResult(false, error);
 		}
 
+		foreach (var touched in paths)
+		{
+			ForgetFailures(touched);
+		}
+
+		_deletedLast = false;
 		Log(kind, logged);
 		Raise();
 		Wake();
