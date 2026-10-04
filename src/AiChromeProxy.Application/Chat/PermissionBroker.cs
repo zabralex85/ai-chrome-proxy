@@ -20,6 +20,9 @@ namespace AiChromeProxy.Application.Chat;
 /// </summary>
 public sealed class PermissionBroker
 {
+	/// <summary>Why a request whose summary was cut cannot be allowed.</summary>
+	public const string TooLongToShow = "The request is too long to show in full; it can only be denied.";
+
 	/// <summary>How long a request waits for an answer before it is denied.</summary>
 	public static readonly TimeSpan AnswerTimeout = TimeSpan.FromMinutes(10);
 
@@ -120,8 +123,12 @@ public sealed class PermissionBroker
 		}
 
 		var requestId = Guid.NewGuid().ToString("N");
-		var pending = new Pending(rule);
-		var summary = StreamJsonParser.Summarize(tool, input, run.Folder);
+		var full = StreamJsonParser.Summarize(tool, input, run.Folder);
+
+		// The card shows the whole request; one too long for an event can only be denied (what was not shown is never allowed).
+		var summary = ChatEventSplitter.FitJson(full, ChatLimits.PermissionSummaryBytes);
+		var truncated = !ReferenceEquals(summary, full);
+		var pending = new Pending(rule, truncated);
 		bool published;
 
 		// Registered and published under the run's lock: a run that ends meanwhile either never sees the request or denies it after its card.
@@ -133,7 +140,7 @@ public sealed class PermissionBroker
 			}
 
 			run.Requests[requestId] = pending;
-			published = Publish(run, new ChatEvent(string.Empty, run.Id, 0, ChatEventKinds.Permission, Name: tool, Summary: summary, RequestId: requestId));
+			published = Publish(run, new ChatEvent(string.Empty, run.Id, 0, ChatEventKinds.Permission, Name: tool, Summary: summary, RequestId: requestId, Truncated: truncated ? true : null));
 		}
 
 		if (!published)
@@ -155,7 +162,10 @@ public sealed class PermissionBroker
 	}
 
 	/// <summary><c>chat.approve</c>: answers a pending request.</summary>
-	/// <exception cref="EnvelopeException"><c>bad_request</c> for an unknown decision, <c>not_found</c> for an unknown run or request.</exception>
+	/// <exception cref="EnvelopeException">
+	/// <c>bad_request</c> for an unknown decision or for allowing a request whose summary was cut (<see cref="TooLongToShow"/>),
+	/// <c>not_found</c> for an unknown run or request.
+	/// </exception>
 	public void Answer(string? runId, string? requestId, string? decision)
 	{
 		if (decision is not (ChatDecisions.Allow or ChatDecisions.AllowAlways or ChatDecisions.Deny))
@@ -163,7 +173,23 @@ public sealed class PermissionBroker
 			throw new EnvelopeException(ErrorCodes.BadRequest, "'decision' must be allow, allowAlways or deny.");
 		}
 
-		if (runId is null || requestId is null || !_runs.TryGetValue(runId, out var run) || !Resolve(run, requestId, decision))
+		if (runId is null || requestId is null || !_runs.TryGetValue(runId, out var run))
+		{
+			throw new EnvelopeException(ErrorCodes.NotFound, "No such permission request.");
+		}
+
+		if (decision != ChatDecisions.Deny)
+		{
+			lock (run)
+			{
+				if (run.Requests.TryGetValue(requestId, out var pending) && pending.Truncated)
+				{
+					throw new EnvelopeException(ErrorCodes.BadRequest, TooLongToShow);
+				}
+			}
+		}
+
+		if (!Resolve(run, requestId, decision))
 		{
 			throw new EnvelopeException(ErrorCodes.NotFound, "No such permission request.");
 		}
@@ -277,9 +303,12 @@ public sealed class PermissionBroker
 		public bool Closed { get; set; }
 	}
 
-	private sealed class Pending(string? rule)
+	private sealed class Pending(string? rule, bool truncated)
 	{
 		public string? Rule => rule;
+
+		/// <summary>Gets a value indicating whether the card shows only part of the request: it can only be denied.</summary>
+		public bool Truncated => truncated;
 
 		public TaskCompletionSource<string> Decision { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 	}

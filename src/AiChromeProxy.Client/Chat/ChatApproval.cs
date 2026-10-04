@@ -5,4 +5,5 @@ namespace AiChromeProxy.Client.Chat;
 /// <param name="RequestId">Answers go to <c>chat.approve</c> with this id.</param>
 /// <param name="Tool">The tool (e.g. Bash).</param>
 /// <param name="Summary">What it would do (e.g. the command).</param>
-public sealed record ChatApproval(string RunId, string RequestId, string Tool, string Summary);
+/// <param name="Truncated">The summary had to be cut: the request can only be denied.</param>
+public sealed record ChatApproval(string RunId, string RequestId, string Tool, string Summary, bool Truncated = false);

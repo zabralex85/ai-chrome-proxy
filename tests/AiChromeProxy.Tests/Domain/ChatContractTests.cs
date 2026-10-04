@@ -10,14 +10,15 @@ public sealed class ChatContractTests
 {
 	public static TheoryData<ChatEvent, string> EventShapes => new()
 	{
-		{ new ChatEvent("s", "u", 1, ChatEventKinds.Prompt, Text: "hi"), """{"sessionId":"s","runId":"u","seq":1,"kind":"prompt","text":"hi","toolId":null,"name":null,"summary":null,"isError":null,"requestId":null,"decision":null,"ok":null,"costUsd":null,"durationMs":null,"error":null}""" },
-		{ new ChatEvent("s", "u", 1, ChatEventKinds.Text, Text: "he"), """{"sessionId":"s","runId":"u","seq":1,"kind":"text","text":"he","toolId":null,"name":null,"summary":null,"isError":null,"requestId":null,"decision":null,"ok":null,"costUsd":null,"durationMs":null,"error":null}""" },
-		{ new ChatEvent("s", "u", 2, ChatEventKinds.Message, Text: "hello"), """{"sessionId":"s","runId":"u","seq":2,"kind":"message","text":"hello","toolId":null,"name":null,"summary":null,"isError":null,"requestId":null,"decision":null,"ok":null,"costUsd":null,"durationMs":null,"error":null}""" },
-		{ new ChatEvent("s", "u", 3, ChatEventKinds.Tool, ToolId: "t1", Name: "Bash", Summary: "ls"), """{"sessionId":"s","runId":"u","seq":3,"kind":"tool","text":null,"toolId":"t1","name":"Bash","summary":"ls","isError":null,"requestId":null,"decision":null,"ok":null,"costUsd":null,"durationMs":null,"error":null}""" },
-		{ new ChatEvent("s", "u", 4, ChatEventKinds.ToolResult, ToolId: "t1", IsError: false, Summary: "out"), """{"sessionId":"s","runId":"u","seq":4,"kind":"toolResult","text":null,"toolId":"t1","name":null,"summary":"out","isError":false,"requestId":null,"decision":null,"ok":null,"costUsd":null,"durationMs":null,"error":null}""" },
-		{ new ChatEvent("s", "u", 5, ChatEventKinds.Permission, RequestId: "q", Name: "Bash", Summary: "rm x"), """{"sessionId":"s","runId":"u","seq":5,"kind":"permission","text":null,"toolId":null,"name":"Bash","summary":"rm x","isError":null,"requestId":"q","decision":null,"ok":null,"costUsd":null,"durationMs":null,"error":null}""" },
-		{ new ChatEvent("s", "u", 6, ChatEventKinds.PermissionResolved, RequestId: "q", Decision: ChatDecisions.Deny), """{"sessionId":"s","runId":"u","seq":6,"kind":"permissionResolved","text":null,"toolId":null,"name":null,"summary":null,"isError":null,"requestId":"q","decision":"deny","ok":null,"costUsd":null,"durationMs":null,"error":null}""" },
-		{ new ChatEvent("s", "u", 7, ChatEventKinds.Result, Ok: true, CostUsd: 0.12m, DurationMs: 4200), """{"sessionId":"s","runId":"u","seq":7,"kind":"result","text":null,"toolId":null,"name":null,"summary":null,"isError":null,"requestId":null,"decision":null,"ok":true,"costUsd":0.12,"durationMs":4200,"error":null}""" },
+		{ new ChatEvent("s", "u", 1, ChatEventKinds.Prompt, Text: "hi"), """{"sessionId":"s","runId":"u","seq":1,"kind":"prompt","text":"hi","toolId":null,"name":null,"summary":null,"isError":null,"requestId":null,"decision":null,"ok":null,"costUsd":null,"durationMs":null,"error":null,"truncated":null}""" },
+		{ new ChatEvent("s", "u", 1, ChatEventKinds.Text, Text: "he"), """{"sessionId":"s","runId":"u","seq":1,"kind":"text","text":"he","toolId":null,"name":null,"summary":null,"isError":null,"requestId":null,"decision":null,"ok":null,"costUsd":null,"durationMs":null,"error":null,"truncated":null}""" },
+		{ new ChatEvent("s", "u", 2, ChatEventKinds.Message, Text: "hello"), """{"sessionId":"s","runId":"u","seq":2,"kind":"message","text":"hello","toolId":null,"name":null,"summary":null,"isError":null,"requestId":null,"decision":null,"ok":null,"costUsd":null,"durationMs":null,"error":null,"truncated":null}""" },
+		{ new ChatEvent("s", "u", 3, ChatEventKinds.Tool, ToolId: "t1", Name: "Bash", Summary: "ls"), """{"sessionId":"s","runId":"u","seq":3,"kind":"tool","text":null,"toolId":"t1","name":"Bash","summary":"ls","isError":null,"requestId":null,"decision":null,"ok":null,"costUsd":null,"durationMs":null,"error":null,"truncated":null}""" },
+		{ new ChatEvent("s", "u", 4, ChatEventKinds.ToolResult, ToolId: "t1", IsError: false, Summary: "out"), """{"sessionId":"s","runId":"u","seq":4,"kind":"toolResult","text":null,"toolId":"t1","name":null,"summary":"out","isError":false,"requestId":null,"decision":null,"ok":null,"costUsd":null,"durationMs":null,"error":null,"truncated":null}""" },
+		{ new ChatEvent("s", "u", 5, ChatEventKinds.Permission, RequestId: "q", Name: "Bash", Summary: "rm x"), """{"sessionId":"s","runId":"u","seq":5,"kind":"permission","text":null,"toolId":null,"name":"Bash","summary":"rm x","isError":null,"requestId":"q","decision":null,"ok":null,"costUsd":null,"durationMs":null,"error":null,"truncated":null}""" },
+		{ new ChatEvent("s", "u", 6, ChatEventKinds.PermissionResolved, RequestId: "q", Decision: ChatDecisions.Deny), """{"sessionId":"s","runId":"u","seq":6,"kind":"permissionResolved","text":null,"toolId":null,"name":null,"summary":null,"isError":null,"requestId":"q","decision":"deny","ok":null,"costUsd":null,"durationMs":null,"error":null,"truncated":null}""" },
+		{ new ChatEvent("s", "u", 7, ChatEventKinds.Result, Ok: true, CostUsd: 0.12m, DurationMs: 4200), """{"sessionId":"s","runId":"u","seq":7,"kind":"result","text":null,"toolId":null,"name":null,"summary":null,"isError":null,"requestId":null,"decision":null,"ok":true,"costUsd":0.12,"durationMs":4200,"error":null,"truncated":null}""" },
+		{ new ChatEvent("s", "u", 8, ChatEventKinds.Permission, RequestId: "q", Name: "Bash", Summary: "rm x", Truncated: true), """{"sessionId":"s","runId":"u","seq":8,"kind":"permission","text":null,"toolId":null,"name":"Bash","summary":"rm x","isError":null,"requestId":"q","decision":null,"ok":null,"costUsd":null,"durationMs":null,"error":null,"truncated":true}""" },
 	};
 
 	[Fact]
@@ -55,6 +56,8 @@ public sealed class ChatContractTests
 		Assert.Equal(16_000, ChatLimits.MaxTextChars);
 		Assert.Equal(24_000, ChatLimits.MaxEventBytes);
 		Assert.Equal(2_048, ChatLimits.ToolSummaryBytes);
+		Assert.Equal(20_000, ChatLimits.PermissionSummaryBytes);
+		Assert.Equal(200, ChatLimits.MaxNameBytes);
 		Assert.Equal("busy", ErrorCodes.Busy);
 		Assert.Equal(
 			["chat.open", "chat.sessions", "chat.history", "chat.events", "chat.send", "chat.started", "chat.cancel", "chat.approve", "chat.event"],
@@ -151,6 +154,59 @@ public sealed class ChatContractTests
 		Assert.True(Encoding.UTF8.GetByteCount(b) <= ChatLimits.ToolSummaryBytes);
 		Assert.EndsWith("…", b, StringComparison.Ordinal);
 		Assert.Equal("short", Assert.Single(ChatEventSplitter.Split(tool with { Summary = "short" })).Summary);
+	}
+
+	[Fact]
+	public void Split_PermissionSummary_KeptWhole_BeyondTheToolSummaryLimit()
+	{
+		var command = new string('a', 10_000);
+		var e = new ChatEvent("s", "u", 1, ChatEventKinds.Permission, Name: "Bash", Summary: command, RequestId: "q");
+
+		var part = Assert.Single(ChatEventSplitter.Split(e));
+
+		Assert.Equal(command, part.Summary);
+		Assert.Null(part.Truncated);
+	}
+
+	[Theory]
+	[InlineData("a")]
+	[InlineData("\"")]
+	[InlineData("ж")]
+	[InlineData("\U0001F600")]
+	public void Split_PermissionSummaryTooLong_CutToItsBudget_MarkedTruncated(string unit)
+	{
+		var summary = string.Concat(Enumerable.Repeat(unit, 40_000 / unit.Length));
+		var e = new ChatEvent("s", "u", 1, ChatEventKinds.Permission, Name: "Bash", Summary: summary, RequestId: "q");
+
+		var part = Assert.Single(ChatEventSplitter.Split(e));
+
+		Assert.True(part.Truncated);
+		Assert.EndsWith("…", part.Summary!, StringComparison.Ordinal);
+		Assert.StartsWith(part.Summary![..^1], summary, StringComparison.Ordinal);
+		Assert.InRange(JsonSerializer.SerializeToUtf8Bytes(part.Summary, JsonSerializerOptions.Web).Length, ChatLimits.PermissionSummaryBytes - 20, ChatLimits.PermissionSummaryBytes);
+		Assert.True(JsonSerializer.SerializeToUtf8Bytes(part, JsonSerializerOptions.Web).Length <= ChatLimits.MaxEventBytes - 1_024);
+	}
+
+	[Fact]
+	public void FitJson_FittingStringIsTheSameInstance()
+	{
+		var s = new string('"', 3_000);
+
+		Assert.Same(s, ChatEventSplitter.FitJson(s, 18_002));
+		Assert.NotSame(s, ChatEventSplitter.FitJson(s, 18_001));
+	}
+
+	[Theory]
+	[InlineData(ChatEventKinds.Tool)]
+	[InlineData(ChatEventKinds.Permission)]
+	public void Split_Name_CappedLikeASummary(string kind)
+	{
+		var e = new ChatEvent("s", "u", 1, kind, Name: new string('n', 5_000), Summary: "x");
+
+		var name = Assert.Single(ChatEventSplitter.Split(e)).Name!;
+
+		Assert.Equal(ChatLimits.MaxNameBytes, Encoding.UTF8.GetByteCount(name));
+		Assert.EndsWith("…", name, StringComparison.Ordinal);
 	}
 
 	[Fact]

@@ -59,11 +59,18 @@
             <div @key="approval.RequestId" class="approval" role="group" aria-label="Permission request" data-testid="approval-card">
                 <div class="approval-title"><Icon Name="lock" Size="14" />Claude wants to use <strong>@approval.Tool</strong></div>
                 <pre class="approval-summary mono" data-testid="approval-summary">@approval.Summary</pre>
+                @if (approval.Truncated)
+                {
+                    <p class="muted" data-testid="approval-truncated">The request is too long to show in full; it can only be denied.</p>
+                }
                 <div class="approval-actions">
-                    <button type="button" class="button primary" data-testid="approval-allow" disabled="@answered"
-                            @onclick="() => AnswerAsync(approval, ChatDecisions.Allow)">Allow</button>
-                    <button type="button" class="button secondary" data-testid="approval-allow-always" disabled="@answered"
-                            @onclick="() => AnswerAsync(approval, ChatDecisions.AllowAlways)">Allow always in this project</button>
+                    @if (!approval.Truncated)
+                    {
+                        <button type="button" class="button primary" data-testid="approval-allow" disabled="@answered"
+                                @onclick="() => AnswerAsync(approval, ChatDecisions.Allow)">Allow</button>
+                        <button type="button" class="button secondary" data-testid="approval-allow-always" disabled="@answered"
+                                @onclick="() => AnswerAsync(approval, ChatDecisions.AllowAlways)">Allow always in this project</button>
+                    }
                     <button type="button" class="button secondary" data-testid="approval-deny" disabled="@answered"
                             @onclick="() => AnswerAsync(approval, ChatDecisions.Deny)">Deny</button>
                 </div>

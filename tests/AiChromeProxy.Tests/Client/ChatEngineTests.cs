@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using AiChromeProxy.Application.Chat;
 using AiChromeProxy.Client.Chat;
 using AiChromeProxy.Client.Sync;
 using AiChromeProxy.Domain;
@@ -282,6 +283,36 @@ public sealed class ChatEngineTests : IDisposable
 		process.Write(ToolResult, Result);
 		process.Exit();
 		await UntilAsync(() => !_chat.Running);
+	}
+
+	[Fact]
+	public async Task Approve_LongCommandShownWhole_TooLongToShowOnlyDenied()
+	{
+		var process = await StartAsync("list");
+		process.Write(Init, ToolUse);
+		await UntilAsync(() => _chat.Current.Items.Count == 2);
+		var runId = _chat.Current.ActiveRunId!;
+		var command = "echo " + new string('a', 10_000);
+
+		var first = _server.Broker.RequestAsync(runId, "Bash", new JsonObject { ["command"] = command }, Ct);
+		await UntilAsync(() => _chat.Current.Approvals.Count == 1);
+		Assert.Equal((command, false), (_chat.Current.Approvals[0].Summary, _chat.Current.Approvals[0].Truncated));
+		Assert.True(await _chat.ApproveAsync(_chat.Current.Approvals[0].RequestId, ChatDecisions.Allow));
+		Assert.True(await first);
+		await UntilAsync(() => _chat.Current.Approvals.Count == 0);
+
+		var second = _server.Broker.RequestAsync(runId, "Bash", new JsonObject { ["command"] = "echo " + new string('a', 30_000) }, Ct);
+		await UntilAsync(() => _chat.Current.Approvals.Count == 1);
+		var card = _chat.Current.Approvals[0];
+		Assert.True(card.Truncated);
+
+		Assert.False(await _chat.ApproveAsync(card.RequestId, ChatDecisions.Allow));
+		Assert.Contains(_chat.Current.Items, i => i.Text == PermissionBroker.TooLongToShow);
+		Assert.Single(_chat.Current.Approvals);
+		Assert.True(await _chat.ApproveAsync(card.RequestId, ChatDecisions.Deny));
+		Assert.False(await second);
+		await UntilAsync(() => _chat.Current.Approvals.Count == 0);
+		await ExitAsync(process);
 	}
 
 	[Fact]

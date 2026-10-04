@@ -123,6 +123,41 @@ public sealed class PermissionBrokerTests
 	}
 
 	[Fact]
+	public async Task LongCommand_CardShowsItWhole()
+	{
+		var command = "echo " + new string('a', 10_000);
+		var request = _broker.RequestAsync(RunId, "Bash", new JsonObject { ["command"] = command }, TestContext.Current.CancellationToken);
+
+		var permission = await PermissionAsync();
+
+		Assert.Equal(command, permission.Summary);
+		Assert.Null(permission.Truncated);
+		_broker.Answer(RunId, permission.RequestId, ChatDecisions.Allow);
+		Assert.True(await request);
+	}
+
+	[Fact]
+	public async Task CommandTooLongToShow_MarkedTruncated_OnlyDenyAccepted()
+	{
+		var command = "echo " + new string('"', 30_000);
+		var request = _broker.RequestAsync(RunId, "Bash", new JsonObject { ["command"] = command }, TestContext.Current.CancellationToken);
+		var permission = await PermissionAsync();
+
+		Assert.True(permission.Truncated);
+		Assert.EndsWith("…", permission.Summary!, StringComparison.Ordinal);
+		var allow = Assert.Throws<EnvelopeException>(() => _broker.Answer(RunId, permission.RequestId, ChatDecisions.Allow));
+		Assert.Equal((ErrorCodes.BadRequest, PermissionBroker.TooLongToShow), (allow.Code, allow.Message));
+		Assert.Equal(ErrorCodes.BadRequest, Assert.Throws<EnvelopeException>(() => _broker.Answer(RunId, permission.RequestId, ChatDecisions.AllowAlways)).Code);
+		Assert.False(request.IsCompleted);
+
+		_broker.Answer(RunId, permission.RequestId, ChatDecisions.Deny);
+
+		Assert.False(await request);
+		Assert.Equal(ChatDecisions.Deny, Published[^1].Decision);
+		Assert.Null(_projects.GetSettings(Repo).AgentAllowedTools);
+	}
+
+	[Fact]
 	public async Task NoAnswerFor10Minutes_Deny()
 	{
 		var request = _broker.RequestAsync(RunId, "Bash", Ls, TestContext.Current.CancellationToken);

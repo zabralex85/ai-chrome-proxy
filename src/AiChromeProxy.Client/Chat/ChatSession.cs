@@ -311,7 +311,7 @@ public sealed class ChatSession
 					items[index] = items[index] with { Result = e.Summary ?? string.Empty, IsError = e.IsError == true };
 					break;
 				case ChatEventKinds.Permission when e.RequestId is { } request:
-					requests[request] = new ChatApproval(e.RunId, request, e.Name ?? string.Empty, e.Summary ?? string.Empty);
+					requests[request] = new ChatApproval(e.RunId, request, e.Name ?? string.Empty, e.Summary ?? string.Empty, e.Truncated == true);
 					break;
 				case ChatEventKinds.PermissionResolved when e.RequestId is { } request:
 					requests.Remove(request);

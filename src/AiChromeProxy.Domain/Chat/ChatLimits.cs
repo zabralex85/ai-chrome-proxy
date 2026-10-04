@@ -11,4 +11,13 @@ public static class ChatLimits
 
 	/// <summary>Longest event <c>summary</c>, in UTF-8 bytes.</summary>
 	public const int ToolSummaryBytes = 2_048;
+
+	/// <summary>
+	/// Longest <c>permission</c> summary, serialized as a JSON string (<see cref="System.Text.Json.JsonSerializerOptions.Web"/>), in bytes:
+	/// the card shows the whole request whenever it fits the event.
+	/// </summary>
+	public const int PermissionSummaryBytes = 20_000;
+
+	/// <summary>Longest event <c>name</c> (a tool), in UTF-8 bytes.</summary>
+	public const int MaxNameBytes = 200;
 }
