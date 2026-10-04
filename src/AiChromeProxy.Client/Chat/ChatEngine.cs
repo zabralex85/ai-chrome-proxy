@@ -15,7 +15,10 @@ namespace AiChromeProxy.Client.Chat;
 /// </summary>
 public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvider time)
 {
+	/// <summary>How long a request waits for its reply (a reconnect cancels it sooner).</summary>
 	public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
+
+	private const string NoFolder = "Open a folder first.";
 
 	private readonly Lock _gate = new();
 	private readonly SemaphoreSlim _opening = new(1, 1);
@@ -26,6 +29,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 
 	/// <summary>Bumped whenever the connection is not up: an open that started before it does not count as done.</summary>
 	private int _epoch;
+	private CancellationTokenSource _epochCts = new();
 	private string? _awaitingText;
 	private DateTimeOffset? _since;
 	private decimal? _liveCost;
@@ -124,8 +128,10 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 	{
 		ChatSession session;
 		bool connected;
+		CancellationToken token;
 		lock (_gate)
 		{
+			token = _epochCts.Token;
 			session = GetOrCreate(sessionId);
 			session.Loaded = true;
 			_current = session;
@@ -136,7 +142,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 		Raise();
 		if (connected)
 		{
-			await LoadHistoryAsync(session);
+			await LoadHistoryAsync(session, token);
 		}
 	}
 
@@ -146,22 +152,26 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 	{
 		ChatSession session;
 		string? repo;
+		CancellationToken token;
 		lock (_gate)
 		{
+			token = _epochCts.Token;
 			session = _current;
 			repo = _repo ?? sync.Repo;
 			_awaitingText = session.IsDraft ? text : null;
 		}
 
 		session.ClearErrors();
+		if (repo is null)
+		{
+			session.AddError(NoFolder);
+			Raise();
+			return;
+		}
+
 		try
 		{
-			if (repo is null)
-			{
-				throw new InvalidOperationException("Open a folder first.");
-			}
-
-			var started = Read<ChatStartedPayload>(await RequestAsync(MessageTypes.ChatSend, new ChatSendPayload(repo, session.Id, text)));
+			var started = Read<ChatStartedPayload>(await RequestAsync(MessageTypes.ChatSend, new ChatSendPayload(repo, session.Id, text), token));
 			lock (_gate)
 			{
 				if (session == _current && session.IsDraft)
@@ -173,7 +183,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 				_awaitingText = null;
 			}
 		}
-		catch (Exception ex) when (ex is not OperationCanceledException)
+		catch (Exception ex)
 		{
 			lock (_gate)
 			{
@@ -220,28 +230,32 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 
 	private static T Read<T>(Envelope envelope) => envelope.Payload.Deserialize<T>(JsonSerializerOptions.Web)!;
 
-	private static string Describe(Exception ex) => ex switch
+	private string Describe(Exception ex) => ex switch
 	{
 		RequestFailedException { Code: ErrorCodes.Busy } => "Claude is already working in this folder; wait for it or stop it.",
 		RequestFailedException { Code: ErrorCodes.TooLarge } => $"The message is too long (at most {ChatLimits.MaxTextChars} characters).",
 		RequestFailedException { Code: ErrorCodes.NotFound } => "This chat no longer exists on the server.",
 		RequestFailedException { Code: ErrorCodes.BadRequest } failed => failed.Message,
-		TimeoutException => "The server did not answer in time; the request may not have arrived.",
-		InvalidOperationException invalid => invalid.Message,
-		_ => "The request could not be sent; check the connection and try again.",
+		_ => transport.State == TransportState.Connected ? "Could not reach the server." : SyncEngine.ConnectionLost,
 	};
 
-	private Task<Envelope> RequestAsync<T>(string type, T payload) =>
-		transport.RequestAsync(Envelope.Create(type, payload), RequestTimeout);
+	private Task<Envelope> RequestAsync<T>(string type, T payload, CancellationToken ct) =>
+		transport.RequestAsync(Envelope.Create(type, payload), RequestTimeout, ct);
 
 	/// <summary>A request whose failure becomes an error line in the session on screen.</summary>
 	private async Task TryAsync<T>(string type, T payload)
 	{
+		CancellationToken token;
+		lock (_gate)
+		{
+			token = _epochCts.Token;
+		}
+
 		try
 		{
-			await RequestAsync(type, payload);
+			await RequestAsync(type, payload, token);
 		}
-		catch (Exception ex) when (ex is not OperationCanceledException)
+		catch (Exception ex)
 		{
 			Current.AddError(Describe(ex));
 			Raise();
@@ -259,8 +273,18 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 			{
 				_needsOpen = true;
 				_epoch++;
+
+				// Requests in flight lost their reply; deltas that were on their way are lost too.
+				_epochCts.Cancel();
+				_epochCts.Dispose();
+				_epochCts = new CancellationTokenSource();
+				foreach (var session in _sessions.Values)
+				{
+					session.DropLive();
+				}
 			}
 
+			Raise();
 			return;
 		}
 
@@ -293,10 +317,11 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 	}
 
 	/// <summary>Whether the chat should be (re)opened now, and on which repo; call under the lock.</summary>
-	private bool WantsOpen(out string repo, out int epoch)
+	private bool WantsOpen(out string repo, out int epoch, out CancellationToken token)
 	{
 		repo = sync.Repo ?? _repo ?? string.Empty;
 		epoch = _epoch;
+		token = _epochCts.Token;
 		return transport.State == TransportState.Connected && repo.Length > 0 && (repo != _repo || _needsOpen);
 	}
 
@@ -306,7 +331,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 	/// </summary>
 	private async Task EnsureOpenAsync()
 	{
-		if (!Wants(out _, out _))
+		if (!Wants(out _, out _, out _))
 		{
 			return;
 		}
@@ -314,12 +339,12 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 		await _opening.WaitAsync();
 		try
 		{
-			if (!Wants(out var repo, out var epoch))
+			if (!Wants(out var repo, out var epoch, out var token))
 			{
 				return;
 			}
 
-			var sessions = Read<ChatSessionsPayload>(await RequestAsync(MessageTypes.ChatOpen, new ChatOpenPayload(repo)));
+			var sessions = Read<ChatSessionsPayload>(await RequestAsync(MessageTypes.ChatOpen, new ChatOpenPayload(repo), token));
 			List<ChatSession> catchUp;
 			lock (_gate)
 			{
@@ -336,16 +361,23 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 
 				Apply(sessions);
 				_needsOpen = _epoch != epoch;
+
+				// A session the server lists as running is loaded too, so that its run is known (Stop) after a reload.
+				foreach (var info in sessions.Sessions.Where(i => i.Running))
+				{
+					GetOrCreate(info.Id).Loaded = true;
+				}
+
 				catchUp = [.. _sessions.Values.Where(s => s.Loaded)];
 			}
 
 			Raise();
 			foreach (var session in catchUp)
 			{
-				await LoadHistoryAsync(session);
+				await LoadHistoryAsync(session, token);
 			}
 		}
-		catch (Exception ex) when (ex is not OperationCanceledException)
+		catch (Exception)
 		{
 			// ponytail: no retry timer; the next connection change or sync change tries again.
 		}
@@ -354,24 +386,24 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 			_opening.Release();
 		}
 
-		bool Wants(out string repo, out int epoch)
+		bool Wants(out string repo, out int epoch, out CancellationToken token)
 		{
 			lock (_gate)
 			{
-				return WantsOpen(out repo, out epoch);
+				return WantsOpen(out repo, out epoch, out token);
 			}
 		}
 	}
 
 	/// <summary>Reads the session's stored events after the last one held, page by page until <c>final</c>.</summary>
-	private async Task LoadHistoryAsync(ChatSession session)
+	private async Task LoadHistoryAsync(ChatSession session, CancellationToken ct)
 	{
 		var after = session.Watermark;
 		try
 		{
 			while (true)
 			{
-				var page = Read<ChatEventsPayload>(await RequestAsync(MessageTypes.ChatHistory, new ChatHistoryPayload(session.Id!, after)));
+				var page = Read<ChatEventsPayload>(await RequestAsync(MessageTypes.ChatHistory, new ChatHistoryPayload(session.Id!, after), ct));
 				lock (_gate)
 				{
 					foreach (var e in page.Events)
@@ -391,9 +423,15 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 				after = Math.Max(after, page.Events.Max(e => e.Seq));
 			}
 		}
-		catch (Exception ex) when (ex is not OperationCanceledException)
+		catch (Exception ex) when (!ct.IsCancellationRequested)
 		{
-			// A session that is gone, or a lost connection: the next catch-up asks again.
+			// The next catch-up asks again; the line tells the user the history may be incomplete.
+			session.AddError($"Could not load the history: {Describe(ex)}");
+			Raise();
+		}
+		catch (Exception)
+		{
+			// The connection changed under the request: the catch-up after it asks again.
 		}
 	}
 

@@ -74,7 +74,15 @@ public sealed class ChatEngineTests : IDisposable
 	[Fact]
 	public async Task EventsAreKeyedOnTheirSession_PromptBeforeStartedReply_NewSessionAdopted()
 	{
-		var process = await StartAsync("first question");
+		await ReadyAsync();
+		var seen = new List<(string? Id, int Items)>();
+		_chat.Changed += () => seen.Add((_chat.Current.Id, _chat.Current.Items.Count));
+		await _chat.SendAsync("first question");
+		var process = await _server.Agent.NextAsync();
+
+		// The prompt push (one row) was handled before the started reply, and already belonged to the new session.
+		Assert.NotNull(seen.First(s => s.Items == 1).Id);
+		Assert.Equal(seen.First(s => s.Items == 1).Id, _chat.Current.Id);
 		process.Write(Init, Message, Result);
 		process.Exit();
 		await UntilAsync(() => !_chat.Running);
@@ -110,6 +118,87 @@ public sealed class ChatEngineTests : IDisposable
 	}
 
 	[Fact]
+	public async Task StartedReply_AdoptsTheSession_WhenThePromptPushWasLost()
+	{
+		await ReadyAsync();
+		_server.DropPushes = true;
+		await _chat.SendAsync("hi");
+		var process = await _server.Agent.NextAsync();
+
+		Assert.False(_chat.Current.IsDraft);
+		process.Write(Init, Message, Result);
+		process.Exit();
+		await UntilAsync(() => _server.Chats.Read(_chat.Current.Id!, 0, int.MaxValue).Events.Any(e => e.Kind == ChatEventKinds.Result));
+		_server.Reconnect();
+		await UntilAsync(() => _chat.Current.Items.Count == 2);
+
+		Assert.Equal(["hi", "Hello there."], _chat.Current.Items.Select(i => i.Text));
+		await UntilAsync(() => !_chat.Running);
+	}
+
+	[Fact]
+	public async Task Reconnect_StaleLiveText_NotGluedToLaterDeltas()
+	{
+		var process = await StartAsync("hi");
+		process.Write(Init, Delta);
+		await UntilAsync(() => _chat.Current.Items is [_, { Text: "Hel" }]);
+
+		// Hel is on screen; a second Hel is lost with the connection, a third arrives after it came back mid-message.
+		_server.DropPushes = true;
+		process.Write(Delta);
+		await Task.Delay(100, Ct);
+		_server.Reconnect();
+		process.Write(Delta);
+		await Task.Delay(100, Ct);
+
+		Assert.Equal(["hi"], _chat.Current.Items.Select(i => i.Text));
+
+		process.Write(Message, Result);
+		process.Exit();
+		await UntilAsync(() => !_chat.Running);
+		Assert.Equal(["hi", "Hello there."], _chat.Current.Items.Select(i => i.Text));
+		Assert.DoesNotContain(_chat.Current.Items, i => i.Streaming);
+	}
+
+	[Fact]
+	public async Task ReloadedPage_RunningSessionIsLoaded_SoStopWorks()
+	{
+		var process = await StartAsync("long job");
+		process.Write(Init);
+		await UntilAsync(() => _chat.Current.Items.Count == 1);
+
+		var reloaded = new ChatEngine(_server.Transport, _sync, _time);
+		await reloaded.InitializeAsync();
+		await UntilAsync(() => reloaded.Running && reloaded.Sessions is [{ Running: true }]);
+		await reloaded.StopAsync();
+
+		await UntilAsync(() => !_chat.Running && !reloaded.Running);
+		Assert.True(process.Killed);
+	}
+
+	[Fact]
+	public async Task NoFolder_ErrorLine()
+	{
+		await _chat.InitializeAsync();
+		await _chat.SendAsync("hi");
+
+		Assert.Equal("Open a folder first.", Assert.Single(_chat.Current.Items).Text);
+	}
+
+	[Fact]
+	public async Task NotConnected_SendFailureIsAnErrorLine_NotAnException()
+	{
+		await ReadyAsync();
+		_server.Transport.SetState(AiChromeProxy.Client.Transport.TransportState.Disconnected);
+		_server.Transport.Reply = _ => throw new InvalidOperationException("down");
+
+		await _chat.SendAsync("hi");
+		await _chat.StopAsync();
+
+		Assert.Equal(SyncEngine.ConnectionLost, Assert.Single(_chat.Current.Items).Text);
+	}
+
+	[Fact]
 	public async Task StoredEvent_ArrivingTwice_CountsOnce_AndOutOfOrderResultStillEndsItsRun()
 	{
 		var process = await StartAsync("hi");
@@ -129,7 +218,7 @@ public sealed class ChatEngineTests : IDisposable
 		Assert.Equal("run-2", _chat.Current.ActiveRunId);
 		Assert.True(_chat.Current.Running);
 		Assert.Equal(["hi", "Hello there.", "again"], _chat.Current.Items.Select(i => i.Text));
-		process.Exit();
+		await ExitAsync(process);
 	}
 
 	[Fact]
@@ -142,7 +231,7 @@ public sealed class ChatEngineTests : IDisposable
 		_server.Transport.Push(Envelope.Create(MessageTypes.ChatEvent, new ChatEvent(sessionId, runId, 3, ChatEventKinds.Message, Text: "part two")));
 
 		Assert.Equal(["q", "part one, part two"], _chat.Current.Items.Select(i => i.Text));
-		process.Exit();
+		await ExitAsync(process);
 	}
 
 	[Fact]
@@ -326,7 +415,7 @@ public sealed class ChatEngineTests : IDisposable
 		await UntilAsync(() => _chat.Current.Items.Count == 2);
 
 		Assert.True(changes > before);
-		process.Exit();
+		await ExitAsync(process);
 	}
 
 	private static async Task UntilAsync(Func<bool> condition)
@@ -337,6 +426,13 @@ public sealed class ChatEngineTests : IDisposable
 			Assert.True(DateTime.UtcNow < deadline, "Timed out waiting for the chat engine.");
 			await Task.Delay(10, Ct);
 		}
+	}
+
+	/// <summary>Ends the process and waits until the server stored the run's result (an event the test pushed by hand may not end the run itself).</summary>
+	private async Task ExitAsync(FakeAgentProcess process)
+	{
+		process.Exit();
+		await UntilAsync(() => _server.Chats.Read(_chat.Current.Id!, 0, int.MaxValue).Events.Any(e => e.Kind == ChatEventKinds.Result));
 	}
 
 	private async Task SyncedAsync()

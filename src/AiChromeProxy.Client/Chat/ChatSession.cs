@@ -22,6 +22,8 @@ public sealed class ChatSession
 	private long _costSeq;
 	private bool _listedRunning;
 
+	/// <summary>Initializes a new instance of the <see cref="ChatSession"/> class.</summary>
+	/// <param name="id">The server's session id; null for the draft of a new chat.</param>
 	public ChatSession(string? id)
 	{
 		Id = id;
@@ -30,16 +32,22 @@ public sealed class ChatSession
 	/// <summary>Gets the server's session id; null for the draft of a new chat (nothing sent yet).</summary>
 	public string? Id { get; }
 
+	/// <summary>Gets a value indicating whether this is the draft of a new chat (no message sent yet).</summary>
 	public bool IsDraft => Id is null;
 
+	/// <summary>Gets the title: the server's, else the first 60 characters of the first message.</summary>
 	public string Title { get; private set; } = string.Empty;
 
+	/// <summary>Gets when the session last changed, as the server last listed it (null until listed).</summary>
 	public DateTimeOffset? Updated { get; private set; }
 
 	/// <summary>Gets the cost of the session's last run that reported one.</summary>
 	public decimal? LastCost { get; private set; }
 
-	/// <summary>Gets the rows in display order: stored events by <c>seq</c>, then the streaming text, then local error lines.</summary>
+	/// <summary>
+	/// Gets the rows in display order: stored events by <c>seq</c>, then the streaming text, then local error lines.
+	/// ponytail: rebuilt from all events after every change (O(events) per delta); keep an incremental tail for the live block if long chats get slow.
+	/// </summary>
 	public IReadOnlyList<ChatItem> Items
 	{
 		get
@@ -76,6 +84,7 @@ public sealed class ChatSession
 		}
 	}
 
+	/// <summary>Gets a value indicating whether a run of this session is in progress (or the server's listing says so).</summary>
 	public bool Running
 	{
 		get
@@ -202,14 +211,35 @@ public sealed class ChatSession
 		}
 	}
 
+	/// <summary>
+	/// The connection is gone: the live text of the runs in progress may have missed deltas, so it is dropped and deltas are ignored until
+	/// a stored event of the run (read from history or pushed) starts a clean block.
+	/// </summary>
+	internal void DropLive()
+	{
+		lock (_gate)
+		{
+			var newest = _events.Count == 0 ? 0 : _events.Keys.Max();
+			foreach (var run in _runs.Values.Where(r => !r.Ended))
+			{
+				run.Cut(Math.Max(run.LiveSeq, newest) + 1);
+			}
+
+			_items = null;
+		}
+	}
+
 	/// <summary>Adds an error line that is not an event (a refused request); it stays after the stored rows.</summary>
 	/// <param name="text">What went wrong.</param>
 	internal void AddError(string text)
 	{
 		lock (_gate)
 		{
-			_local.Add(new ChatItem(ChatItemKind.Error, string.Empty, text, IsError: true));
-			_items = null;
+			if (_local.Count == 0 || _local[^1].Text != text)
+			{
+				_local.Add(new ChatItem(ChatItemKind.Error, string.Empty, text, IsError: true));
+				_items = null;
+			}
 		}
 	}
 
@@ -301,7 +331,7 @@ public sealed class ChatSession
 		}
 
 		items.AddRange(_local);
-		_approvals = [.. requests.Values.Where(r => _runs.TryGetValue(r.RunId, out var run) && !run.Ended)];
+		_approvals = [.. requests.Values.Where(r => _runs.TryGetValue(r.RunId, out var run) && !run.Ended && !run.Abandoned)];
 		return items;
 	}
 
@@ -322,6 +352,14 @@ public sealed class ChatSession
 		public long LiveSeq { get; set; } = -1;
 
 		public StringBuilder Live { get; } = new();
+
+		/// <summary>Drops the live text and ignores deltas with a seq below <paramref name="seq"/>.</summary>
+		/// <param name="seq">The first seq whose deltas count again.</param>
+		public void Cut(long seq)
+		{
+			ClearedSeq = Math.Max(ClearedSeq, seq);
+			Live.Clear();
+		}
 
 		/// <summary>A stored event of this run with <paramref name="seq"/>: it replaces the deltas that came before it.</summary>
 		/// <param name="seq">The event's seq.</param>

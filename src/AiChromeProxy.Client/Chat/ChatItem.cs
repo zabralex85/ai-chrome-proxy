@@ -1,5 +1,6 @@
 namespace AiChromeProxy.Client.Chat;
 
+/// <summary>What a <see cref="ChatItem"/> shows.</summary>
 public enum ChatItemKind
 {
 	/// <summary>The user's message.</summary>
