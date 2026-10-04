@@ -31,10 +31,10 @@ Right-click a file, a folder or the empty part of the tree (or press Shift+F10 /
 - **Names** are typed in place in the tree. Enter creates or renames; Esc or a click elsewhere cancels. The name must be non-empty, contain no `/` or `\`, pass the sync path rules (no `..`, reserved names such as `CON`, no trailing dot or space, no `:`) and differ from its siblings ignoring case; the error shows under the input and the input stays.
 - **Write permission** is asked on the first action if the folder was opened read-only; refusing leaves everything unchanged and logs an error in the Actions history.
 - **New File** creates an empty file (inside the clicked folder, the folder of the clicked file, or the root) and opens it in a tab. **New Folder** shows the folder in the tree even while empty.
-- **Excluded names** such as `.env` or `bin/` are created, but the tree does not show them ("Created; excluded from sync").
-- **Rename** keeps open tabs: they follow the new path, also for files inside a renamed folder. Renaming a folder works only where the browser supports it (the item is disabled otherwise, with a tooltip). A case-only rename goes through a temporary name.
+- **Excluded names** such as `.env` or `bin/` are created (or renamed to), but the tree does not show them ("Created; excluded from sync", "Renamed; excluded from sync").
+- **Rename** keeps open tabs: they follow the new path, also for files inside a renamed folder. Renaming a folder is not available in Chrome, Edge or Brave today: their folder handles have no `move()`, so the item is disabled there (with a tooltip) and turns on by itself in a browser that supports it. Files are moved natively; where the browser cannot (or its move is refused for the folder), they are copied to the new name and the old one is removed, up to 20 MB. A case-only rename goes through a temporary name.
 - **Delete** always asks in a dialog (Cancel has the focus). It is permanent: the browser has no recycle bin. A folder's dialog counts every file inside, excluded ones too, or says "more than N files" when the count is cut off. Open tabs of deleted files close. The server's copy is deleted at the next sync, except that deleting the last synced files keeps the server copy (an empty folder is never applied over a non-empty mirror).
-- Items are disabled with a tooltip while the server changes the same path (a waiting remote change or a conflict).
+- Items are disabled with a tooltip while the server changes the same path (a waiting remote change or a conflict). An action waits for a running sync pass to finish (up to 15 s) and checks again before it changes anything.
 
 ## Keyboard
 

@@ -28,7 +28,7 @@ public enum SyncActivityKind
 	/// <summary>A file changed here and on the server since they last agreed.</summary>
 	Conflict,
 
-	/// <summary>A file or folder created or renamed in the tree.</summary>
+	/// <summary>A file or folder created, renamed or deleted from the tree.</summary>
 	TreeAction,
 }
 

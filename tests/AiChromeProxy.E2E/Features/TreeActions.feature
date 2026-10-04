@@ -1,6 +1,6 @@
 Feature: Tree actions
 	A context menu on the file tree creates, renames and deletes files and folders in the picked folder; the sync follows and open tabs follow renames.
-	The folder picker cannot be automated: the page's own file system stands in for the folder. File renames run twice: with the browser's native move and with the copy fallback. Folder renames need FileSystemDirectoryHandle.move, which Chromium lacks in the origin-private file system (the unit tests cover the tab mapping of folders).
+	The folder picker cannot be automated: the page's own file system stands in for the folder. File renames run with the browser's native move, with the copy fallback, and with a move that refuses (the copy then takes over). Folder renames need FileSystemDirectoryHandle.move, which Chromium lacks in the origin-private file system (the unit tests cover the tab mapping of folders).
 
 Scenario: New File from the menu appears in the tree and opens in a tab
 	Given the app is connected with a folder for tree actions
@@ -65,9 +65,10 @@ Scenario Outline: F2 renames a file and its open tab follows (<mode>)
 	And the mirror no longer has the file "a.txt"
 
 	Examples:
-		| mode   |
-		| native |
-		| copy   |
+		| mode    |
+		| native  |
+		| copy    |
+		| refuses |
 
 Scenario Outline: A rename that only changes the case keeps the file and its tab (<mode>)
 	Given the app is connected with a folder for tree actions and a browser that renames by "<mode>"
@@ -83,6 +84,16 @@ Scenario Outline: A rename that only changes the case keeps the file and its tab
 		| mode   |
 		| native |
 		| copy   |
+
+Scenario: Renaming onto a name sync hides is refused and changes nothing
+	Given the app is connected with a folder for tree actions that also holds ".env"
+	Then the file tree does not show ".env"
+	When I press F2 on "a.txt" and rename it to ".env"
+	Then the name input says "'.env' already exists here."
+	When I press Escape
+	Then the file tree shows "a.txt"
+	And the file "a.txt" in the folder holds "alpha"
+	And the file ".env" in the folder holds "secret"
 
 Scenario: Renaming a folder is disabled with its reason when the browser cannot move folders
 	Given the app is connected with a folder for tree actions

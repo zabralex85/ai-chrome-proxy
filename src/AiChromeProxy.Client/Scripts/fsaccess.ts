@@ -456,7 +456,15 @@ export function canRenameFolders(): boolean {
     return typeof FileSystemDirectoryHandle !== 'undefined' && 'move' in FileSystemDirectoryHandle.prototype;
 }
 
-/** Renames within the folder: a file with move, else copy (create, never overwriting) then remove the old one, up to 20 MB; a folder only with move. */
+/** Whether move() refused for this kind of folder (some local file systems) rather than for this rename: the copy path can do it instead. */
+function moveUnsupported(e: unknown): boolean {
+    return e instanceof DOMException && (e.name === 'NotSupportedError' || e.name === 'InvalidModificationError');
+}
+
+/**
+ * Renames within the folder: a file with move (or, when there is none or it refuses as unsupported, copy: create, never overwriting, then
+ * remove the old one, up to 20 MB); a folder only with move.
+ */
 async function moveEntry(dir: FileSystemDirectoryHandle, kind: 'file' | 'directory', from: string, to: string): Promise<void> {
     if (kind === 'directory') {
         const move = moveOf(await dir.getDirectoryHandle(from));
@@ -469,8 +477,14 @@ async function moveEntry(dir: FileSystemDirectoryHandle, kind: 'file' | 'directo
     const handle = await dir.getFileHandle(from);
     const move = moveOf(handle);
     if (move !== null) {
-        await move(to);
-        return;
+        try {
+            await move(to);
+            return;
+        } catch (e) {
+            if (!moveUnsupported(e)) {
+                throw e;
+            }
+        }
     }
     const file = await handle.getFile();
     if (file.size > MAX_FILE_SIZE) {

@@ -31,13 +31,16 @@ public sealed class TreeActionSteps(IPage page)
 	private ILocator Input => page.GetByTestId("tree-input");
 
 	[Given("the app is connected with a folder for tree actions")]
-	public async Task GivenConnectedAsync() => await ConnectAsync(copy: false, blocked: null);
+	public async Task GivenConnectedAsync() => await ConnectAsync("native", blocked: null);
 
 	[Given("the app is connected with a folder for tree actions and a browser that renames by {string}")]
-	public async Task GivenConnectedByAsync(string mode) => await ConnectAsync(copy: mode == "copy", blocked: null);
+	public async Task GivenConnectedByAsync(string mode) => await ConnectAsync(mode, blocked: null);
 
 	[Given("the app is connected with a folder for tree actions and a browser that renames by {string} and cannot write {string}")]
-	public async Task GivenConnectedCannotWriteAsync(string mode, string blocked) => await ConnectAsync(copy: mode == "copy", blocked);
+	public async Task GivenConnectedCannotWriteAsync(string mode, string blocked) => await ConnectAsync(mode, blocked);
+
+	[Given("the app is connected with a folder for tree actions that also holds {string}")]
+	public async Task GivenConnectedHoldingAsync(string extra) => await ConnectAsync("native", blocked: null, extra);
 
 	[When("I right-click {string} in the file tree")]
 	public async Task WhenIRightClickAsync(string path)
@@ -296,14 +299,18 @@ public sealed class TreeActionSteps(IPage page)
 		}
 	}
 
-	private async Task ConnectAsync(bool copy, string? blocked)
+	/// <summary>Renames by "native" move, by "copy" (no move at all) or with a move that "refuses" (rejects with NotSupportedError, as on some local folders).</summary>
+	private async Task ConnectAsync(string mode, string? blocked, string? extra = null)
 	{
+		var copy = mode == "copy";
 		_suffix = Guid.NewGuid().ToString("N")[..8];
 		_folder = "e2e-tree-" + _suffix;
 		const string Put = " const put = async (dir, name, data) => { const w = await (await dir.getFileHandle(name, { create: true })).createWritable(); await w.write(data); await w.close(); };";
 		var move = copy
 			? "for (const proto of [FileSystemHandle.prototype, FileSystemFileHandle.prototype, FileSystemDirectoryHandle.prototype]) { delete proto.move; }"
-			: string.Empty;
+			: mode == "refuses"
+				? "FileSystemHandle.prototype.move = function () { return Promise.reject(new DOMException('Moving is not supported here.', 'NotSupportedError')); };"
+				: string.Empty;
 		var block = blocked is null
 			? string.Empty
 			: "const createWritable = FileSystemFileHandle.prototype.createWritable;"
@@ -324,6 +331,7 @@ public sealed class TreeActionSteps(IPage page)
 			+ " await put(docs, 'more.md', '# more');"
 			+ " await put(root, 'a.txt', 'alpha');"
 			+ " await put(root, 'keep.txt', 'original');"
+			+ (extra is null ? string.Empty : $" await put(root, {System.Text.Json.JsonSerializer.Serialize(extra)}, 'secret');")
 			+ " return root; };");
 		await page.GotoAsync("/");
 		await Expect(page.GetByTestId("connection-state")).ToHaveTextAsync("Connected");
