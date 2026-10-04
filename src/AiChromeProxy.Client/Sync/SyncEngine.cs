@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using AiChromeProxy.Client.Transport;
+using AiChromeProxy.Client.Tree;
 using AiChromeProxy.Domain;
 using AiChromeProxy.Domain.Sync;
 using Microsoft.JSInterop;
@@ -249,6 +250,7 @@ public sealed partial class SyncEngine(ITransport transport, IFolderAccess folde
 		Problem = null;
 		SetFiles([]);
 		_unlistedDirectories = [];
+		_directories = [];
 		_known = new(StringComparer.Ordinal);
 		_failures.Clear();
 		_repo = null;
@@ -667,6 +669,12 @@ public sealed partial class SyncEngine(ITransport transport, IFolderAccess folde
 		if (!files.SequenceEqual(_files))
 		{
 			SetFiles(files);
+		}
+
+		var directories = TreeDirectories.Visible(scan.Directories ?? [], rules).Order(StringComparer.Ordinal).ToList();
+		if (!directories.SequenceEqual(_directories))
+		{
+			_directories = directories;
 		}
 
 		if (!unlisted.SequenceEqual(_unlistedDirectories))
