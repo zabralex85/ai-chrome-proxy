@@ -75,8 +75,8 @@ const TEXT: Record<CheckId, CheckText> = {
 	},
 	rename: {
 		title: "Rename in place",
-		pass: "Files and folders can be renamed in place.",
-		problem: () => "This browser cannot move files in place, so renaming folders is unavailable.",
+		pass: "Files can be renamed in place.",
+		problem: () => "This browser cannot move files in place: renaming a file copies it (up to 20 MB).",
 	},
 };
 

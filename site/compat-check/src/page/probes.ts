@@ -132,4 +132,4 @@ export const folderWrite = (dir: FileSystemDirectoryHandle): Promise<CheckResult
 
 export const rename = (): Promise<CheckResult> =>
 	probe("rename", "warn", async () =>
-		(typeof FileSystemHandle !== "undefined" && "move" in FileSystemHandle.prototype ? "pass" : "warn"));
+		(typeof FileSystemFileHandle !== "undefined" && "move" in FileSystemFileHandle.prototype ? "pass" : "warn"));
