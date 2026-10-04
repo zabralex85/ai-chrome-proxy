@@ -423,7 +423,7 @@
         _note = result.Note;
 
         // A name sync leaves out never gets a row: the parent folder (or the root's first row) keeps the focus then.
-        _active = result.Note is null ? path : edit.Folder.Length > 0 ? edit.Folder : null;
+        _active = result.Note != SyncEngine.ExcludedNote ? path : edit.Folder.Length > 0 ? edit.Folder : null;
         _focusActive = true;
         if (edit.Kind == EditKind.NewFile)
         {

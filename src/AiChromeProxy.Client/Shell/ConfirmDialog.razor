@@ -62,8 +62,16 @@
     {
         if (firstRender)
         {
-            await Ui.ShowModalAsync(_dialog);
-            await _cancel.FocusAsync();
+            try
+            {
+                await Ui.ShowModalAsync(_dialog);
+                await _cancel.FocusAsync();
+            }
+            catch (JSException)
+            {
+                // No modal dialog: do not leave an unusable (or non-modal) delete prompt open; cancel it.
+                await OnCancel.InvokeAsync();
+            }
         }
     }
 
