@@ -25,7 +25,8 @@ public sealed class LoopbackServer : IDisposable
 	{
 		var store = new FileSystemMirrorStore(Options.Create(new MirrorOptions { Root = MirrorRoot }));
 		_sessions = new SyncSessions(store, Projects, new ListLogger<SyncSession>(), TimeProvider.System, Watcher);
-		Chat = new ChatService(Chats, store, Projects, Agent, TimeProvider.System, new ListLogger<ChatService>());
+		Broker = new PermissionBroker(Projects, TimeProvider.System, new ListLogger<PermissionBroker>());
+		Chat = new ChatService(Chats, store, Projects, Agent, TimeProvider.System, new ListLogger<ChatService>(), Broker, new ApprovalEndpoint());
 		_router = new EnvelopeRouter(
 		[
 			.. SyncHandler.Types.Select(t => (IEnvelopeHandler)new SyncHandler(t, _sessions)),
@@ -54,6 +55,12 @@ public sealed class LoopbackServer : IDisposable
 
 	public ChatService Chat { get; }
 
+	/// <summary>The server's permission broker: a test asks it for an approval the way the approval tool does.</summary>
+	public PermissionBroker Broker { get; }
+
+	/// <summary>When set, pushes are lost (a connection that is down): <see cref="Reconnect"/> and a catch-up bring the client back up to date.</summary>
+	public bool DropPushes { get; set; }
+
 	public string ConnectionId => $"conn-{_connection}";
 
 	public string PathOf(string repo, string path) => Path.Combine(MirrorRoot, repo, path);
@@ -61,6 +68,7 @@ public sealed class LoopbackServer : IDisposable
 	/// <summary>Like SignalR: Reconnecting, a new connection id (the old session is gone on the server), Connected.</summary>
 	public void Reconnect()
 	{
+		DropPushes = false;
 		Transport.SetState(TransportState.Reconnecting);
 		_sessions.Close(ConnectionId);
 		Chat.Unsubscribe(ConnectionId);
@@ -84,7 +92,11 @@ public sealed class LoopbackServer : IDisposable
 	/// <summary>Pushes (<c>sync.remote</c>) reach the client at once, like a reply.</summary>
 	private Task PushAsync(Envelope envelope, CancellationToken ct)
 	{
-		Transport.Push(envelope);
+		if (!DropPushes)
+		{
+			Transport.Push(envelope);
+		}
+
 		return Task.CompletedTask;
 	}
 
@@ -98,5 +110,10 @@ public sealed class LoopbackServer : IDisposable
 		{
 			return EnvelopeRouter.Error(request, new ErrorPayload(ErrorCodes.Internal));
 		}
+	}
+
+	private sealed class ApprovalEndpoint : IApprovalEndpoint
+	{
+		public string? Url => "http://127.0.0.1:5180/mcp/approve";
 	}
 }

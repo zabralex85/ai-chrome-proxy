@@ -1,4 +1,5 @@
 using AiChromeProxy.Client;
+using AiChromeProxy.Client.Chat;
 using AiChromeProxy.Client.Sync;
 using AiChromeProxy.Client.Transport;
 using Microsoft.AspNetCore.Components.Web;
@@ -16,6 +17,7 @@ builder.Services.AddSingleton<JsFolderAccess>();
 builder.Services.AddSingleton<IFolderAccess>(s => s.GetRequiredService<JsFolderAccess>());
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<SyncEngine>();
+builder.Services.AddSingleton<ChatEngine>();
 builder.Services.AddSingleton(new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
 
 var host = builder.Build();
