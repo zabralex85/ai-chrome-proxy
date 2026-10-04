@@ -48,6 +48,9 @@
     private string? _text;
     private string? _note;
     private bool _symbolMissing;
+
+    /// <summary>The last link revealed in this file: the "Symbol not found" note follows it across re-reads.</summary>
+    private FileLink? _revealed;
     private (string? Sha256, int Writes)? _read;
     private bool _disposed;
 
@@ -133,7 +136,6 @@
     private async Task ReadAndShowAsync()
     {
         _read = Stamp();
-        _symbolMissing = false;
         FileBytes? bytes = null;
         string? failure = null;
         try
@@ -175,14 +177,15 @@
             if (Link is { Applied: false } link && link.Path == Path)
             {
                 link.Applied = true;
-                _symbolMissing = false;
+                _revealed = link;
                 if (_text is not null)
                 {
-                    var line = link.LineIn(_text);
-                    _symbolMissing = link.Symbol is not null && line is null;
-                    await Viewer.RevealAsync(_id, line);
+                    await Viewer.RevealAsync(_id, link.LineIn(_text));
                 }
             }
+
+            // A re-read (the sync's stamp, a change in the folder) keeps the note while the linked symbol is still missing from the text.
+            _symbolMissing = _revealed is { Symbol: not null } revealed && _text is not null && revealed.LineIn(_text) is null;
         }
         catch (Exception ex) when (ex is JSException or InvalidOperationException or ArgumentException)
         {
