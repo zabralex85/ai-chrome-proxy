@@ -91,11 +91,7 @@ public sealed class ChatHubTests : IAsyncDisposable
 	public async ValueTask DisposeAsync()
 	{
 		await _factory.DisposeAsync();
-		Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_testRoot))
-		{
-			Directory.Delete(_testRoot, recursive: true);
-		}
+		await TestFolder.DeleteAsync(_testRoot);
 	}
 
 	private static T Read<T>(Envelope envelope) => envelope.Payload.Deserialize<T>(JsonSerializerOptions.Web)!;

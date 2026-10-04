@@ -63,21 +63,7 @@ public sealed class ApprovalMcpTests : IAsyncDisposable
 	public async ValueTask DisposeAsync()
 	{
 		await StopAsync();
-
-		// A test that stops the host itself races the run's last write; on a slow runner aicp.db can stay open a moment longer.
-		for (var attempt = 0; ; attempt++)
-		{
-			Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-			try
-			{
-				Directory.Delete(_testRoot, recursive: true);
-				return;
-			}
-			catch (IOException) when (attempt < 50)
-			{
-				await Task.Delay(100);
-			}
-		}
+		await TestFolder.DeleteAsync(_testRoot);
 	}
 
 	[Fact]
