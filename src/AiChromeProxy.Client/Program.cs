@@ -17,6 +17,7 @@ builder.Services.AddSingleton<ITransport>(_ => new SignalRTransport(
 	new HubConnectionBuilder().WithUrl(hubUrl).WithAutomaticReconnect(new ForeverRetryPolicy()).Build()));
 builder.Services.AddSingleton<JsFolderAccess>();
 builder.Services.AddSingleton<JsChatView>();
+builder.Services.AddSingleton<JsTreeUi>();
 builder.Services.AddSingleton<IFileViewer, JsFileViewer>();
 builder.Services.AddSingleton<IFolderAccess>(s => s.GetRequiredService<JsFolderAccess>());
 builder.Services.AddSingleton(TimeProvider.System);

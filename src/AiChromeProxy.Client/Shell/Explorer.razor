@@ -72,7 +72,7 @@
                     }
                 </div>
             }
-            <FileTreeView Engine="Engine" Selected="@Selected" OnSelect="OnSelect" />
+            <FileTreeView Engine="Engine" Selected="@Selected" OnSelect="OnSelect" OnRenamed="OnRenamed" OnDeleted="OnDeleted" />
         }
     </div>
     <SyncStatus Engine="Engine" OnShowErrors="OnShowErrors" OnShowConflict="OnShowConflict" />
@@ -92,6 +92,14 @@
 
     [Parameter]
     public EventCallback<string> OnSelect { get; set; }
+
+    /// <summary>A file or folder was renamed in the tree: open tabs follow.</summary>
+    [Parameter]
+    public EventCallback<(string OldPath, string NewPath, bool IsFolder)> OnRenamed { get; set; }
+
+    /// <summary>A file or folder was deleted in the tree: its tabs close.</summary>
+    [Parameter]
+    public EventCallback<(string Path, bool IsFolder)> OnDeleted { get; set; }
 
     [Parameter]
     public EventCallback OnShowErrors { get; set; }

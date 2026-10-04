@@ -44,7 +44,17 @@ public sealed class JsFolderAccess(IJSRuntime js) : IFolderAccess, IAsyncDisposa
 
 	public async Task WriteAsync(string path, byte[] content) => await (await ModuleAsync()).InvokeVoidAsync("write", path, content);
 
-	public async Task DeleteAsync(string path) => await (await ModuleAsync()).InvokeVoidAsync("remove", path);
+	public async Task DeleteAsync(string path, bool recursive = false) => await (await ModuleAsync()).InvokeVoidAsync("remove", path, recursive);
+
+	public async Task CreateFileAsync(string path) => await (await ModuleAsync()).InvokeVoidAsync("createFile", path);
+
+	public async Task CreateFolderAsync(string path) => await (await ModuleAsync()).InvokeVoidAsync("createFolder", path);
+
+	public async Task RenameAsync(string path, string newName) => await (await ModuleAsync()).InvokeVoidAsync("rename", path, newName);
+
+	public async Task<bool> CanRenameFoldersAsync() => await (await ModuleAsync()).InvokeAsync<bool>("canRenameFolders");
+
+	public async Task<FileCount> CountFilesAsync(string path, int maxEntries) => await (await ModuleAsync()).InvokeAsync<FileCount>("countFiles", path, maxEntries);
 
 	/// <summary>Replaces an earlier watch.</summary>
 	public async Task WatchVisibilityAsync(Action<bool> changed)

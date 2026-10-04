@@ -492,18 +492,40 @@ public sealed partial class SyncEngine
 		ConflictCount = _remoteList.Count(r => r.Status == RemoteStatus.Conflict);
 	}
 
+	/// <summary>Takes the cycle guard; false when a running cycle still holds it after <paramref name="limit"/>.</summary>
+	private async Task<bool> EnterCycleAsync(TimeSpan limit)
+	{
+		// ponytail: polls a running cycle every 50 ms; a cycle is short and the click is rare.
+		// While one waits, the loop starts no new cycle (SyncOnceAsync), so constant pushes cannot starve it.
+		var started = time.GetTimestamp();
+		Interlocked.Increment(ref _waitingActions);
+		try
+		{
+			while (Interlocked.Exchange(ref _cycleRunning, 1) == 1)
+			{
+				if (time.GetElapsedTime(started) >= limit)
+				{
+					return false;
+				}
+
+				await Task.Delay(50);
+			}
+
+			return true;
+		}
+		finally
+		{
+			Interlocked.Decrement(ref _waitingActions);
+		}
+	}
+
 	/// <summary>
 	/// Runs a user's action (Apply, Keep mine, Take server's) inside the cycle guard, so it never races a scan, then wakes the loop; a failure
 	/// goes to the Actions history instead of the click handler. No-op while no session is open.
 	/// </summary>
 	private async Task ExclusiveAsync(Func<string, int, Task> action)
 	{
-		// ponytail: polls a running cycle every 50 ms; a cycle is short and the click is rare.
-		while (Interlocked.Exchange(ref _cycleRunning, 1) == 1)
-		{
-			await Task.Delay(50);
-		}
-
+		await EnterCycleAsync(TimeSpan.MaxValue);
 		try
 		{
 			if (_repo is { } repo)

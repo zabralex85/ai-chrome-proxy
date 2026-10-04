@@ -27,6 +27,8 @@
     --ok: light-dark(#2e7d32, #89d185);
     --warn: light-dark(#8a6100, #cca700);
     --error: light-dark(#c72e0f, #f48771);
+    --error-bg: light-dark(#c72e0f, #c5361b);
+    --error-bg-hover: light-dark(#a82609, #a52d16);
     --info: light-dark(#1a5f8a, #75beff);
     --kind-code: light-dark(#0451a5, #569cd6);
     --kind-web: light-dark(#a6460c, #e37933);
@@ -1771,4 +1773,201 @@ h1:focus-visible {
     background: var(--bg-notice);
     color: var(--fg);
     font-size: 12px;
+}
+
+/* Tree actions: inline name input, context menu, confirmation dialog */
+.tree-input-item {
+    display: block;
+}
+
+.tree-row-input {
+    cursor: default;
+}
+
+.tree-row-input:hover {
+    background: none;
+}
+
+.tree-input {
+    flex: 1;
+    min-width: 0;
+    height: 20px;
+    padding: 0 4px;
+    border: 1px solid var(--focus);
+    border-radius: 2px;
+    background: var(--bg-input);
+    color: var(--fg-strong);
+    font: inherit;
+    outline: none;
+}
+
+.tree-input-busy {
+    opacity: 0.6;
+    cursor: progress;
+}
+
+.tree-working {
+    margin-left: 6px;
+    color: var(--fg-muted, inherit);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.tree-input-busy {
+    opacity: 0.6;
+    cursor: progress;
+}
+
+.tree-working {
+    margin-left: 6px;
+    color: var(--fg-muted, inherit);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.tree-input[aria-invalid="true"] {
+    border-color: var(--error);
+}
+
+.tree-input-error {
+    margin: 0 8px 4px 0;
+    padding: 3px 6px;
+    border: 1px solid var(--error);
+    border-radius: 2px;
+    background: var(--bg-elevated);
+    color: var(--error);
+    font-size: 12px;
+    white-space: normal;
+}
+
+.tree-note {
+    margin: 4px 8px;
+    padding: 4px 8px;
+    border-radius: var(--radius);
+    background: var(--bg-notice);
+    color: var(--fg);
+    font-size: 12px;
+}
+
+.tree-menu {
+    position: fixed;
+    z-index: 21;
+    min-width: 190px;
+    padding: 4px;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    background: var(--bg-elevated);
+    box-shadow: var(--shadow);
+}
+
+.tree-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 5px 8px;
+    border: 0;
+    border-radius: var(--radius);
+    background: none;
+    color: var(--fg);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.tree-menu-item:hover,
+.tree-menu-item:focus-visible {
+    background: var(--bg-selected);
+    color: var(--fg-strong);
+    outline: none;
+}
+
+.tree-menu-item[aria-disabled="true"] {
+    color: var(--fg-muted);
+    opacity: 0.6;
+    cursor: default;
+}
+
+.tree-menu-item[aria-disabled="true"]:hover {
+    background: none;
+}
+
+.tree-menu-label {
+    flex: 1;
+}
+
+.tree-menu-key {
+    color: var(--fg-muted);
+    font-size: 12px;
+}
+
+/* A native modal <dialog> that fills the viewport and dims it; a click on the dimmed part is a click on the dialog element itself. */
+.dialog-backdrop {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: rgba(0, 0, 0, 0.4);
+    color: var(--fg);
+}
+
+.dialog-backdrop[open] {
+    display: grid;
+    place-items: center;
+}
+
+.dialog-backdrop::backdrop {
+    background: transparent;
+}
+
+.dialog {
+    width: min(440px, calc(100vw - 32px));
+    padding: 16px 20px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--bg-elevated);
+    box-shadow: var(--shadow);
+}
+
+.dialog-title {
+    margin: 0 0 8px;
+    color: var(--fg-strong);
+    font-size: 14px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.dialog-title code {
+    font-family: var(--font-mono);
+    font-size: 13px;
+}
+
+.dialog-body {
+    margin: 0 0 16px;
+    color: var(--fg-muted);
+}
+
+.dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.dialog .button:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+}
+
+.button.danger {
+    background: var(--error-bg);
+    color: var(--button-fg);
+}
+
+.button.danger:hover {
+    background: var(--error-bg-hover);
 }

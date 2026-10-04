@@ -40,7 +40,9 @@ Always pass `--project`: a bare `dotnet test` runs every test project in the sol
 
 ## E2E (Reqnroll + Playwright)
 
-`Features/Connection.feature` and `Features/Shell.feature` are bound by `StepDefinitions/ConnectionSteps.cs` and `StepDefinitions/ShellSteps.cs`. `Hooks/AppServer.cs` starts the real Server once per run via `WebApplicationFactory<Program>` on a Kestrel listener (`127.0.0.1`, random port, `Development`, `CloudflareAccess:Enabled=false`). `Hooks/BrowserHooks.cs` launches one Chromium per run and opens a fresh browser context per scenario. Selectors are `data-testid` attributes in `Pages/Home.razor` and `Shell/*.razor`.
+Features: `Connection`, `Shell`, `Chat`, `Viewer`, `Navigator` and `TreeActions` (`Features/*.feature`), bound by `StepDefinitions/*Steps.cs`. `Hooks/AppServer.cs` starts the real Server once per run via `WebApplicationFactory<Program>` on a Kestrel listener (`127.0.0.1`, random port, `Development`, `CloudflareAccess:Enabled=false`). `Hooks/BrowserHooks.cs` launches one Chromium per run and opens a fresh browser context per scenario. Selectors are `data-testid` attributes in `Pages/Home.razor` and `Shell/*.razor`.
+
+Features run in parallel, at most 3 at a time (`xunit.runner.json`, `maxParallelThreads`): every scenario loads and compiles the WASM app in its own browser context, and one worker per core starved the machine so that "Connected" waits timed out at random. Raise it only on a bigger machine.
 
 One-time setup (downloads Chromium to `%LOCALAPPDATA%\ms-playwright`; repeat after a `Microsoft.Playwright` upgrade):
 

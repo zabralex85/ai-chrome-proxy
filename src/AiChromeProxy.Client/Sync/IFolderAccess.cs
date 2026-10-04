@@ -53,8 +53,30 @@ public interface IFolderAccess
 	/// <summary>Replaces (or creates, with its folders) the file atomically (createWritable).</summary>
 	Task WriteAsync(string path, byte[] content);
 
-	/// <summary>Deletes the file; no-op when it is not there.</summary>
-	Task DeleteAsync(string path);
+	/// <summary>
+	/// Deletes the file, or with <paramref name="recursive"/> the folder and everything inside it (a folder without it throws);
+	/// no-op when it is not there. The picked folder itself is never deleted (an empty path is invalid).
+	/// </summary>
+	Task DeleteAsync(string path, bool recursive = false);
+
+	/// <summary>Creates an empty file in an existing folder; throws when the name is taken (by a file or a folder) or the path is invalid.</summary>
+	Task CreateFileAsync(string path);
+
+	/// <summary>Creates a folder in an existing folder; throws when the name is taken or the path is invalid.</summary>
+	Task CreateFolderAsync(string path);
+
+	/// <summary>
+	/// Renames the file or folder to <paramref name="newName"/> (a single name) in the same folder; never overwrites (a taken name, ignoring case, throws),
+	/// never renames the picked folder. A file without browser <c>move</c> support is copied and the old one removed (up to <c>SyncLimits.MaxFileSize</c>);
+	/// a folder needs <see cref="CanRenameFoldersAsync"/>. A change of case only works.
+	/// </summary>
+	Task RenameAsync(string path, string newName);
+
+	/// <summary>Whether this browser can rename folders (<c>FileSystemHandle.move</c>).</summary>
+	Task<bool> CanRenameFoldersAsync();
+
+	/// <summary>Every file under the folder as it is now, excluded ones too; stops after <paramref name="maxEntries"/> entries (files and folders) like <see cref="ScanAsync"/>. The result says when the walk stopped early (entry limit or depth). Throws when the folder is not there.</summary>
+	Task<FileCount> CountFilesAsync(string path, int maxEntries);
 
 	/// <summary>Calls <paramref name="changed"/> with true when the tab becomes visible or gets focus, false when it is hidden.</summary>
 	Task WatchVisibilityAsync(Action<bool> changed);

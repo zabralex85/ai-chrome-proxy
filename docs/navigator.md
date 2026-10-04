@@ -24,6 +24,18 @@ Up to 10 viewers stay alive at once; opening more releases the least recently us
 - The viewer is read-only; edit files in your own editor.
 - The page's CSP allows `worker-src 'self' blob:` for Monaco's workers; scripts still allow no `unsafe-inline`/`unsafe-eval`.
 
+## Tree actions
+
+Right-click a file, a folder or the empty part of the tree (or press Shift+F10 / the Menu key on a focused row) for the menu: **New File**, **New Folder**, **Rename** (F2), **Delete** (Del). The action happens in the folder you opened in Chrome and the sync follows at once. Design: [tree actions spec](superpowers/specs/2026-10-04-tree-actions-design.md).
+
+- **Names** are typed in place in the tree. Enter creates or renames; Esc or a click elsewhere cancels. The name must be non-empty, contain no `/` or `\`, pass the sync path rules (no `..`, reserved names such as `CON`, no trailing dot or space, no `:`) and differ from its siblings ignoring case; the error shows under the input and the input stays.
+- **Write permission** is asked on the first action if the folder was opened read-only; refusing leaves everything unchanged and logs an error in the Actions history.
+- **New File** creates an empty file (inside the clicked folder, the folder of the clicked file, or the root) and opens it in a tab. **New Folder** shows the folder in the tree even while empty.
+- **Excluded names** such as `.env` or `bin/` are created (or renamed to), but the tree does not show them ("Created; excluded from sync", "Renamed; excluded from sync").
+- **Rename** keeps open tabs: they follow the new path, also for files inside a renamed folder. Renaming a folder is not available in Chrome, Edge or Brave today: their folder handles have no `move()`, so the item is disabled there (with a tooltip) and turns on by itself in a browser that supports it. Files are moved natively; where the browser cannot (or its move is refused for the folder), they are copied to the new name and the old one is removed, up to 20 MB. A case-only rename goes through a temporary name.
+- **Delete** always asks in a dialog (Cancel has the focus). It is permanent: the browser has no recycle bin. A folder's dialog counts every file inside, excluded ones too, or says "more than N files" when the count is cut off. Open tabs of deleted files close. The server's copy is deleted at the next sync, except that deleting the last synced files keeps the server copy (an empty folder is never applied over a non-empty mirror).
+- Items are disabled with a tooltip while the server changes the same path (a waiting remote change or a conflict). An action waits for a running sync pass to finish (up to 15 s) and checks again before it changes anything.
+
 ## Keyboard
 
 | Keys | Action |
@@ -44,3 +56,9 @@ Up to 10 viewers stay alive at once; opening more releases the least recently us
 - [ ] Open 11+ files: all tabs still switch and show content.
 - [ ] Turn the network off: already listed files still open.
 - [ ] The browser console shows no CSP violations.
+- [ ] Right-click a folder, a file and the empty tree: New File, New Folder, Rename, Delete appear; Shift+F10, F2 and Delete work from the keyboard.
+- [ ] New File: type a name, Enter: the file appears and opens. Esc, or a click elsewhere, cancels. An invalid or duplicate name shows an error and keeps the input.
+- [ ] On a read-only folder the first action asks for write access; refusing changes nothing.
+- [ ] Create `.env`: no row appears and the note says it is excluded from sync.
+- [ ] Rename a file with an open tab: the tab follows. Rename a folder with open files: their tabs follow (or the item is disabled where the browser cannot).
+- [ ] Delete a file and a folder: the dialog (folder: with the file count) defaults to Cancel; Delete removes it from the tree, closes its tabs and the mirror follows after the sync.

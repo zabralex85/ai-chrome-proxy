@@ -11,10 +11,13 @@ public sealed class ViewerSteps(IPage page)
 	private const string Code = "namespace Sample;\n\npublic sealed class Greeter\n{\n\tpublic string Hello(string name) => $\"Hello, {name}\";\n}\n";
 
 	private readonly List<string> _failed = [];
+	private readonly TaskCompletionSource _worker = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
 	[When("the viewer opens {string} with line {int} revealed")]
 	public async Task WhenTheViewerOpensAsync(string path, int line)
 	{
+		// Registered before the viewer opens: a worker that starts and stops early is still seen.
+		page.Worker += (_, _) => _worker.TrySetResult();
 		page.Response += (_, response) =>
 		{
 			if (response.Url.Contains("/lib/monaco/", StringComparison.Ordinal) && response.Status >= 400)
@@ -74,10 +77,7 @@ public sealed class ViewerSteps(IPage page)
 	[Then("the editor worker runs")]
 	public async Task ThenTheEditorWorkerRunsAsync()
 	{
-		if (page.Workers.Count == 0)
-		{
-			await page.WaitForWorkerAsync();
-		}
+		await _worker.Task.WaitAsync(TimeSpan.FromSeconds(30));
 	}
 
 	[Then("no request for Monaco's files failed")]

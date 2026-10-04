@@ -1,0 +1,95 @@
+@inject JsTreeUi Ui
+
+@* A native modal <dialog> (showModal): the browser traps Tab, makes the rest of the page inert and raises "cancel" on Esc. Cancel has the focus.
+   A click on the dimmed area (the dialog element itself, which fills the viewport) cancels. Backticks in the text mark a path (shown as code). *@
+<dialog @ref="_dialog" class="dialog-backdrop" aria-labelledby="dialog-title" aria-describedby="dialog-body" data-testid="confirm-dialog"
+        @oncancel="() => OnCancel.InvokeAsync()" @oncancel:preventDefault="true" @onclick="() => OnCancel.InvokeAsync()">
+    <div class="dialog" @onclick:stopPropagation="true">
+        <h2 id="dialog-title" class="dialog-title" data-testid="dialog-title">
+            @foreach (var (text, code) in Segments(Title))
+            {
+                if (code)
+                {
+                    <code>@text</code>
+                }
+                else
+                {
+                    @text
+                }
+            }
+        </h2>
+        <p id="dialog-body" class="dialog-body" data-testid="dialog-body">@Body</p>
+        @if (Error is not null)
+        {
+            <p class="state-error" role="alert" data-testid="dialog-error">@Error</p>
+        }
+        <div class="dialog-actions">
+            <button type="button" class="button secondary" data-testid="dialog-cancel" @ref="_cancel" @onclick="() => OnCancel.InvokeAsync()">Cancel</button>
+            <button type="button" class="button danger" data-testid="dialog-confirm" aria-busy="@(_busy ? "true" : null)" disabled="@_busy" @onclick="ConfirmAsync">@(_busy ? "Working…" : ConfirmText)</button>
+        </div>
+    </div>
+</dialog>
+
+@code {
+    private ElementReference _dialog;
+    private ElementReference _cancel;
+    private bool _busy;
+
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = null!;
+
+    [Parameter, EditorRequired]
+    public string Body { get; set; } = null!;
+
+    [Parameter]
+    public string ConfirmText { get; set; } = "Delete";
+
+    /// <summary>Why the action failed, shown in the dialog (which stays open).</summary>
+    [Parameter]
+    public string? Error { get; set; }
+
+    [Parameter, EditorRequired]
+    public EventCallback OnConfirm { get; set; }
+
+    [Parameter, EditorRequired]
+    public EventCallback OnCancel { get; set; }
+
+    /// <summary>The text cut at its backticks: even parts are plain, odd parts are code.</summary>
+    private static IEnumerable<(string Text, bool Code)> Segments(string text) =>
+        text.Split('`').Select((part, i) => (part, i % 2 == 1)).Where(s => s.part.Length > 0);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try
+            {
+                await Ui.ShowModalAsync(_dialog);
+                await _cancel.FocusAsync();
+            }
+            catch (JSException)
+            {
+                // No modal dialog: do not leave an unusable (or non-modal) delete prompt open; cancel it.
+                await OnCancel.InvokeAsync();
+            }
+        }
+    }
+
+    private async Task ConfirmAsync()
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            await OnConfirm.InvokeAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

@@ -93,6 +93,8 @@ A file on the mirror is deleted only when a scan positively saw it absent. A fil
 - **Check-then-write window:** the browser writes a pushed change if its file is still the agreed version; a save in the few milliseconds between that check and the write is lost.
 - **Upload commit window:** a mirror file changing in the milliseconds between the server's check and the commit of an upload is not detected (the next pass pushes it as a conflict candidate).
 - **Conflicts show no diff:** the Conflict tab previews only the server's version as text (up to 256 KB); a diff view comes later (Monaco's diff editor).
+- **Empty folders** are not mirrored (the mirror holds files only); creating one in the tree shows it in the tree only.
+- **Deletes from the tree are permanent** in the folder (no recycle bin in the browser) and reach the mirror at the next sync.
 - One folder at a time.
 
 ## Where the mirror lives

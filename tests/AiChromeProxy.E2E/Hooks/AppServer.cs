@@ -19,6 +19,7 @@ public sealed class AppServer : IAsyncDisposable
 	{
 		// A fresh mirror and database per run: project settings and baselines of an earlier run must not leak in.
 		var root = Path.Combine(Path.GetTempPath(), "aicp-e2e", Guid.NewGuid().ToString("N"));
+		MirrorRoot = Path.Combine(root, "mirror");
 		_factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
 		{
 			b.UseEnvironment(Environments.Development);
@@ -26,7 +27,7 @@ public sealed class AppServer : IAsyncDisposable
 
 			// A free port, not 0: the approval endpoint's address that the agent is given comes from the configured port.
 			b.UseSetting("Server:Port", FreePort().ToString(System.Globalization.CultureInfo.InvariantCulture));
-			b.UseSetting("Mirror:Root", Path.Combine(root, "mirror"));
+			b.UseSetting("Mirror:Root", MirrorRoot);
 			b.UseSetting("Projects:Database", Path.Combine(root, "aicp.db"));
 
 			// Claude is a fake agent: it prints the fixture named after the first word of the message (Fixtures/tour.jsonl, slow.jsonl, twotext.jsonl), a little slowly.
@@ -42,6 +43,9 @@ public sealed class AppServer : IAsyncDisposable
 	}
 
 	public string BaseUrl { get; }
+
+	/// <summary>Where the server keeps the mirrors (one folder per repo).</summary>
+	public string MirrorRoot { get; }
 
 	public ValueTask DisposeAsync() => _factory.DisposeAsync();
 

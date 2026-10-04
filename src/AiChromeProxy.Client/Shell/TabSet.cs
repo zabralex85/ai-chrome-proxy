@@ -1,3 +1,5 @@
+using AiChromeProxy.Client.Tree;
+
 namespace AiChromeProxy.Client.Shell;
 
 /// <summary>
@@ -86,6 +88,36 @@ public sealed class TabSet
 		if (Active == oldId)
 		{
 			Active = newId;
+		}
+	}
+
+	/// <summary>
+	/// The file tabs of a renamed file (or of the files in a renamed folder) take the new path; order and the active tab are kept. Stale tabs already at the new path
+	/// (or inside it) are closed first, so two tabs never share an id.
+	/// </summary>
+	public void FollowRename(string oldPath, string newPath, bool isFolder)
+	{
+		CloseDeleted(newPath, isFolder: true);
+		var indexes = Enumerable.Range(0, _open.Count).Where(i => IsFile(_open[i])).ToList();
+		var mapped = TabPaths.AfterRename(indexes.Select(i => PathOf(_open[i])!), oldPath, newPath, isFolder);
+		for (var n = 0; n < indexes.Count; n++)
+		{
+			var id = FileTab(mapped[n]);
+			if (Active == _open[indexes[n]])
+			{
+				Active = id;
+			}
+
+			_open[indexes[n]] = id;
+		}
+	}
+
+	/// <summary>Closes the file tabs of a deleted file (or of the files in a deleted folder).</summary>
+	public void CloseDeleted(string path, bool isFolder)
+	{
+		foreach (var closed in TabPaths.ToClose(_open.Where(IsFile).Select(id => PathOf(id)!).ToList(), path, isFolder))
+		{
+			Close(FileTab(closed));
 		}
 	}
 

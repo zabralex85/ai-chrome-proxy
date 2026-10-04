@@ -13,7 +13,11 @@ public sealed class BrowserHooks(IObjectContainer container)
 	private static IBrowser? _browser;
 
 	private readonly List<string> _violations = [];
+
 	private IBrowserContext? _context;
+
+	/// <summary>Where the server keeps the mirrors of this run.</summary>
+	public static string MirrorRoot => _server!.MirrorRoot;
 
 	[BeforeTestRun]
 	public static async Task StartAsync()

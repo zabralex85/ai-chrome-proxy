@@ -5,8 +5,9 @@ public static class FileTree
 {
 	/// <summary>Folders first, then files; each group sorted by name ignoring case.</summary>
 	/// <param name="paths">File paths, <c>/</c>-separated.</param>
-	public static IReadOnlyList<TreeNode> Build(IEnumerable<string> paths) =>
-		Build(paths.Select(p => (Tail: p, Path: p)).ToList(), string.Empty);
+	/// <param name="directories">Folder paths, so empty folders show too (folders with files appear anyway); null for none.</param>
+	public static IReadOnlyList<TreeNode> Build(IEnumerable<string> paths, IEnumerable<string>? directories = null) =>
+		Build([.. paths.Select(p => (Tail: p, Path: p, IsFolder: false)), .. (directories ?? []).Select(p => (Tail: p, Path: p, IsFolder: true))], string.Empty);
 
 	/// <summary>Depth-first rows; children only for folders in <paramref name="expanded"/> (folder paths).</summary>
 	public static IReadOnlyList<TreeRow> Rows(IReadOnlyList<TreeNode> roots, IReadOnlySet<string> expanded)
@@ -88,19 +89,32 @@ public static class FileTree
 		}
 	}
 
-	private static List<TreeNode> Build(List<(string Tail, string Path)> items, string prefix)
+	/// <summary>The row to activate once <paramref name="path"/> is deleted: the next row that is not inside it, else the one before it; null when none is left.</summary>
+	public static string? NeighbourAfterDelete(IReadOnlyList<TreeRow> rows, string path)
+	{
+		var index = rows.ToList().FindIndex(r => r.Node.Path == path);
+		if (index < 0)
+		{
+			return null;
+		}
+
+		var next = rows.Skip(index + 1).FirstOrDefault(r => !r.Node.Path.StartsWith(path + "/", StringComparison.Ordinal));
+		return (next ?? (index > 0 ? rows[index - 1] : null))?.Node.Path;
+	}
+
+	private static List<TreeNode> Build(List<(string Tail, string Path, bool IsFolder)> items, string prefix)
 	{
 		var folders = items
-			.Where(i => i.Tail.Contains('/'))
-			.GroupBy(i => i.Tail[..i.Tail.IndexOf('/')], StringComparer.Ordinal)
+			.Where(i => i.Tail.Contains('/') || i.IsFolder)
+			.GroupBy(i => i.Tail.Contains('/') ? i.Tail[..i.Tail.IndexOf('/')] : i.Tail, StringComparer.Ordinal)
 			.Select(g => new TreeNode(
 				g.Key,
 				prefix + g.Key,
 				true,
-				Build(g.Select(i => (i.Tail[(i.Tail.IndexOf('/') + 1)..], i.Path)).ToList(), prefix + g.Key + "/")))
+				Build(g.Where(i => i.Tail.Contains('/')).Select(i => (i.Tail[(i.Tail.IndexOf('/') + 1)..], i.Path, i.IsFolder)).ToList(), prefix + g.Key + "/")))
 			.OrderBy(n => n.Name, StringComparer.OrdinalIgnoreCase);
 		var files = items
-			.Where(i => !i.Tail.Contains('/'))
+			.Where(i => !i.Tail.Contains('/') && !i.IsFolder)
 			.Select(i => new TreeNode(i.Tail, i.Path, false, []))
 			.OrderBy(n => n.Name, StringComparer.OrdinalIgnoreCase);
 		return [.. folders, .. files];
