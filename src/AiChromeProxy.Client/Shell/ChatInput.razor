@@ -40,6 +40,10 @@
 
     public void Dispose() => _callback?.Dispose();
 
+    /// <summary>Puts the text cursor in the message box.</summary>
+    /// <returns>A task that completes when the box has the focus.</returns>
+    public ValueTask FocusAsync() => _box.FocusAsync();
+
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)

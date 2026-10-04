@@ -93,9 +93,9 @@
                 </span>
                 @if (saved.CanOpen)
                 {
-                    <button type="button" class="button link" data-testid="diagram-saved-open" @onclick="() => OnOpenFile.InvokeAsync(new FileLink(saved.Path, 1, null))">Open</button>
+                    <button type="button" class="button link" data-testid="diagram-saved-open" @ref="_noteOpen" @onclick="() => OnOpenFile.InvokeAsync(new FileLink(saved.Path, 1, null))">Open</button>
                 }
-                <button type="button" class="icon-button" data-testid="diagram-saved-dismiss" title="Dismiss" aria-label="Dismiss" @onclick="() => _saved = null">
+                <button type="button" class="icon-button" data-testid="diagram-saved-dismiss" title="Dismiss" aria-label="Dismiss" @ref="_noteDismiss" @onclick="DismissNoteAsync">
                     <Icon Name="close" Size="14" />
                 </button>
             </div>
@@ -118,6 +118,9 @@
     private bool? _folderOpenShown;
     private (DiagramFileKind Kind, string Source)? _saving;
     private (string Path, bool CanOpen, string? Note)? _saved;
+    private ElementReference _noteOpen;
+    private ElementReference _noteDismiss;
+    private bool _focusNote;
 
     [Parameter, EditorRequired]
     public ChatEngine Chat { get; set; } = null!;
@@ -129,6 +132,10 @@
     /// <summary>A folder is open: the diagrams' Save items are enabled.</summary>
     [Parameter]
     public bool FolderOpen { get; set; }
+
+    /// <summary>The "Saved to" note was dismissed: the page puts the focus back in the message box.</summary>
+    [Parameter]
+    public EventCallback OnNoteDismissed { get; set; }
 
     public void Dispose()
     {
@@ -164,8 +171,15 @@
 
         _saving = null;
         _saved = (path, kind != DiagramFileKind.Png, result.Note); // the file viewer shows text only
+        _focusNote = true; // the dialog goes away with the focus: it moves to the note's Open (or Dismiss)
         StateHasChanged(); // OnSave is a Func: close the dialog now
         return null;
+    }
+
+    private async Task DismissNoteAsync()
+    {
+        _saved = null;
+        await OnNoteDismissed.InvokeAsync();
     }
 
     /// <summary>A finished message is rendered once; the streaming one again on every change (the page coalesces those).</summary>
@@ -210,6 +224,12 @@
             {
                 _folderOpenShown = FolderOpen;
                 await View.SetFolderOpenAsync(FolderOpen);
+            }
+
+            if (_focusNote && _saved is { } saved)
+            {
+                _focusNote = false;
+                await (saved.CanOpen ? _noteOpen : _noteDismiss).FocusAsync();
             }
 
             await View.RenderDiagramsAsync(_log, _diagrams);

@@ -68,9 +68,9 @@ The approval tool is an MCP endpoint, `/mcp/approve`, reachable only from `127.0
 
 Each drawn diagram has a toolbar (shown on hover or focus, always on touch screens):
 
-- **Open** shows it over the whole window: zoom with the wheel (around the pointer), `+` / `-`, **Fit** (`0`) and **100%** (`1`), from 10 % to 800 %; pan by dragging or with the arrow keys; **Esc** closes.
-- **Save…** → **Source (.mmd)**, **SVG** or **PNG** writes a new file into the picked folder; it syncs to the mirror like any other file. The path defaults to `docs/diagrams/<name>.<ext>`: `<name>` is the diagram's `title` made file-safe, else its type and the local time (`class-diagram-20261004-1530`). Missing folders are created; an existing file is never overwritten ("'name' already exists here." — pick another name). The extension always matches the kind. The browser asks for write access the first time. A note "Saved to path" offers **Open** for `.mmd` and `.svg` files.
-- **Download…** → **SVG** or **PNG** downloads the picture with the same name, also without a picked folder.
+- **Open** shows it over the whole window: zoom with the wheel (around the pointer), `+` / `-`, **Fit** (`0`, never above 100 %) and **100%** (`1`), pinch with two fingers, from 10 % to 800 %; pan by dragging or with the arrow keys; **Esc** closes.
+- **Save…** → **Source (.mmd)**, **SVG** or **PNG** writes a new file into the picked folder; it syncs to the mirror like any other file. The path defaults to `docs/diagrams/<name>.<ext>`: `<name>` is the diagram's `title` made file-safe, else its type and the local time (`class-diagram-20261004-1530`). Missing folders are created; an existing file is never overwritten ("'name' already exists here." — pick another name). The extension always matches the kind. The browser asks for write access the first time. A note "Saved to path" offers **Open** for `.mmd` and `.svg` files and takes the focus; dismissing it returns the focus to the message box.
+- **Download…** → **SVG** or **PNG** downloads the picture with the same name, also without a picked folder. When a picture can't be made, "Could not create the picture: …" shows next to the menu for 8 s.
 
 Pictures are saved in the theme you see, with its background. PNG is drawn at twice the size (at most 8192 px on the longer side) and uses plain SVG text for labels, so HTML formatting inside labels is lost. A diagram that failed to draw offers only its source.
 
