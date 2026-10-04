@@ -25,7 +25,7 @@ One public page, hosted on Cloudflare, that runs the checks the app depends on, 
 
 ## Known limitations
 
-Policies the page cannot see (download blocks, clipboard, proxy rules for the user's own subdomain) are not checked. No rate limit in the Worker; a Cloudflare rate-limiting rule on `/api/report` is recommended in the deploy doc.
+Policies the page cannot see (download blocks, clipboard, proxy rules for the user's own subdomain) are not checked. `/api/report` is limited per IP by the Workers rate limiting binding (10 per minute, approximate, per location); the IP is the limiter key only and is not stored.
 
 ## Done when
 
