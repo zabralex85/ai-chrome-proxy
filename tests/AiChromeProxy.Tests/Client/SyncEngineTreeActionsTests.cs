@@ -1,5 +1,6 @@
 using AiChromeProxy.Client.Sync;
 using AiChromeProxy.Domain.Sync;
+using Microsoft.Extensions.Time.Testing;
 using Microsoft.JSInterop;
 
 namespace AiChromeProxy.Tests.Client;
@@ -534,6 +535,109 @@ public sealed class SyncEngineTreeActionsTests : IDisposable
 
 			await cts.CancelAsync();
 			await run;
+		}
+	}
+
+	[Fact]
+	public async Task Action_CycleHeldTooLong_RefusedAsBusy_NothingChanged()
+	{
+		var clock = new FakeTimeProvider();
+		var engine = new SyncEngine(_server.Transport, _folder, clock);
+		_folder.Write("a.txt", "a");
+		_folder.Write("keep.txt", "k");
+		await engine.InitializeAsync();
+		await engine.OpenFolderAsync();
+		await engine.SyncOnceAsync(Ct);
+		_folder.WriteAccess = true;
+		var gate = new TaskCompletionSource();
+		_folder.ScanGate = gate.Task;
+		var cycle = engine.SyncOnceAsync(Ct);
+
+		var rename = engine.RenameAsync("a.txt", "b.txt");
+		await Task.Delay(100, Ct);
+		Assert.False(rename.IsCompleted);
+		clock.Advance(TimeSpan.FromSeconds(16));
+
+		Assert.Equal(new TreeActionResult(false, "Sync is busy; try again in a moment."), await rename);
+		Assert.True(_folder.Files.ContainsKey("a.txt"));
+		gate.SetResult();
+		await cycle;
+	}
+
+	[Fact]
+	public async Task Action_FolderChangesWhileWaiting_Refused_NothingChanged()
+	{
+		_folder.Write("a.txt", "a");
+		_folder.Write("keep.txt", "k");
+		await SyncedAsync();
+		_folder.WriteAccess = true;
+		var gate = new TaskCompletionSource();
+		_folder.ScanGate = gate.Task;
+		var cycle = _engine.SyncOnceAsync(Ct);
+
+		var rename = _engine.RenameAsync("a.txt", "b.txt");
+		_folder.PickResult = "Other";
+		await _engine.OpenFolderAsync();
+		gate.SetResult();
+		await cycle;
+
+		Assert.Equal(new TreeActionResult(false, "Another folder was picked; nothing was changed."), await rename);
+		Assert.True(_folder.Files.ContainsKey("a.txt"));
+		Assert.False(_folder.Files.ContainsKey("b.txt"));
+	}
+
+	[Fact]
+	public async Task Action_Waiting_LoopStartsNoNewCycle_ActionGetsTheGuardNext()
+	{
+		_folder.Write("a.txt", "a");
+		_folder.Write("keep.txt", "k");
+		await SyncedAsync();
+		_folder.WriteAccess = true;
+		var gate = new TaskCompletionSource();
+		_folder.ScanGate = gate.Task;
+		var cycle = _engine.SyncOnceAsync(Ct);
+		var rename = _engine.RenameAsync("a.txt", "b.txt");
+		await Task.Delay(100, Ct);
+		gate.SetResult();
+		await cycle;
+		var scans = _folder.Scans;
+
+		await _engine.SyncOnceAsync(Ct);
+
+		Assert.Equal(scans, _folder.Scans);
+		Assert.True((await rename).Ok);
+	}
+
+	[Fact]
+	public async Task Action_UnderConstantPushes_StillGetsTheGuard()
+	{
+		_folder.Write("a.txt", "a");
+		_folder.Write("keep.txt", "k");
+		await SyncedAsync();
+		_folder.WriteAccess = true;
+		using (var cts = CancellationTokenSource.CreateLinkedTokenSource(Ct))
+		{
+			var run = Task.Run(() => _engine.RunAsync(cts.Token), Ct);
+			var pushes = Task.Run(
+				async () =>
+				{
+					for (var i = 0; !cts.IsCancellationRequested; i++)
+					{
+						await EditMirrorAsync($"p{i % 5}.txt", $"v{i}");
+						await Task.Delay(1, CancellationToken.None);
+					}
+				},
+				Ct);
+			await WaitUntilAsync(() => _folder.Scans > 3);
+
+			var started = DateTime.UtcNow;
+			var result = await _engine.RenameAsync("a.txt", "b.txt");
+
+			Assert.True(result.Ok, result.Error);
+			Assert.True(DateTime.UtcNow - started < TimeSpan.FromSeconds(5));
+			await cts.CancelAsync();
+			await run;
+			await pushes;
 		}
 	}
 

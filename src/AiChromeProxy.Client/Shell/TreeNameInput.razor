@@ -5,9 +5,13 @@
     <div class="tree-row tree-row-input" style="padding-left: @(8 + (Depth * 14))px">
         <span class="chevron"></span>
         <Icon Name="@Icon" Class="@IconClass" />
-        <input @ref="_input" class="tree-input" data-testid="tree-input" type="text" autocomplete="off" spellcheck="false" aria-label="@Label"
-               aria-invalid="@(_error is null ? null : "true")" aria-describedby="@(_error is null ? null : "tree-input-error")"
+        <input @ref="_input" class="tree-input @(_busy ? "tree-input-busy" : null)" data-testid="tree-input" type="text" autocomplete="off" spellcheck="false" aria-label="@Label"
+               aria-busy="@(_busy ? "true" : null)" readonly="@_busy" aria-invalid="@(_error is null ? null : "true")" aria-describedby="@(_error is null ? null : "tree-input-error")"
                @bind="_value" @bind:event="oninput" @onkeydown="OnKeyDownAsync" @onkeydown:stopPropagation @onblur="OnBlurAsync" @onclick:stopPropagation />
+        @if (_busy)
+        {
+            <span class="tree-working" role="status">Working…</span>
+        }
     </div>
     @if (_error is not null)
     {

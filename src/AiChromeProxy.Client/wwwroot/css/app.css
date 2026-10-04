@@ -1801,6 +1801,30 @@ h1:focus-visible {
     outline: none;
 }
 
+.tree-input-busy {
+    opacity: 0.6;
+    cursor: progress;
+}
+
+.tree-working {
+    margin-left: 6px;
+    color: var(--fg-muted, inherit);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.tree-input-busy {
+    opacity: 0.6;
+    cursor: progress;
+}
+
+.tree-working {
+    margin-left: 6px;
+    color: var(--fg-muted, inherit);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
 .tree-input[aria-invalid="true"] {
     border-color: var(--error);
 }

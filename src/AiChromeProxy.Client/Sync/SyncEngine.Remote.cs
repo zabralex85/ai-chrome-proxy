@@ -496,18 +496,27 @@ public sealed partial class SyncEngine
 	private async Task<bool> EnterCycleAsync(TimeSpan limit)
 	{
 		// ponytail: polls a running cycle every 50 ms; a cycle is short and the click is rare.
+		// While one waits, the loop starts no new cycle (SyncOnceAsync), so constant pushes cannot starve it.
 		var started = time.GetTimestamp();
-		while (Interlocked.Exchange(ref _cycleRunning, 1) == 1)
+		Interlocked.Increment(ref _waitingActions);
+		try
 		{
-			if (time.GetElapsedTime(started) >= limit)
+			while (Interlocked.Exchange(ref _cycleRunning, 1) == 1)
 			{
-				return false;
+				if (time.GetElapsedTime(started) >= limit)
+				{
+					return false;
+				}
+
+				await Task.Delay(50);
 			}
 
-			await Task.Delay(50);
+			return true;
 		}
-
-		return true;
+		finally
+		{
+			Interlocked.Decrement(ref _waitingActions);
+		}
 	}
 
 	/// <summary>

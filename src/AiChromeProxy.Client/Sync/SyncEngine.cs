@@ -104,6 +104,9 @@ public sealed partial class SyncEngine(ITransport transport, IFolderAccess folde
 	/// <summary>Bumped by every folder change: a cycle started for an earlier folder stops at its next check and writes nothing.</summary>
 	private int _generation;
 	private int _cycleRunning;
+
+	/// <summary>Tree actions and server-change buttons waiting for the cycle guard: no new cycle starts meanwhile, so that they get it next.</summary>
+	private int _waitingActions;
 	private long _lastRaise;
 	private long _fullManifestAt;
 	private string? _repo;
@@ -325,11 +328,11 @@ public sealed partial class SyncEngine(ITransport transport, IFolderAccess folde
 
 	/// <summary>
 	/// One cycle: open the session (when there is none) or apply the server's changes, scan, tell the server (full manifest or delta),
-	/// upload what it needs. Returns at once while another cycle runs, while <see cref="Blocked"/> or in a browser that cannot open folders. Never throws except on cancellation.
+	/// upload what it needs. Returns at once while another cycle runs or an action waits for the guard (its end wakes the loop), while <see cref="Blocked"/> or in a browser that cannot open folders. Never throws except on cancellation.
 	/// </summary>
 	public async Task SyncOnceAsync(CancellationToken ct)
 	{
-		if (Blocked || Folder == FolderStatus.Unsupported || Interlocked.Exchange(ref _cycleRunning, 1) == 1)
+		if (Blocked || Folder == FolderStatus.Unsupported || Volatile.Read(ref _waitingActions) > 0 || Interlocked.Exchange(ref _cycleRunning, 1) == 1)
 		{
 			return;
 		}
