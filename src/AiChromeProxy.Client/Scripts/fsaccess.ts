@@ -523,7 +523,8 @@ export async function rename(path: string, newName: string): Promise<void> {
         return;
     }
     if (name.toLowerCase() !== newName.toLowerCase()) {
-        // ponytail: check-then-move is not atomic; another process creating newName in between wins or fails move(). No lock exists in the API.
+        // ponytail: check-then-move is not atomic: Chromium's move() replaces an existing target, so a name another process creates between the check and the move is lost
+        // (the copy path has the same check-then-create race). No lock exists in the API; a rename racing an outside writer in the same folder is not guarded.
         if (await entryKind(dir, newName) !== null) {
             throw new Error(`'${newName}' already exists here.`);
         }
@@ -535,9 +536,11 @@ export async function rename(path: string, newName: string): Promise<void> {
         throw new Error(`'${temp}' already exists here.`);
     }
     await moveEntry(dir, kind, name, temp);
+    let taken = false;
     try {
         // on a case-sensitive file system another entry can hold exactly newName: moving over it must not happen
         if (await entryKind(dir, newName) !== null) {
+            taken = true;
             throw new Error(`'${newName}' already exists here.`);
         }
         await moveEntry(dir, kind, temp, newName);
@@ -545,7 +548,10 @@ export async function rename(path: string, newName: string): Promise<void> {
         try {
             await moveEntry(dir, kind, temp, name);
         } catch {
-            throw new Error(`${e instanceof Error ? e.message : String(e)} '${name}' is left as '${temp}'.`);
+            const left = `'${name}' is left as '${temp}'`;
+            throw new Error(taken
+                ? `Both '${newName}' and '${temp}' exist; ${left}.`
+                : `${e instanceof Error ? e.message : String(e)} ${left}.`);
         }
         throw e;
     }

@@ -5,6 +5,9 @@ public sealed record DeleteDialog(string Title, string Body)
 {
 	public const string Warning = "This cannot be undone. The server's copy is deleted at the next sync.";
 
+	/// <summary>The question for a folder whose files could not be counted.</summary>
+	public static DeleteDialog ForUncounted(string path) => new($"Delete the folder `{path}` and everything in it?", Warning);
+
 	/// <param name="path">Path of the item.</param>
 	/// <param name="isFolder">Whether it is a folder.</param>
 	/// <param name="fileCount">Files inside a folder (every file, excluded ones too); ignored for a file.</param>

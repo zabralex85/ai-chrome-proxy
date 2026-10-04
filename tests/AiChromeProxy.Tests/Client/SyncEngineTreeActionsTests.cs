@@ -207,6 +207,29 @@ public sealed class SyncEngineTreeActionsTests : IDisposable
 	}
 
 	[Fact]
+	public async Task HasServerChange_TrueForAWaitingFileAndItsFolder_FalseElsewhere()
+	{
+		_folder.Write("keep.txt", "k");
+		await SyncedAsync();
+		await EditMirrorAsync("docs/new.txt", "from the server");
+
+		Assert.True(_engine.HasServerChange("docs/new.txt"));
+		Assert.True(_engine.HasServerChange("docs"));
+		Assert.False(_engine.HasServerChange("keep.txt"));
+		Assert.False(_engine.HasServerChange("doc"));
+	}
+
+	[Theory]
+	[InlineData(true)]
+	[InlineData(false)]
+	public async Task CanRenameFolders_FollowsTheBrowser(bool supported)
+	{
+		_folder.FolderMove = supported;
+
+		Assert.Equal(supported, await _engine.CanRenameFoldersAsync());
+	}
+
+	[Fact]
 	public async Task Create_WhereARemoteChangeWaits_RefusedByTheRemoteCheck()
 	{
 		_folder.Write("keep.txt", "k");

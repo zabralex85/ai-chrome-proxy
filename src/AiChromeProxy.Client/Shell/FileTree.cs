@@ -89,6 +89,19 @@ public static class FileTree
 		}
 	}
 
+	/// <summary>The row to activate once <paramref name="path"/> is deleted: the next row that is not inside it, else the one before it; null when none is left.</summary>
+	public static string? NeighbourAfterDelete(IReadOnlyList<TreeRow> rows, string path)
+	{
+		var index = rows.ToList().FindIndex(r => r.Node.Path == path);
+		if (index < 0)
+		{
+			return null;
+		}
+
+		var next = rows.Skip(index + 1).FirstOrDefault(r => !r.Node.Path.StartsWith(path + "/", StringComparison.Ordinal));
+		return (next ?? (index > 0 ? rows[index - 1] : null))?.Node.Path;
+	}
+
 	private static List<TreeNode> Build(List<(string Tail, string Path, bool IsFolder)> items, string prefix)
 	{
 		var folders = items

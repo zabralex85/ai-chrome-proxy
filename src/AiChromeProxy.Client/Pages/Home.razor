@@ -24,7 +24,7 @@
             FilesAttention="@(_filesOpen ? null : Format.Attention(Engine.Folder, Engine.ErrorCount))"
             HistoryOpen="@_historyOpen" OnToggleHistory="() => _historyOpen = !_historyOpen" />
     @* Collapsed panels stay rendered (hidden by CSS) so the tree keeps its expanded folders and active row. *@
-    <Explorer Engine="Engine" Collapsed="@(!_filesOpen)" Selected="@TabSet.SelectedPath(_tabs.Active)" OnSelect="OpenFile"
+    <Explorer Engine="Engine" Collapsed="@(!_filesOpen)" Selected="@TabSet.SelectedPath(_tabs.Active)" OnSelect="OpenFile" OnRenamed="TreeRenamed" OnDeleted="TreeDeleted"
               OnShowErrors="() => _tabs.Show(TabSet.Errors)" OnShowConflict="ShowFirstConflict" />
     @if (_filesOpen)
     {
@@ -192,6 +192,12 @@
         _link = null; // a pending link never outlives the click that made it
         _tabs.Show(ConflictedPaths().Contains(path) ? TabSet.ConflictTab(path) : TabSet.FileTab(path));
     }
+
+    /// <summary>A rename in the tree: the tabs of the file (or of the files in the folder) follow it, the viewer re-opens on the new path.</summary>
+    private void TreeRenamed((string OldPath, string NewPath, bool IsFolder) renamed) => _tabs.FollowRename(renamed.OldPath, renamed.NewPath, renamed.IsFolder);
+
+    /// <summary>A delete in the tree closes the tabs of the deleted files.</summary>
+    private void TreeDeleted((string Path, bool IsFolder) deleted) => _tabs.CloseDeleted(deleted.Path, deleted.IsFolder);
 
     /// <summary>A chat link opens the file's tab; its viewer reveals the line or symbol.</summary>
     private void OpenLink(FileLink link)

@@ -1,54 +1,98 @@
 @using AiChromeProxy.Client.Sync
+@using AiChromeProxy.Client.Tree
+@inject IJSRuntime JS
 
 @* Roving tabindex: the active row is the tree's one Tab stop and gets DOM focus on keyboard moves (the browser scrolls it into view).
    ponytail: every visible row is rendered; switch to <Virtualize> if expanded folders with thousands of files feel slow. *@
 @{
     var tabStop = FileTree.TabStop(_rows, _active);
 }
-<div class="tree" role="tree" aria-label="Files" data-testid="tree" @onkeydown="OnKeyDownAsync">
+<div class="tree" role="tree" aria-label="Files" data-testid="tree" @onkeydown="OnKeyDownAsync" @oncontextmenu="e => OpenMenuAsync(null, e)" @oncontextmenu:preventDefault="true">
+    @if (_edit is { Kind: EditKind.NewFile or EditKind.NewFolder, Folder.Length: 0 })
+    {
+        @NewItemInput(_edit, 0)
+    }
     @foreach (var row in _rows)
     {
         var node = row.Node;
         var depth = row.Depth;
-        @* Keyed by path: a row keeps its element (and so its captured reference) when rows above it appear or vanish. *@
-        <div @key="node.Path" @ref="_rowElements[node.Path]" role="treeitem" tabindex="@(node.Path == tabStop ? 0 : -1)"
-             aria-level="@(depth + 1)" aria-expanded="@ExpandedAttribute(node)" aria-selected="@(node.Path == Selected ? "true" : "false")"
-             class="tree-row @(node.Path == Selected ? "selected" : null)"
-             style="padding-left: @(8 + (depth * 14))px" title="@node.Path" @onclick="() => ClickAsync(node)">
-            @if (node.IsFolder)
-            {
-                var open = _expanded.Contains(node.Path);
-                <Icon Name="@(open ? "chevron-down" : "chevron-right")" Class="chevron" />
-                <Icon Name="@(open ? "folder-open" : "folder")" Class="kind-folder" />
-                <span class="tree-name">@node.Name</span>
-            }
-            else
-            {
-                var kind = Format.FileKind(node.Name);
-                <span class="chevron"></span>
-                <Icon Name="@("file-" + kind)" Class="@("kind-" + kind)" />
-                <span class="tree-name">@node.Name</span>
-                @if (Conflicted(node.Path))
+        @if (_edit is { Kind: EditKind.Rename } && _edit.Path == node.Path)
+        {
+            var kind = node.IsFolder ? null : Format.FileKind(node.Name);
+            <TreeNameInput @key="@("edit:" + node.Path)" Depth="depth" Label="@("New name of " + node.Name)" Value="@node.Name" Icon="@(node.IsFolder ? "folder" : "file-" + kind)"
+                           IconClass="@(node.IsFolder ? "kind-folder" : "kind-" + kind)" SelectedLength="@StemLength(node)" OnCommit="CommitAsync" OnCancel="CancelEditAsync" />
+        }
+        else
+        {
+            @* Keyed by path: a row keeps its element (and so its captured reference) when rows above it appear or vanish. *@
+            <div @key="node.Path" @ref="_rowElements[node.Path]" role="treeitem" tabindex="@(node.Path == tabStop ? 0 : -1)"
+                 aria-level="@(depth + 1)" aria-expanded="@ExpandedAttribute(node)" aria-selected="@(node.Path == Selected ? "true" : "false")"
+                 class="tree-row @(node.Path == Selected ? "selected" : null)"
+                 style="padding-left: @(8 + (depth * 14))px" title="@node.Path" @onclick="() => ClickAsync(node)" @onfocus="() => _active = node.Path"
+                 @oncontextmenu="e => OpenMenuAsync(node, e)" @oncontextmenu:stopPropagation="true" @oncontextmenu:preventDefault="true">
+                @if (node.IsFolder)
                 {
-                    <span class="badge badge-conflict" title="Conflict: changed here and on the server" aria-label="Conflict: changed here and on the server"><Icon Name="conflict" Size="12" /></span>
+                    var open = _expanded.Contains(node.Path);
+                    <Icon Name="@(open ? "chevron-down" : "chevron-right")" Class="chevron" />
+                    <Icon Name="@(open ? "folder-open" : "folder")" Class="kind-folder" />
+                    <span class="tree-name">@node.Name</span>
                 }
-                else if (Engine.FileAt(node.Path) is { } file)
+                else
                 {
-                    <span class="badge badge-@file.State.ToString().ToLowerInvariant()" title="@BadgeTitle(file)" aria-label="@BadgeTitle(file)">@BadgeText(file.State)</span>
+                    var kind = Format.FileKind(node.Name);
+                    <span class="chevron"></span>
+                    <Icon Name="@("file-" + kind)" Class="@("kind-" + kind)" />
+                    <span class="tree-name">@node.Name</span>
+                    @if (Conflicted(node.Path))
+                    {
+                        <span class="badge badge-conflict" title="Conflict: changed here and on the server" aria-label="Conflict: changed here and on the server"><Icon Name="conflict" Size="12" /></span>
+                    }
+                    else if (Engine.FileAt(node.Path) is { } file)
+                    {
+                        <span class="badge badge-@file.State.ToString().ToLowerInvariant()" title="@BadgeTitle(file)" aria-label="@BadgeTitle(file)">@BadgeText(file.State)</span>
+                    }
                 }
-            }
-        </div>
+            </div>
+        }
+        @if (_edit is { Kind: EditKind.NewFile or EditKind.NewFolder } && _edit.Folder == node.Path)
+        {
+            @NewItemInput(_edit, depth + 1)
+        }
     }
 </div>
+@if (_note is not null)
+{
+    <div class="tree-note" role="status" data-testid="tree-note">@_note</div>
+}
+@if (_menu is { } menu)
+{
+    <TreeContextMenu Items="menu.Items" X="menu.X" Y="menu.Y" OnPick="PickAsync" OnClose="CloseMenuAsync" />
+}
+@if (_delete is { } ask)
+{
+    <ConfirmDialog Title="@ask.Text.Title" Body="@ask.Text.Body" Error="@ask.Error" OnConfirm="ConfirmDeleteAsync" OnCancel="CancelDeleteAsync" />
+}
 
 @code {
     private readonly HashSet<string> _expanded = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ElementReference> _rowElements = new(StringComparer.Ordinal);
     private IReadOnlyList<SyncFile>? _files;
+    private IReadOnlyList<string> _directories = [];
     private IReadOnlyList<TreeNode> _roots = [];
     private IReadOnlyList<TreeRow> _rows = [];
     private string? _active;
     private bool _focusActive;
+    private Edit? _edit;
+    private MenuAt? _menu;
+    private DeleteAsk? _delete;
+    private string? _note;
+
+    private enum EditKind
+    {
+        NewFile,
+        NewFolder,
+        Rename,
+    }
 
     [Parameter, EditorRequired]
     public SyncEngine Engine { get; set; } = null!;
@@ -59,13 +103,22 @@
     [Parameter]
     public EventCallback<string> OnSelect { get; set; }
 
+    /// <summary>A file or folder was renamed here: open tabs follow.</summary>
+    [Parameter]
+    public EventCallback<(string OldPath, string NewPath, bool IsFolder)> OnRenamed { get; set; }
+
+    /// <summary>A file or folder was deleted here: its tabs close.</summary>
+    [Parameter]
+    public EventCallback<(string Path, bool IsFolder)> OnDeleted { get; set; }
+
     protected override void OnParametersSet()
     {
-        // The engine hands out a new list only when the set of files changed: rebuild the tree then, not on every progress tick.
-        if (!ReferenceEquals(Engine.Files, _files))
+        // The engine hands out a new list only when the set of files (or folders) changed: rebuild the tree then, not on every progress tick.
+        if (!ReferenceEquals(Engine.Files, _files) || !ReferenceEquals(Engine.Directories, _directories))
         {
             _files = Engine.Files;
-            _roots = FileTree.Build(Engine.Files.Select(f => f.Path));
+            _directories = Engine.Directories;
+            _roots = FileTree.Build(Engine.Files.Select(f => f.Path), Engine.Directories);
         }
 
         _rows = FileTree.Rows(_roots, _expanded);
@@ -73,10 +126,18 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (_focusActive && _active is not null && _rowElements.TryGetValue(_active, out var row))
+        var target = _active ?? FileTree.TabStop(_rows, _active);
+        if (_focusActive && target is not null && _rowElements.TryGetValue(target, out var row))
         {
             _focusActive = false;
-            await row.FocusAsync();
+            try
+            {
+                await row.FocusAsync();
+            }
+            catch (JSException)
+            {
+                // The row is gone (deleted or renamed); the next scan brings the tree back.
+            }
         }
     }
 
@@ -96,9 +157,22 @@
         _ => $"Error: {file.Error}",
     };
 
+    private static string Join(string folder, string name) => folder.Length == 0 ? name : folder + "/" + name;
+
+    private static string ParentOf(string path) => path.Contains('/') ? path[..path.LastIndexOf('/')] : string.Empty;
+
+    /// <summary>How much of a file's name is selected when renaming: up to its last dot (the extension stays out); null selects it all.</summary>
+    private static int? StemLength(TreeNode node) => !node.IsFolder && node.Name.LastIndexOf('.') is > 0 and var dot ? dot : null;
+
     private bool Conflicted(string path) => Engine.Remote.Any(r => r.Status == RemoteStatus.Conflict && r.Change.Path == path);
 
     private string? ExpandedAttribute(TreeNode node) => node.IsFolder ? (_expanded.Contains(node.Path) ? "true" : "false") : null;
+
+    private TreeNode? NodeAt(string? path) => path is null ? null : _rows.FirstOrDefault(r => r.Node.Path == path)?.Node;
+
+    private RenderFragment NewItemInput(Edit edit, int depth) => @<TreeNameInput @key="@("edit:new")" Depth="depth" Label="@(edit.Kind == EditKind.NewFile ? "New file name" : "New folder name")"
+                                                                       Icon="@(edit.Kind == EditKind.NewFile ? "file-code" : "folder")" IconClass="@(edit.Kind == EditKind.NewFile ? "kind-file" : "kind-folder")"
+                                                                       OnCommit="CommitAsync" OnCancel="CancelEditAsync" />;
 
     private async Task ClickAsync(TreeNode node)
     {
@@ -119,6 +193,13 @@
 
     private async Task OnKeyDownAsync(KeyboardEventArgs e)
     {
+        var action = TreeMenu.KeyAction(e.Key, e.ShiftKey);
+        if (action != TreeKeyAction.None)
+        {
+            await RunKeyActionAsync(action);
+            return;
+        }
+
         var (active, open) = FileTree.OnKey(e.Key, _rows, _active, _expanded);
         // Only moves take focus: refocusing on Tab would pull focus back from where the browser just moved it.
         _focusActive = e.Key is "ArrowUp" or "ArrowDown" or "Home" or "End" or "ArrowLeft" or "ArrowRight";
@@ -130,4 +211,249 @@
             await OnSelect.InvokeAsync(open);
         }
     }
+
+    /// <summary>Shift+F10 / Menu, F2 and Delete act on the focused row.</summary>
+    private async Task RunKeyActionAsync(TreeKeyAction action)
+    {
+        var node = NodeAt(_active ?? FileTree.TabStop(_rows, _active));
+        if (node is null)
+        {
+            return;
+        }
+
+        _active = node.Path;
+        switch (action)
+        {
+            case TreeKeyAction.OpenMenu:
+                var (x, y) = (40, 40);
+                try
+                {
+                    var rect = await JS.InvokeAsync<Rect>("Element.prototype.getBoundingClientRect.call", _rowElements[node.Path]);
+                    (x, y) = ((int)rect.Left + 24, (int)rect.Bottom);
+                }
+                catch (Exception ex) when (ex is JSException or KeyNotFoundException)
+                {
+                    // Near the top left of the tree.
+                }
+
+                var (px, py) = TreeMenu.Place(x, y, await ViewportAsync("innerWidth"), await ViewportAsync("innerHeight"));
+                await ShowMenuAsync(node, px, py);
+                break;
+            case TreeKeyAction.Rename:
+                await StartRenameAsync(node);
+                break;
+            case TreeKeyAction.Delete:
+                await StartDeleteAsync(node);
+                break;
+        }
+    }
+
+    private async Task<int> ViewportAsync(string property)
+    {
+        try
+        {
+            return (int)await JS.GetValueAsync<double>("window." + property);
+        }
+        catch (JSException)
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>Right-click (or the context-menu gesture): a row, or null for the empty part of the tree.</summary>
+    private async Task OpenMenuAsync(TreeNode? node, MouseEventArgs e)
+    {
+        // The keyboard has opened it already (Shift+F10 also raises this event, without a right button).
+        if (e.Button != 2 && _menu is not null)
+        {
+            return;
+        }
+
+        var (x, y) = TreeMenu.Place(e.ClientX, e.ClientY, await ViewportAsync("innerWidth"), await ViewportAsync("innerHeight"));
+        await ShowMenuAsync(node, x, y);
+    }
+
+    private async Task ShowMenuAsync(TreeNode? node, int x, int y)
+    {
+        _note = null;
+        if (node is not null)
+        {
+            _active = node.Path;
+        }
+
+        var canRenameFolders = node is { IsFolder: true } && await Engine.CanRenameFoldersAsync();
+        var pending = node is not null && Engine.HasServerChange(node.Path);
+        _menu = new MenuAt(node?.Path, node?.IsFolder ?? false, TreeMenu.Items(node?.Path, node?.IsFolder ?? false, canRenameFolders, pending), x, y);
+    }
+
+    private Task CloseMenuAsync()
+    {
+        _menu = null;
+        _focusActive = true;
+        return Task.CompletedTask;
+    }
+
+    private async Task PickAsync(string id)
+    {
+        var menu = _menu!;
+        _menu = null;
+        var node = NodeAt(menu.Path);
+        switch (id)
+        {
+            case TreeMenu.NewFile or TreeMenu.NewFolder:
+                var folder = TreeTargets.NewItemFolder(menu.Path, menu.IsFolder);
+                if (folder.Length > 0)
+                {
+                    _expanded.Add(folder);
+                    _rows = FileTree.Rows(_roots, _expanded);
+                }
+
+                _edit = new Edit(id == TreeMenu.NewFile ? EditKind.NewFile : EditKind.NewFolder, folder, string.Empty, false);
+                break;
+            case TreeMenu.Rename when node is not null:
+                await StartRenameAsync(node);
+                break;
+            case TreeMenu.Delete when node is not null:
+                await StartDeleteAsync(node);
+                break;
+        }
+    }
+
+    private async Task StartRenameAsync(TreeNode node)
+    {
+        _note = null;
+        var state = TreeTargets.CanRename(node.Path, node.IsFolder, !node.IsFolder || await Engine.CanRenameFoldersAsync(), Engine.HasServerChange(node.Path));
+        if (!state.Enabled)
+        {
+            _note = state.Reason;
+            return;
+        }
+
+        _edit = new Edit(EditKind.Rename, ParentOf(node.Path), node.Path, node.IsFolder);
+    }
+
+    private async Task StartDeleteAsync(TreeNode node)
+    {
+        _note = null;
+        var state = TreeTargets.CanDelete(node.Path, Engine.HasServerChange(node.Path));
+        if (!state.Enabled)
+        {
+            _note = state.Reason;
+            return;
+        }
+
+        var text = DeleteDialog.For(node.Path, false, 0);
+        if (node.IsFolder)
+        {
+            text = await Engine.CountFilesAsync(node.Path) is { } count
+                ? DeleteDialog.For(node.Path, true, count.Count, count.Truncated)
+                : DeleteDialog.ForUncounted(node.Path);
+        }
+
+        _delete = new DeleteAsk(node.Path, node.IsFolder, text, null);
+    }
+
+    private Task CancelDeleteAsync()
+    {
+        _delete = null;
+        _focusActive = true;
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Straight from the Delete button's click, so the write-access prompt (when needed) has its user activation.</summary>
+    private async Task ConfirmDeleteAsync()
+    {
+        var ask = _delete!;
+        var neighbour = FileTree.NeighbourAfterDelete(_rows, ask.Path);
+        var result = await Engine.DeleteAsync(ask.Path, ask.IsFolder);
+        if (!result.Ok)
+        {
+            _delete = ask with { Error = result.Error };
+            return;
+        }
+
+        _delete = null;
+        _note = result.Note;
+        _rowElements.Remove(ask.Path);
+        _active = neighbour;
+        _focusActive = true;
+        await OnDeleted.InvokeAsync((ask.Path, ask.IsFolder));
+    }
+
+    private Task CancelEditAsync()
+    {
+        _edit = null;
+        _focusActive = true;
+        return Task.CompletedTask;
+    }
+
+    /// <summary>The name was entered: the engine checks it and acts (straight from the key press, so the write-access prompt has its user activation).</summary>
+    /// <returns>Why the name was refused (the input stays), or null.</returns>
+    private async Task<string?> CommitAsync(string name)
+    {
+        var edit = _edit!;
+        if (edit.Kind == EditKind.Rename)
+        {
+            return await CommitRenameAsync(edit, name);
+        }
+
+        var result = edit.Kind == EditKind.NewFile ? await Engine.CreateFileAsync(edit.Folder, name) : await Engine.CreateFolderAsync(edit.Folder, name);
+        if (!result.Ok)
+        {
+            return result.Error;
+        }
+
+        var path = Join(edit.Folder, name);
+        _edit = null;
+        _note = result.Note;
+        _active = path;
+        _focusActive = true;
+        if (edit.Kind == EditKind.NewFile)
+        {
+            await OnSelect.InvokeAsync(path);
+        }
+
+        return null;
+    }
+
+    private async Task<string?> CommitRenameAsync(Edit edit, string name)
+    {
+        if (name == edit.Path[(edit.Path.LastIndexOf('/') + 1)..])
+        {
+            await CancelEditAsync();
+            return null;
+        }
+
+        var result = await Engine.RenameAsync(edit.Path, name);
+        if (!result.Ok)
+        {
+            return result.Error;
+        }
+
+        var newPath = Join(edit.Folder, name);
+        _edit = null;
+        _note = result.Note;
+        _rowElements.Remove(edit.Path);
+        if (edit.IsFolder)
+        {
+            var moved = TabPaths.AfterRename([.. _expanded], edit.Path, newPath, true);
+            _expanded.Clear();
+            _expanded.UnionWith(moved);
+        }
+
+        _active = newPath;
+        _focusActive = true;
+        await OnRenamed.InvokeAsync((edit.Path, newPath, edit.IsFolder));
+        return null;
+    }
+
+    /// <summary>A name being typed in the tree: a new item in <paramref name="Folder"/>, or the new name of <paramref name="Path"/>.</summary>
+    private sealed record Edit(EditKind Kind, string Folder, string Path, bool IsFolder);
+
+    private sealed record MenuAt(string? Path, bool IsFolder, IReadOnlyList<TreeMenuItem> Items, int X, int Y);
+
+    private sealed record DeleteAsk(string Path, bool IsFolder, DeleteDialog Text, string? Error);
+
+    /// <summary>The bits of a DOMRect the menu needs.</summary>
+    private sealed record Rect(double Left, double Bottom);
 }

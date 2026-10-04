@@ -1,0 +1,124 @@
+@inject IJSRuntime JS
+
+@* A name typed in place, in a tree row (VS Code style): Enter commits, Esc cancels, leaving the input commits. A name that is refused stays here with its reason under it. *@
+<div class="tree-input-item" role="treeitem" aria-level="@(Depth + 1)" aria-selected="false" aria-label="@Label">
+    <div class="tree-row tree-row-input" style="padding-left: @(8 + (Depth * 14))px">
+        <span class="chevron"></span>
+        <Icon Name="@Icon" Class="@IconClass" />
+        <input @ref="_input" class="tree-input" data-testid="tree-input" type="text" autocomplete="off" spellcheck="false" aria-label="@Label"
+               aria-invalid="@(_error is null ? null : "true")" aria-describedby="@(_error is null ? null : "tree-input-error")"
+               @bind="_value" @bind:event="oninput" @onkeydown="OnKeyDownAsync" @onkeydown:stopPropagation @onblur="OnBlurAsync" @onclick:stopPropagation />
+    </div>
+    @if (_error is not null)
+    {
+        <div id="tree-input-error" class="tree-input-error" role="alert" data-testid="tree-error" style="padding-left: @(8 + ((Depth + 1) * 14) + 6)px">@_error</div>
+    }
+</div>
+
+@code {
+    private ElementReference _input;
+    private string _value = string.Empty;
+    private string? _error;
+    private bool _busy;
+    private bool _done;
+
+    /// <summary>What the input says first (the current name when renaming).</summary>
+    [Parameter]
+    public string Value { get; set; } = string.Empty;
+
+    /// <summary>Accessible name, such as "New file name".</summary>
+    [Parameter, EditorRequired]
+    public string Label { get; set; } = null!;
+
+    [Parameter]
+    public int Depth { get; set; }
+
+    [Parameter, EditorRequired]
+    public string Icon { get; set; } = null!;
+
+    [Parameter]
+    public string? IconClass { get; set; }
+
+    /// <summary>How much of <see cref="Value"/> is selected first (the name without its extension); null selects it all.</summary>
+    [Parameter]
+    public int? SelectedLength { get; set; }
+
+    /// <summary>Called with the typed name; returns why it was refused, or null when it was taken (the parent then removes the input).</summary>
+    [Parameter, EditorRequired]
+    public Func<string, Task<string?>> OnCommit { get; set; } = null!;
+
+    [Parameter, EditorRequired]
+    public EventCallback OnCancel { get; set; }
+
+    protected override void OnInitialized() => _value = Value;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        await _input.FocusAsync();
+        try
+        {
+            await JS.InvokeVoidAsync("HTMLInputElement.prototype.setSelectionRange.call", _input, 0, SelectedLength ?? _value.Length);
+        }
+        catch (JSException)
+        {
+            // The name stays unselected.
+        }
+    }
+
+    private async Task OnKeyDownAsync(KeyboardEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case "Enter":
+                await CommitAsync();
+                break;
+            case "Escape":
+                _done = true;
+                await OnCancel.InvokeAsync();
+                break;
+            default:
+                _error = null;
+                break;
+        }
+    }
+
+    private async Task OnBlurAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_value))
+        {
+            if (!_done)
+            {
+                _done = true;
+                await OnCancel.InvokeAsync();
+            }
+
+            return;
+        }
+
+        await CommitAsync();
+    }
+
+    private async Task CommitAsync()
+    {
+        if (_done || _busy)
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            _error = await OnCommit(_value);
+            _done = _error is null;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

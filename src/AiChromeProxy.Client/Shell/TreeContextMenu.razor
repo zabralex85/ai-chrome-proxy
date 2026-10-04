@@ -1,0 +1,91 @@
+@using AiChromeProxy.Client.Tree
+
+@* The tree's context menu at a point. Every key is handled here (the default is prevented): arrows, Home/End move, Enter/Space pick, Esc and Tab close. *@
+<button type="button" class="menu-backdrop" tabindex="-1" aria-label="Close the menu" @onclick="() => OnClose.InvokeAsync()" @oncontextmenu="() => OnClose.InvokeAsync()" @oncontextmenu:preventDefault="true"></button>
+<div class="tree-menu" role="menu" aria-label="Tree actions" data-testid="tree-menu" style="left: @(X)px; top: @(Y)px"
+     @onkeydown="OnKeyDownAsync" @onkeydown:preventDefault="true" @onkeydown:stopPropagation="true" @oncontextmenu:preventDefault="true">
+    @for (var i = 0; i < Items.Count; i++)
+    {
+        var index = i;
+        var item = Items[i];
+        <button type="button" role="menuitem" class="tree-menu-item" tabindex="-1" data-testid="@("menu-" + item.Id)" @ref="_buttons[index]"
+                aria-disabled="@(item.State.Enabled ? null : "true")" title="@item.State.Reason" @onfocus="() => _index = index" @onclick="() => PickAsync(item)">
+            <Icon Name="@item.Icon" Size="14" />
+            <span class="tree-menu-label">@item.Label</span>
+            @if (item.Shortcut is not null)
+            {
+                <span class="tree-menu-key">@item.Shortcut</span>
+            }
+        </button>
+    }
+</div>
+
+@code {
+    private ElementReference[] _buttons = [];
+    private int _index;
+    private bool _focusItem = true;
+
+    [Parameter, EditorRequired]
+    public IReadOnlyList<TreeMenuItem> Items { get; set; } = null!;
+
+    [Parameter]
+    public int X { get; set; }
+
+    [Parameter]
+    public int Y { get; set; }
+
+    /// <summary>The id of the chosen (enabled) item.</summary>
+    [Parameter, EditorRequired]
+    public EventCallback<string> OnPick { get; set; }
+
+    /// <summary>Esc, a click outside, Tab: the parent gives the focus back to the row.</summary>
+    [Parameter, EditorRequired]
+    public EventCallback OnClose { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        if (_buttons.Length != Items.Count)
+        {
+            _buttons = new ElementReference[Items.Count];
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusItem && _buttons.Length > 0)
+        {
+            _focusItem = false;
+            await _buttons[_index].FocusAsync();
+        }
+    }
+
+    private async Task OnKeyDownAsync(KeyboardEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case "Escape" or "Tab":
+                await OnClose.InvokeAsync();
+                break;
+            case "Enter" or " ":
+                await PickAsync(Items[_index]);
+                break;
+            default:
+                var next = TreeMenu.Move(e.Key, _index, Items.Count);
+                if (next != _index)
+                {
+                    _index = next;
+                    _focusItem = true;
+                }
+
+                break;
+        }
+    }
+
+    private async Task PickAsync(TreeMenuItem item)
+    {
+        if (item.State.Enabled)
+        {
+            await OnPick.InvokeAsync(item.Id);
+        }
+    }
+}

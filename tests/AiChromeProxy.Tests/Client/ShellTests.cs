@@ -20,6 +20,29 @@ public sealed class ShellTests
 		Assert.False(src.Children[0].Children[0].IsFolder);
 	}
 
+	[Theory]
+	[InlineData("src/App", "src/b.cs")]
+	[InlineData("src", "A.md")]
+	[InlineData("b.txt", "A.md")]
+	[InlineData("docs", "src")]
+	[InlineData("A.md", "b.txt")]
+	[InlineData("nothing", null)]
+	public void NeighbourAfterDelete_IsTheNextRowOutsideThePathElseThePrevious(string path, string? expected)
+	{
+		var rows = FileTree.Rows(Tree, new HashSet<string> { "src" });
+
+		Assert.Equal(expected, FileTree.NeighbourAfterDelete(rows, path));
+	}
+
+	[Fact]
+	public void NeighbourAfterDelete_LastRowGoesToThePreviousAndAloneToNull()
+	{
+		var rows = FileTree.Rows(FileTree.Build(["a.txt", "b.txt"]), new HashSet<string>());
+
+		Assert.Equal("a.txt", FileTree.NeighbourAfterDelete(rows, "b.txt"));
+		Assert.Null(FileTree.NeighbourAfterDelete(FileTree.Rows(FileTree.Build(["a.txt"]), new HashSet<string>()), "a.txt"));
+	}
+
 	[Fact]
 	public void Rows_OnlyExpandedFoldersShowChildren()
 	{

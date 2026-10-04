@@ -74,6 +74,12 @@ public sealed partial class SyncEngine
 		}
 	}
 
+	/// <summary>Whether a server change waits (or conflicts) for the path or, for a folder, for a file inside it: the menu then disables Rename and Delete.</summary>
+	public bool HasServerChange(string path) => RemoteTouches(path);
+
+	/// <summary>Whether the browser can rename folders (the menu disables Rename on folders when not).</summary>
+	public Task<bool> CanRenameFoldersAsync() => folder.CanRenameFoldersAsync();
+
 	private static string ParentOf(string path) => path.Contains('/') ? path[..path.LastIndexOf('/')] : string.Empty;
 
 	private static string NameOf(string path) => path[(path.LastIndexOf('/') + 1)..];
