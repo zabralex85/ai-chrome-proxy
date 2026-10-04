@@ -136,7 +136,7 @@
                 <ProjectSettingsView Engine="Engine" />
                 break;
             case var chatTab when TabSet.IsChat(chatTab):
-                <ChatView Chat="Chat" OnOpenFile="OnOpenFile" FolderOpen="ChatFolderOpen" />
+                <ChatView Chat="Chat" OnOpenFile="OnOpenFile" FolderOpen="ChatFolderOpen" OnNoteDismissed="async () => await _input.FocusAsync()" />
                 break;
             case var conflictTab when TabSet.IsConflict(conflictTab):
                 <ConflictView Engine="Engine" Path="@(TabSet.ConflictPath(conflictTab)!)" />
@@ -155,10 +155,12 @@
         }
     </div>
 
-    <ChatInput Chat="Chat" Enabled="ChatEnabled" Placeholder="@Format.ChatPlaceholder(ChatConnected, ChatFolderOpen)" OnSend="SendAsync" />
+    <ChatInput @ref="_input" Chat="Chat" Enabled="ChatEnabled" Placeholder="@Format.ChatPlaceholder(ChatConnected, ChatFolderOpen)" OnSend="SendAsync" />
 </section>
 
 @code {
+    private ChatInput _input = null!;
+
     [Parameter, EditorRequired]
     public SyncEngine Engine { get; set; } = null!;
 

@@ -29,7 +29,33 @@ public sealed class DiagramSteps(IPage page)
 		}
 		""";
 
+	/// <summary>
+	/// Two touch pointers on the viewport, 100 px apart around its centre; the second one moves 100 px further out (twice the distance, the
+	/// midpoint 50 px to the right). Returns the stage's box before and after ([left, top, width, height] twice) and the centre.
+	/// </summary>
+	private const string Pinch =
+		"""
+		v => {
+			const box = () => { const r = v.querySelector('.diagram-stage').getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; };
+			const r = v.getBoundingClientRect();
+			const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+			const fire = (type, id, x) => v.dispatchEvent(new PointerEvent(type, {
+				pointerId: id, pointerType: 'touch', isPrimary: id === 101, clientX: x, clientY: cy,
+				button: type === 'pointermove' ? -1 : 0, buttons: type === 'pointerup' ? 0 : 1, bubbles: true, cancelable: true }));
+			const before = box();
+			fire('pointerdown', 101, cx - 50);
+			fire('pointerdown', 102, cx + 50);
+			fire('pointermove', 102, cx + 100);
+			fire('pointermove', 102, cx + 150);
+			fire('pointerup', 101, cx - 50);
+			fire('pointerup', 102, cx + 150);
+			return [...before, ...box(), cx, cy];
+		}
+		""";
+
 	private int _fitted;
+	private double[] _pinch = [];
+	private double[] _stage = [];
 	private IDownload? _download;
 	private string _saved = string.Empty;
 
@@ -50,7 +76,7 @@ public sealed class DiagramSteps(IPage page)
 	[When("I choose {string} from the diagram's Save… menu")]
 	public async Task WhenIChooseFromTheSaveMenuAsync(string item)
 	{
-		await Toolbar.GetByRole(AriaRole.Button, new() { Name = "Save…" }).ClickAsync();
+		await ClickToolbarAsync("Save…");
 		await Toolbar.GetByRole(AriaRole.Menuitem, new() { Name = item, Exact = true }).ClickAsync();
 		await Expect(SaveDialog).ToBeVisibleAsync();
 	}
@@ -203,7 +229,7 @@ public sealed class DiagramSteps(IPage page)
 	public async Task ThenTheSaveMenuListsAsync(string items)
 	{
 		var save = Toolbar.GetByRole(AriaRole.Button, new() { Name = "Save…" });
-		await save.ClickAsync();
+		await ClickToolbarAsync("Save…");
 		await Expect(save).ToHaveAttributeAsync("aria-expanded", "true");
 		var entries = Toolbar.GetByRole(AriaRole.Menuitem);
 		await Expect(entries).ToHaveTextAsync(items.Split(", "));
@@ -217,7 +243,7 @@ public sealed class DiagramSteps(IPage page)
 	}
 
 	[When("I open the diagram")]
-	public async Task WhenIOpenTheDiagramAsync() => await Toolbar.GetByRole(AriaRole.Button, new() { Name = "Open" }).ClickAsync();
+	public async Task WhenIOpenTheDiagramAsync() => await ClickToolbarAsync("Open");
 
 	[Then("the diagram viewer shows the fitted zoom level")]
 	public async Task ThenTheDiagramViewerShowsTheFittedZoomLevelAsync()
@@ -227,6 +253,152 @@ public sealed class DiagramSteps(IPage page)
 		await Expect(Zoom).ToHaveTextAsync(new Regex(@"^\d+%$"));
 		await Expect(Viewer.GetByRole(AriaRole.Heading)).ToHaveTextAsync(new Regex(@"^class-diagram-\d{8}-\d{4}$"));
 		_fitted = await LevelAsync();
+		Xunit.Assert.InRange(_fitted, 10, 100); // fitting never blows a small diagram up
+	}
+
+	[When("I pinch the diagram with two fingers to twice their distance")]
+	public async Task WhenIPinchTheDiagramAsync() => _pinch = await Viewer.Locator(".diagram-viewport").EvaluateAsync<double[]>(Pinch);
+
+	[Then("the zoom level is twice the fitted one and the point between the fingers followed them")]
+	public async Task ThenTheZoomLevelIsTwiceTheFittedOneAsync()
+	{
+		Xunit.Assert.InRange(await LevelAsync(), (2 * _fitted) - 2, (2 * _fitted) + 2);
+		var (left0, top0, width0, height0, left1, top1, width1, height1, cx, cy) =
+			(_pinch[0], _pinch[1], _pinch[2], _pinch[3], _pinch[4], _pinch[5], _pinch[6], _pinch[7], _pinch[8], _pinch[9]);
+		Xunit.Assert.InRange(width1 / width0, 1.99, 2.01);
+
+		// The diagram's point under the old midpoint (cx, cy) is under the new one (cx + 50, cy).
+		Xunit.Assert.InRange(left1 + ((cx - left0) * width1 / width0), cx + 49, cx + 51);
+		Xunit.Assert.InRange(top1 + ((cy - top0) * height1 / height0), cy - 1, cy + 1);
+	}
+
+	[When("I drag the diagram with the mouse")]
+	public async Task WhenIDragTheDiagramWithTheMouseAsync()
+	{
+		var stage = Viewer.Locator(".diagram-stage");
+		var before = (await stage.BoundingBoxAsync())!;
+		var box = (await Viewer.Locator(".diagram-viewport").BoundingBoxAsync())!;
+		var (x, y) = (box.X + (box.Width / 2), box.Y + (box.Height / 2));
+		await page.Mouse.MoveAsync(x, y);
+		await page.Mouse.DownAsync();
+		await page.Mouse.MoveAsync(x + 80, y + 40, new() { Steps = 8 });
+		await page.Mouse.UpAsync();
+		var after = (await stage.BoundingBoxAsync())!;
+		_stage = [after.X - before.X, after.Y - before.Y];
+	}
+
+	[Then("the diagram moved with the mouse and no text is selected")]
+	public async Task ThenTheDiagramMovedAsync()
+	{
+		Xunit.Assert.InRange(_stage[0], 79, 81);
+		Xunit.Assert.InRange(_stage[1], 39, 41);
+		Xunit.Assert.Equal(string.Empty, await page.EvaluateAsync<string>("() => window.getSelection().toString()"));
+	}
+
+	/// <summary>The PNG export's canvas gives no blob, as when the browser runs out of canvas memory.</summary>
+	[When("the browser cannot make PNG files")]
+	public async Task WhenTheBrowserCannotMakePngFilesAsync() =>
+		await page.EvaluateAsync("() => { HTMLCanvasElement.prototype.toBlob = function (callback) { callback(null); }; }");
+
+	[When("I choose {string} from the diagram's Download… menu")]
+	public async Task WhenIChooseFromTheDownloadMenuAsync(string item)
+	{
+		await ClickToolbarAsync("Download…");
+		await Toolbar.GetByRole(AriaRole.Menuitem, new() { Name = item, Exact = true }).ClickAsync();
+	}
+
+	[When("I choose {string} from the viewer's Download… menu")]
+	public async Task WhenIChooseFromTheViewersDownloadMenuAsync(string item)
+	{
+		await Viewer.GetByRole(AriaRole.Button, new() { Name = "Download…" }).ClickAsync();
+		await Viewer.GetByRole(AriaRole.Menuitem, new() { Name = item, Exact = true }).ClickAsync();
+	}
+
+	[Then("the diagram toolbar says {string}")]
+	public async Task ThenTheDiagramToolbarSaysAsync(string text)
+	{
+		var problem = Toolbar.GetByRole(AriaRole.Alert);
+		await Expect(problem).ToHaveTextAsync(text);
+		await Expect(problem).ToBeVisibleAsync();
+		await Expect(Toolbar).ToHaveCSSAsync("opacity", "1");
+	}
+
+	[Then("the diagram viewer says {string}")]
+	public async Task ThenTheDiagramViewerSaysAsync(string text)
+	{
+		var problem = Viewer.Locator(".diagram-viewer-header").GetByRole(AriaRole.Alert);
+		await Expect(problem).ToHaveTextAsync(text);
+		await Expect(problem).ToBeVisibleAsync();
+	}
+
+	[Then("no failure is shown")]
+	public async Task ThenNoFailureIsShownAsync() => await Expect(page.GetByTestId("diagram-problem")).ToHaveCountAsync(0);
+
+	/// <summary>
+	/// Without a folder there is no chat to ask, so the diagram is put into a new chat's log the way MarkdownRenderer writes it; the next
+	/// render of the chat (a theme switch) draws it with the page's own callback and folder state.
+	/// </summary>
+	[When("a class diagram is drawn in a new chat without a folder")]
+	public async Task WhenAClassDiagramIsDrawnWithoutAFolderAsync()
+	{
+		await page.GetByTestId("chat-menu-button").ClickAsync();
+		await page.GetByTestId("new-chat").ClickAsync();
+		await Expect(page.GetByTestId("chat-empty")).ToBeVisibleAsync();
+		await page.GetByTestId("chat-log").EvaluateAsync(
+			"""
+			log => {
+				const answer = document.createElement('div');
+				answer.className = 'msg msg-assistant markdown';
+				answer.setAttribute('data-testid', 'chat-assistant');
+				const diagram = document.createElement('div');
+				diagram.className = 'mermaid-source';
+				diagram.dataset.diagram = 'classDiagram\n  class Animal\n  Animal <|-- Dog';
+				answer.appendChild(diagram);
+				log.appendChild(answer);
+			}
+			""");
+		await page.GetByTestId("theme-toggle").ClickAsync();
+		await Expect(Toolbar).ToBeAttachedAsync();
+	}
+
+	[Then("the diagram's Save… items are disabled with the tooltip {string}")]
+	public async Task ThenTheSaveItemsAreDisabledAsync(string tooltip)
+	{
+		await ClickToolbarAsync("Save…");
+		var items = Toolbar.GetByRole(AriaRole.Menuitem);
+		await Expect(items).ToHaveTextAsync(["Source (.mmd)", "SVG", "PNG"]);
+		for (var i = 0; i < 3; i++)
+		{
+			await Expect(items.Nth(i)).ToHaveAttributeAsync("aria-disabled", "true");
+			await Expect(items.Nth(i)).ToHaveAttributeAsync("title", tooltip);
+		}
+
+		await items.First.ClickAsync(new() { Force = true }); // aria-disabled: Playwright would wait for it to be enabled
+		await Expect(SaveDialog).ToHaveCountAsync(0);
+		await page.Keyboard.PressAsync("Escape");
+		await Expect(Toolbar.GetByRole(AriaRole.Menu)).ToBeHiddenAsync();
+	}
+
+	/// <summary>When E2E_SCREENSHOT_DIR is set: the page as it is now, as &lt;name&gt;.png.</summary>
+	[Then("I save a screenshot named {string}")]
+	public async Task ThenISaveAScreenshotNamedAsync(string name)
+	{
+		if (Environment.GetEnvironmentVariable(ScreenshotDirectory) is { Length: > 0 } directory)
+		{
+			Directory.CreateDirectory(directory);
+			await page.ScreenshotAsync(new() { Path = Path.Combine(directory, name + ".png") });
+		}
+	}
+
+	[Then("the saved note's {string} has the focus")]
+	public async Task ThenTheSavedNotesButtonHasTheFocusAsync(string name) =>
+		await Expect(SavedNote.GetByRole(AriaRole.Button, new() { Name = name, Exact = true })).ToBeFocusedAsync();
+
+	[Then("the saved note is gone and the message box has the focus")]
+	public async Task ThenTheSavedNoteIsGoneAsync()
+	{
+		await Expect(SavedNote).ToHaveCountAsync(0);
+		await Expect(page.GetByTestId("chat-input")).ToBeFocusedAsync();
 	}
 
 	[When("I press {string} in the diagram viewer")]
@@ -253,6 +425,9 @@ public sealed class DiagramSteps(IPage page)
 	public async Task WhenIClickInTheDiagramViewerAsync(string name) =>
 		await Viewer.GetByRole(AriaRole.Button, new() { Name = name, Exact = true }).ClickAsync();
 
+	[Then("the zoom level is {string}")]
+	public async Task ThenTheZoomLevelIsAsync(string level) => await Expect(Zoom).ToHaveTextAsync(level);
+
 	[Then("the zoom level is the fitted one again")]
 	public async Task ThenTheZoomLevelIsTheFittedOneAgainAsync() => await Expect(Zoom).ToHaveTextAsync(_fitted + "%");
 
@@ -266,7 +441,7 @@ public sealed class DiagramSteps(IPage page)
 	[When("I download the diagram as {string}")]
 	public async Task WhenIDownloadTheDiagramAsAsync(string kind)
 	{
-		await Toolbar.GetByRole(AriaRole.Button, new() { Name = "Download…" }).ClickAsync();
+		await ClickToolbarAsync("Download…");
 		_download = await page.RunAndWaitForDownloadAsync(() => Toolbar.GetByRole(AriaRole.Menuitem, new() { Name = kind, Exact = true }).ClickAsync());
 	}
 
@@ -319,7 +494,7 @@ public sealed class DiagramSteps(IPage page)
 			await Diagram.HoverAsync();
 			await page.WaitForTimeoutAsync(400);
 			await page.ScreenshotAsync(new() { Path = Path.Combine(directory, $"diagram-toolbar-{theme}.png") });
-			await Toolbar.GetByRole(AriaRole.Button, new() { Name = "Download…" }).ClickAsync();
+			await ClickToolbarAsync("Download…");
 			await page.ScreenshotAsync(new() { Path = Path.Combine(directory, $"diagram-menu-{theme}.png") });
 			await page.Keyboard.PressAsync("Escape");
 			await WhenIOpenTheDiagramAsync();
@@ -332,6 +507,13 @@ public sealed class DiagramSteps(IPage page)
 			await page.Keyboard.PressAsync("Escape");
 			await Expect(Viewer).ToBeHiddenAsync();
 		}
+	}
+
+	/// <summary>The toolbar takes clicks only while the diagram is hovered or focused: the mouse goes over the diagram first, as a user's does.</summary>
+	private async Task ClickToolbarAsync(string name)
+	{
+		await Diagram.HoverAsync();
+		await Toolbar.GetByRole(AriaRole.Button, new() { Name = name }).ClickAsync();
 	}
 
 	private async Task ThenTheChatSaysAsync(string text, bool open)

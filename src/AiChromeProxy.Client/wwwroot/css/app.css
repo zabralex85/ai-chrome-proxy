@@ -1494,27 +1494,48 @@ h1:focus-visible {
 .diagram-canvas > svg {
     max-width: 100%;
     height: auto;
+    -webkit-user-select: none;
+    user-select: none; /* a drag over the drawing selects nothing */
 }
 
-/* The toolbar sits above the drawing (never over it); quiet until the diagram is hovered or focused, always shown on touch screens. */
+/* The toolbar sits above the drawing (never over it); quiet (and not clickable) until the diagram is hovered or focused or a failure is
+   shown in it, always shown on touch screens. */
 .diagram-toolbar {
     display: flex;
     justify-content: flex-end;
     gap: 2px;
     margin: 0 -6px 4px;
     opacity: 0;
+    pointer-events: none;
     transition: opacity var(--ease);
 }
 
 .mermaid-source:hover .diagram-toolbar,
-.mermaid-source:focus-within .diagram-toolbar {
+.mermaid-source:focus-within .diagram-toolbar,
+.diagram-toolbar:has(.diagram-problem) {
     opacity: 1;
+    pointer-events: auto;
 }
 
 @media (hover: none) {
     .diagram-toolbar {
         opacity: 1;
+        pointer-events: auto;
     }
+}
+
+/* "Could not create the picture: …" at the start of the toolbar or before the viewer's actions */
+.diagram-problem {
+    align-self: center;
+    min-width: 0;
+    margin: 0 auto 0 6px;
+    color: var(--error);
+    font-size: 12px;
+    text-align: left;
+}
+
+.diagram-viewer-header .diagram-problem {
+    margin: 0 4px;
 }
 
 .diagram-button {
@@ -1628,6 +1649,8 @@ h1:focus-visible {
     flex: 1;
     overflow: hidden;
     touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
     cursor: grab;
 }
 

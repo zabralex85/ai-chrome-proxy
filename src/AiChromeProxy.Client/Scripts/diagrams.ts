@@ -45,6 +45,11 @@ interface MenuItem {
     run: () => Promise<void>;
 }
 
+interface Point {
+    x: number;
+    y: number;
+}
+
 interface Viewer {
     dialog: HTMLDialogElement;
     title: HTMLElement;
@@ -65,6 +70,7 @@ const PAN_STEP = 40;
 const FIT_MARGIN = 24;
 const PNG_SCALE = 2;
 const PNG_MAX_SIDE = 8192;
+const PROBLEM_MS = 8000;
 
 const ICONS = {
     open: 'M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10',
@@ -80,6 +86,7 @@ let folderOpen = false;
 let openMenu: { wrap: HTMLElement; button: HTMLButtonElement; list: HTMLElement } | null = null;
 let viewer: Viewer | null = null;
 let opener: HTMLElement | null = null;
+let problem: { element: HTMLElement; timer: number } | null = null;
 const view = { x: 0, y: 0, scale: 1, width: 0, height: 0, fitted: true };
 
 function loaded(): Mermaid | undefined {
@@ -153,6 +160,32 @@ function report(e: unknown): void {
     console.error('Diagram action failed:', e);
 }
 
+function clearProblem(): void {
+    if (problem !== null) {
+        clearTimeout(problem.timer);
+        problem.element.remove();
+        problem = null;
+    }
+}
+
+/** A failed menu action: logged, and said next to its menu (in the toolbar, or before the viewer's actions) until the next action or for 8 s. */
+function fail(wrap: HTMLElement, e: unknown): void {
+    report(e);
+    clearProblem();
+    const element = document.createElement('span');
+    element.className = 'diagram-problem';
+    element.setAttribute('role', 'alert');
+    element.setAttribute('data-testid', 'diagram-problem');
+    element.textContent = `Could not create the picture: ${e instanceof Error ? e.message : String(e)}`;
+    const bar = wrap.parentElement;
+    if (bar?.classList.contains('diagram-viewer-actions') === true) {
+        bar.before(element);
+    } else {
+        bar?.prepend(element);
+    }
+    problem = { element, timer: window.setTimeout(clearProblem, PROBLEM_MS) };
+}
+
 function icon(path: string): SVGSVGElement {
     const svg = document.createElementNS(SVG_NS, 'svg');
     svg.setAttribute('class', 'icon');
@@ -175,6 +208,7 @@ function button(label: string, iconPath: string | null = null): HTMLButtonElemen
         b.appendChild(icon(iconPath));
     }
     b.append(label);
+    b.addEventListener('click', clearProblem); // any next action hides a shown failure
     return b;
 }
 
@@ -252,8 +286,9 @@ function menu(label: string, iconPath: string, items: MenuItem[]): HTMLElement {
             if (entry.getAttribute('aria-disabled') === 'true') {
                 return;
             }
+            clearProblem();
             closeMenu(true);
-            item.run().catch(report);
+            item.run().catch((e: unknown) => fail(wrap, e));
         });
         list.appendChild(entry);
     }
@@ -519,7 +554,8 @@ function apply(v: Viewer): void {
 function fit(v: Viewer): void {
     const width = v.viewport.clientWidth;
     const height = v.viewport.clientHeight;
-    view.scale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.min((width - 2 * FIT_MARGIN) / view.width, (height - 2 * FIT_MARGIN) / view.height)));
+    // A small diagram is shown at 100 %, never blown up to the window.
+    view.scale = Math.max(MIN_ZOOM, Math.min(1, (width - 2 * FIT_MARGIN) / view.width, (height - 2 * FIT_MARGIN) / view.height));
     view.x = (width - view.width * view.scale) / 2;
     view.y = (height - view.height * view.scale) / 2;
     view.fitted = true;
@@ -539,6 +575,20 @@ function zoom(v: Viewer, factor: number, px = v.viewport.clientWidth / 2, py = v
 function pan(v: Viewer, dx: number, dy: number): void {
     view.x += dx;
     view.y += dy;
+    view.fitted = false;
+    apply(v);
+}
+
+/**
+ * Two fingers moved from (a0, b0) to (a1, b1) (viewport points): the scale follows the distance between them (within 10 %–800 %) and the
+ * point of the diagram under their old midpoint moves to the new one (zoom and pan in one).
+ */
+function pinch(v: Viewer, a0: Point, b0: Point, a1: Point, b1: Point): void {
+    const before = Math.hypot(b0.x - a0.x, b0.y - a0.y);
+    const next = before > 0 ? Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, view.scale * Math.hypot(b1.x - a1.x, b1.y - a1.y) / before)) : view.scale;
+    view.x = (a1.x + b1.x) / 2 - ((a0.x + b0.x) / 2 - view.x) * next / view.scale;
+    view.y = (a1.y + b1.y) / 2 - ((a0.y + b0.y) / 2 - view.y) * next / view.scale;
+    view.scale = next;
     view.fitted = false;
     apply(v);
 }
@@ -613,26 +663,46 @@ function createViewer(): Viewer {
         zoom(v, Math.exp(-delta * 0.002), e.clientX - rect.left, e.clientY - rect.top);
     }, { passive: false });
 
-    // ponytail: one-pointer drag only; pinch zoom with two touches when phones use the viewer
-    let drag: { id: number; x: number; y: number } | null = null;
+    // One pointer drags the diagram; two (fingers) pinch: zoom by their distance around their midpoint, pan with it.
+    const pointers = new Map<number, Point>();
+    const at = (e: PointerEvent): Point => {
+        const rect = viewport.getBoundingClientRect();
+        return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    };
     viewport.addEventListener('pointerdown', (e: PointerEvent) => {
         if (e.button !== 0) {
             return;
         }
-        drag = { id: e.pointerId, x: e.clientX, y: e.clientY };
-        viewport.setPointerCapture(e.pointerId);
+        e.preventDefault(); // no text selection starts in the diagram
+        window.getSelection()?.removeAllRanges();
+        viewport.focus();
+        try {
+            viewport.setPointerCapture(e.pointerId);
+        } catch {
+            // the pointer is gone already
+        }
+        pointers.set(e.pointerId, at(e));
         viewport.classList.add('dragging');
     });
     viewport.addEventListener('pointermove', (e: PointerEvent) => {
-        if (drag?.id === e.pointerId) {
-            pan(v, e.clientX - drag.x, e.clientY - drag.y);
-            drag.x = e.clientX;
-            drag.y = e.clientY;
+        const last = pointers.get(e.pointerId);
+        if (last === undefined) {
+            return;
         }
+        const now = at(e);
+        if (pointers.size === 1) {
+            pan(v, now.x - last.x, now.y - last.y);
+        } else if (pointers.size === 2) {
+            const other = Array.from(pointers).find(([id]) => id !== e.pointerId)![1];
+            pinch(v, last, other, now, other);
+        }
+        pointers.set(e.pointerId, now);
     });
-    const end = (): void => {
-        drag = null;
-        viewport.classList.remove('dragging');
+    const end = (e: PointerEvent): void => {
+        pointers.delete(e.pointerId);
+        if (pointers.size === 0) {
+            viewport.classList.remove('dragging');
+        }
     };
     viewport.addEventListener('pointerup', end);
     viewport.addEventListener('pointercancel', end);
@@ -644,6 +714,9 @@ function createViewer(): Viewer {
     });
     dialog.addEventListener('close', () => {
         closeMenu(false);
+        clearProblem();
+        pointers.clear();
+        viewport.classList.remove('dragging');
         v.stage.replaceChildren();
         if (opener?.isConnected === true) {
             opener.focus();
