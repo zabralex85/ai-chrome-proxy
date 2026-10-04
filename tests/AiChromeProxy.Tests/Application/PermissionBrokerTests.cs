@@ -229,8 +229,37 @@ public sealed class PermissionBrokerTests
 		Assert.Equal("PowerShell(Get-ChildItem)", PermissionBroker.Rule("PowerShell", new JsonObject { ["command"] = "Get-ChildItem" }));
 		Assert.Null(PermissionBroker.Rule("PowerShell", null));
 		Assert.Null(PermissionBroker.Rule("PowerShell", new JsonObject { ["command"] = "Remove-Item *.log" }));
-		Assert.Equal("NewShell(make test)", PermissionBroker.Rule("NewShell", new JsonObject { ["command"] = "make test" }));
+	}
+
+	[Fact]
+	public void Rule_NonShellToolWithACommand_None()
+	{
+		// Only Bash and PowerShell rules are known to be scoped by their command; any other tool would get its bare name.
+		Assert.Null(PermissionBroker.Rule("NewShell", new JsonObject { ["command"] = "make test" }));
 		Assert.Null(PermissionBroker.Rule("NewShell", new JsonObject { ["command"] = 3 }));
+	}
+
+	[Theory]
+	[InlineData("a),Bash,(b")]
+	[InlineData("a) Bash (b")]
+	[InlineData("x)")]
+	[InlineData("(")]
+	[InlineData("echo (a")]
+	[InlineData("a)(b")]
+	public void Rule_CommandThatClosesTheRuleEarlyOrLeavesItOpen_None(string command)
+	{
+		// The CLI splits --allowedTools on commas and spaces outside parentheses: "Bash(a),Bash,(b)" would allow every command.
+		Assert.Null(PermissionBroker.Rule("Bash", new JsonObject { ["command"] = command }));
+		Assert.Null(PermissionBroker.Rule("PowerShell", new JsonObject { ["command"] = command }));
+	}
+
+	[Theory]
+	[InlineData("echo f(x)")]
+	[InlineData("echo $(date) (a (b))")]
+	[InlineData("git log --format=%h,%s")]
+	public void Rule_BalancedParentheses_Allowed(string command)
+	{
+		Assert.Equal($"Bash({command})", PermissionBroker.Rule("Bash", new JsonObject { ["command"] = command }));
 	}
 
 	[Theory]
@@ -260,6 +289,8 @@ public sealed class PermissionBrokerTests
 	[InlineData("Bash", "rm -f build/*.o")]
 	[InlineData("Bash", "git:*")]
 	[InlineData("Bash", "ls\nrm x")]
+	[InlineData("Bash", "echo ok),Bash,(x")]
+	[InlineData("NewShell", "make test")]
 	[InlineData("Web Fetch", "x")]
 	public async Task AllowAlways_WithoutASafeRule_AllowedOnce_ReportedAllow_NothingSaved(string tool, string command)
 	{

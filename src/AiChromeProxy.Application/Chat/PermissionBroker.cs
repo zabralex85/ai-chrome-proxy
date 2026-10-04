@@ -39,10 +39,12 @@ public sealed class PermissionBroker
 	}
 
 	/// <summary>
-	/// The allow-always rule for a request: <c>Tool(&lt;command&gt;)</c> for a tool that runs a command (<c>Bash</c>, <c>PowerShell</c>,
-	/// any tool whose input has a <c>command</c>), the tool name otherwise. Null (allow once, no rule) whenever the rule could match more
-	/// than this request: a command with <c>*</c> (Claude Code reads it, and a trailing <c>:*</c>, as wildcards), a line break, or none at
-	/// all; a tool name other than letters, digits and underscores.
+	/// The allow-always rule for a request: <c>Tool(&lt;command&gt;)</c> for <c>Bash</c> and <c>PowerShell</c>, the tool name for a tool
+	/// without a <c>command</c>. Null (allow once, no rule) whenever the rule could match more than this request: a command with <c>*</c>
+	/// (Claude Code reads it, and a trailing <c>:*</c>, as wildcards), a line break, parentheses that close the rule early or leave it open
+	/// (the CLI splits <c>--allowedTools</c> on commas and spaces outside parentheses, so <c>Bash(a),Bash,(b)</c> would allow every
+	/// command), or no command at all; another tool with a <c>command</c> (its bare name would allow every command); a tool name other than
+	/// letters, digits and underscores.
 	/// </summary>
 	public static string? Rule(string tool, JsonNode? input)
 	{
@@ -51,14 +53,13 @@ public sealed class PermissionBroker
 			return null;
 		}
 
-		// A shell tool's rule is scoped to its command: the bare name would allow every command of that tool.
-		if (tool is not ("Bash" or "PowerShell") && !(input is JsonObject i && i.ContainsKey("command")))
+		if (tool is not ("Bash" or "PowerShell"))
 		{
-			return tool;
+			return input is JsonObject i && i.ContainsKey("command") ? null : tool;
 		}
 
 		return input is JsonObject o && o["command"] is JsonValue v && v.TryGetValue<string>(out var command)
-			&& command.Length > 0 && command.IndexOfAny(['*', '\n', '\r']) < 0
+			&& command.Length > 0 && command.IndexOfAny(['*', '\n', '\r']) < 0 && StaysInside(command)
 			? $"{tool}({command})"
 			: null;
 	}
@@ -187,6 +188,22 @@ public sealed class PermissionBroker
 		{
 			Resolve(run, requestId, ChatDecisions.Deny);
 		}
+	}
+
+	/// <summary>Whether <c>Tool(</c> + <paramref name="command"/> + <c>)</c> keeps the rule's parenthesis open until its final <c>)</c>.</summary>
+	private static bool StaysInside(string command)
+	{
+		var depth = 1;
+		foreach (var c in command)
+		{
+			depth += c == '(' ? 1 : c == ')' ? -1 : 0;
+			if (depth < 1)
+			{
+				return false;
+			}
+		}
+
+		return depth == 1;
 	}
 
 	private IReadOnlyList<string> Allowed(string repo) => _projects.GetSettings(repo).AgentAllowedTools ?? [];
