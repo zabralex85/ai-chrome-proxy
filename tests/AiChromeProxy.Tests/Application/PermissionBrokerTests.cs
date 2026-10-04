@@ -223,6 +223,16 @@ public sealed class PermissionBrokerTests
 		Assert.Null(PermissionBroker.Rule("Bash", null));
 	}
 
+	[Fact]
+	public void Rule_OtherShellTools_ScopedToTheirCommand_NeverTheBareName()
+	{
+		Assert.Equal("PowerShell(Get-ChildItem)", PermissionBroker.Rule("PowerShell", new JsonObject { ["command"] = "Get-ChildItem" }));
+		Assert.Null(PermissionBroker.Rule("PowerShell", null));
+		Assert.Null(PermissionBroker.Rule("PowerShell", new JsonObject { ["command"] = "Remove-Item *.log" }));
+		Assert.Equal("NewShell(make test)", PermissionBroker.Rule("NewShell", new JsonObject { ["command"] = "make test" }));
+		Assert.Null(PermissionBroker.Rule("NewShell", new JsonObject { ["command"] = 3 }));
+	}
+
 	[Theory]
 	[InlineData("rm -f build/*.o")]
 	[InlineData("git:*")]

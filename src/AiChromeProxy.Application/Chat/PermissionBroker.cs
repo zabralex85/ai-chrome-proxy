@@ -39,20 +39,27 @@ public sealed class PermissionBroker
 	}
 
 	/// <summary>
-	/// The allow-always rule for a request: <c>Bash(&lt;command&gt;)</c> for a shell command, the tool name otherwise. Null (allow once,
-	/// no rule) whenever the rule could match more than this request: a command with <c>*</c> (Claude Code reads it, and a trailing
-	/// <c>:*</c>, as wildcards), a line break, or none at all; a tool name other than letters, digits and underscores.
+	/// The allow-always rule for a request: <c>Tool(&lt;command&gt;)</c> for a tool that runs a command (<c>Bash</c>, <c>PowerShell</c>,
+	/// any tool whose input has a <c>command</c>), the tool name otherwise. Null (allow once, no rule) whenever the rule could match more
+	/// than this request: a command with <c>*</c> (Claude Code reads it, and a trailing <c>:*</c>, as wildcards), a line break, or none at
+	/// all; a tool name other than letters, digits and underscores.
 	/// </summary>
 	public static string? Rule(string tool, JsonNode? input)
 	{
-		if (tool != "Bash")
+		if (tool.Length == 0 || !tool.All(c => char.IsAsciiLetterOrDigit(c) || c == '_'))
 		{
-			return tool.Length > 0 && tool.All(c => char.IsAsciiLetterOrDigit(c) || c == '_') ? tool : null;
+			return null;
+		}
+
+		// A shell tool's rule is scoped to its command: the bare name would allow every command of that tool.
+		if (tool is not ("Bash" or "PowerShell") && !(input is JsonObject i && i.ContainsKey("command")))
+		{
+			return tool;
 		}
 
 		return input is JsonObject o && o["command"] is JsonValue v && v.TryGetValue<string>(out var command)
 			&& command.Length > 0 && command.IndexOfAny(['*', '\n', '\r']) < 0
-			? $"Bash({command})"
+			? $"{tool}({command})"
 			: null;
 	}
 
