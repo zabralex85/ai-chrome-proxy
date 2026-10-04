@@ -56,6 +56,22 @@ public sealed class ChatServiceTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Deltas_CarryTheSeqOfTheRunsLastStoredEvent()
+	{
+		var client = new Client("c1");
+		await OpenAsync(client, Repo);
+		await SendAsync(client, Repo, null, "Say hello");
+		var process = await _runner.NextAsync();
+
+		process.Write(Init, Delta, Message, ToolUse, ToolResult, Delta, Result);
+		process.Exit();
+		await client.WaitAsync(e => e.Kind == ChatEventKinds.Result);
+
+		// prompt 1, delta, message 2, tool 3, toolResult 4, delta, result 5.
+		Assert.Equal([1L, 4], client.Events.Where(e => e.Kind == ChatEventKinds.Text).Select(e => e.Seq));
+	}
+
+	[Fact]
 	public async Task Send_StartedAtOnce_EventsPushedToRepoSubscribers_StoredWithoutDeltas()
 	{
 		var sender = new Client("c1");
@@ -78,7 +94,7 @@ public sealed class ChatServiceTests : IDisposable
 		Assert.Equal(watcher.Events, sender.Events);
 		Assert.Empty(elsewhere.Events);
 		Assert.All(watcher.Events, e => Assert.Equal((started.SessionId, started.RunId), (e.SessionId, e.RunId)));
-		Assert.Equal(0, watcher.Events[1].Seq);
+		Assert.Equal(1, watcher.Events[1].Seq);
 
 		var (stored, final) = _store.Read(started.SessionId, 0, ChatLimits.MaxEventBytes);
 		Assert.True(final);

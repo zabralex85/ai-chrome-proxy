@@ -73,6 +73,23 @@ public sealed class ChatEngineTests : IDisposable
 	}
 
 	[Fact]
+	public async Task StreamedAnswer_TextAfterAToolCall_StreamsToo()
+	{
+		var process = await StartAsync("hi");
+		process.Write(Init, Delta, Message, ToolUse, ToolResult);
+		await UntilAsync(() => _chat.Current.Items.Count == 3);
+
+		process.Write(Delta);
+
+		await UntilAsync(() => _chat.Current.Items is [_, _, _, { Streaming: true }]);
+		Assert.Equal("Hel", _chat.Current.Items[3].Text);
+		process.Write(Message2, Result);
+		process.Exit();
+		await UntilAsync(() => !_chat.Running);
+		Assert.Equal(["hi", "Hello there.", "ls", "All done."], _chat.Current.Items.Select(i => i.Text));
+	}
+
+	[Fact]
 	public async Task EventsAreKeyedOnTheirSession_PromptBeforeStartedReply_NewSessionAdopted()
 	{
 		await ReadyAsync();

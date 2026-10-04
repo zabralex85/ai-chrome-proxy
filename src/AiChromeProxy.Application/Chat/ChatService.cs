@@ -17,8 +17,8 @@ namespace AiChromeProxy.Application.Chat;
 /// <c>chat.sessions</c> when a run starts and ends.
 /// Every run ends with exactly one stored <c>result</c>: Claude's own, or <c>ok:false</c> for a cancel, the idle timeout, the server stopping,
 /// a start failure, an exit without a result line or an unexpected error.
-/// Streaming <c>text</c> deltas are pushed with <c>seq</c> 0 and never stored: the following <c>message</c> replaces them, and catching up
-/// after a reconnect (<c>chat.history</c>) uses stored events only. Disposing (the host shutting down) stops the runs and waits for them
+/// Streaming <c>text</c> deltas carry the <c>seq</c> of the run's last stored event and are never stored: the following <c>message</c>
+/// replaces them, and catching up after a reconnect (<c>chat.history</c>) uses stored events only. Disposing (the host shutting down) stops the runs and waits for them
 /// (at most <see cref="ShutdownWait"/>), so that their results are stored before the stores go away.
 /// </summary>
 public sealed class ChatService : IDisposable, IAsyncDisposable
@@ -418,7 +418,11 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 					break;
 				case ChatEventKinds.Text:
 					Store(run, batch);
-					Push(run.Repo, Envelope.Create(MessageTypes.ChatEvent, e));
+					lock (run.StoreLock)
+					{
+						Push(run.Repo, Envelope.Create(MessageTypes.ChatEvent, e with { Seq = run.LastSeq }));
+					}
+
 					break;
 				default:
 					batch.Add(e);
@@ -437,7 +441,9 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 			// The broker stores from the approval request's thread: one writer at a time keeps the pushes in seq order.
 			lock (run.StoreLock)
 			{
-				PushEvents(run.Repo, _store.Append(run.SessionId!, batch));
+				var stored = _store.Append(run.SessionId!, batch);
+				run.LastSeq = stored[^1].Seq;
+				PushEvents(run.Repo, stored);
 			}
 
 			batch.Clear();
@@ -494,6 +500,9 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 		public bool CancelRequested { get; private set; }
 
 		public Lock StoreLock { get; } = new();
+
+		/// <summary>Gets or sets the seq of the run's last stored event (the prompt's at first); deltas carry it. Guarded by <see cref="StoreLock"/>.</summary>
+		public long LastSeq { get; set; }
 
 		/// <summary>Creates the idle timer (the caller disposes it); output (<see cref="Touch"/>) restarts it.</summary>
 		public CancellationTokenSource StartIdle(TimeSpan timeout, TimeProvider time)

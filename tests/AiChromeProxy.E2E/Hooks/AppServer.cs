@@ -29,7 +29,7 @@ public sealed class AppServer : IAsyncDisposable
 			b.UseSetting("Mirror:Root", Path.Combine(root, "mirror"));
 			b.UseSetting("Projects:Database", Path.Combine(root, "aicp.db"));
 
-			// Claude is a fake agent: it prints the fixture named after the first word of the message (Fixtures/tour.jsonl, slow.jsonl), a little slowly.
+			// Claude is a fake agent: it prints the fixture named after the first word of the message (Fixtures/tour.jsonl, slow.jsonl, twotext.jsonl), a little slowly.
 			b.UseSetting("Agent:Command", Path.Combine(AppContext.BaseDirectory, "AiChromeProxy.FakeAgent.exe"));
 			b.UseSetting("Agent:Env:FAKE_AGENT_SCRIPT_DIR", Path.Combine(AppContext.BaseDirectory, "Fixtures"));
 			b.UseSetting("Agent:Env:FAKE_AGENT_DELAY_MS", "120");

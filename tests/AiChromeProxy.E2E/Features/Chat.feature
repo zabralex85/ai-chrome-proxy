@@ -22,6 +22,15 @@ Scenario: An answer with a diagram, a tool call and a permission request
 	And the last run cost is "$0.12"
 	And I save screenshots named "done"
 
+Scenario: Text after a tool call streams in too
+	Given the app is connected with a synced folder open
+	When I type "twotext please" and press Enter
+	Then Claude's answer says "First answer."
+	And the chat shows a tool row for "Bash"
+	And Claude's streaming answer says "second3"
+	And Claude's answer says "Second answer done."
+	And the agent status says "Claude idle"
+
 Scenario: A path:line in the answer opens the file's tab
 	Given the app is connected with a synced folder open
 	When I type "tour please" and press Enter

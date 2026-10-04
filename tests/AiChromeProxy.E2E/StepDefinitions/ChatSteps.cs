@@ -73,6 +73,10 @@ public sealed class ChatSteps(IPage page)
 	public async Task ThenClaudesAnswerSaysAsync(string text) =>
 		await Expect(page.GetByTestId("chat-assistant").Filter(new() { HasText = text }).First).ToBeVisibleAsync();
 
+	[Then("Claude's streaming answer says {string}")]
+	public async Task ThenClaudesStreamingAnswerSaysAsync(string text) =>
+		await Expect(page.Locator("[data-testid=chat-assistant].streaming").Filter(new() { HasText = text })).ToBeVisibleAsync();
+
 	[Then("the answer contains a drawn diagram")]
 	public async Task ThenTheAnswerContainsADrawnDiagramAsync()
 	{
