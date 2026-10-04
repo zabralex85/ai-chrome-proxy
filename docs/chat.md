@@ -64,6 +64,16 @@ The approval tool is an MCP endpoint, `/mcp/approve`, reachable only from `127.0
 - Replies render as markdown (raw HTML is not rendered), mermaid diagrams (mermaid 12.1.0, vendored) and `path:line` and `path#Symbol` links that open the file's tab in the [code viewer](navigator.md). **Enter** sends, **Shift+Enter** adds a line.
 - The status bar shows "Claude idle" or "Claude working... 0:42" and the last run's cost.
 
+## Diagrams
+
+Each drawn diagram has a toolbar (shown on hover or focus, always on touch screens):
+
+- **Open** shows it over the whole window: zoom with the wheel (around the pointer), `+` / `-`, **Fit** (`0`) and **100%** (`1`), from 10 % to 800 %; pan by dragging or with the arrow keys; **Esc** closes.
+- **Save…** → **Source (.mmd)**, **SVG** or **PNG** writes a new file into the picked folder; it syncs to the mirror like any other file. The path defaults to `docs/diagrams/<name>.<ext>`: `<name>` is the diagram's `title` made file-safe, else its type and the local time (`class-diagram-20261004-1530`). Missing folders are created; an existing file is never overwritten ("'name' already exists here." — pick another name). The extension always matches the kind. The browser asks for write access the first time. A note "Saved to path" offers **Open** for `.mmd` and `.svg` files.
+- **Download…** → **SVG** or **PNG** downloads the picture with the same name, also without a picked folder.
+
+Pictures are saved in the theme you see, with its background. PNG is drawn at twice the size (at most 8192 px on the longer side) and uses plain SVG text for labels, so HTML formatting inside labels is lost. A diagram that failed to draw offers only its source.
+
 ## Security
 
 - The hub accepts only the configured public host as `Origin` (no `Origin` passes, a wrong one gets 403; Development also allows localhost) and closes the connection when the Access token expires.
@@ -88,6 +98,7 @@ Run this before a release that touches the chat. Use a test repository.
 - [ ] As the service account, `claude` is on `PATH` and logged in (`claude -p "hi"` answers).
 - [ ] Send a message: text streams in, status shows "Claude working..." and then "Claude idle" with a cost.
 - [ ] Ask for a mermaid diagram: it renders; `path:line` and `path#Symbol` links open the file's tab.
+- [ ] On a diagram: **Open** → zoom, pan, **Fit**, **Esc**; **Save…** → **Source**, **SVG**, **PNG** land in `docs/diagrams/` in your folder and on the mirror; saving the same name again is refused; **Download…** → SVG and PNG open in an image viewer and look like the screen.
 - [ ] Ask for a file edit: the mirror changes and the file in your folder follows within ~5 s.
 - [ ] Ask to run a command: the card appears; **Deny** makes Claude report the denial; **Allow** runs it; **Allow always in this project** skips the card next time (and not for a command with `*`).
 - [ ] Switch to *Allow everything* and *Only what my Claude Code settings allow*: behavior matches.
