@@ -1,0 +1,5 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": { "types": [], "outDir": "public/js" },
+	"include": ["src/shared/**/*.ts", "src/page/**/*.ts"]
+}
