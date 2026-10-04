@@ -34,6 +34,8 @@
         <label class="field" for="settings-model">Model</label>
         <input id="settings-model" class="text-input" type="text" spellcheck="false" autocomplete="off" placeholder="Claude Code's default"
                data-testid="settings-model" @bind="_form.Model" @bind:event="oninput" />
+        <label class="field" for="settings-allowed">Always allowed (one rule per line)</label>
+        <textarea id="settings-allowed" class="mono" rows="6" spellcheck="false" data-testid="settings-allowed" @bind="_form.AllowedTools" @bind:event="oninput"></textarea>
         <div class="settings-actions">
             <button type="submit" class="button primary" data-testid="settings-save" disabled="@(!_form.IsDirty)">Save</button>
             <span role="status" class="@(_failed ? "state-error" : "muted")" data-testid="settings-status">@_status</span>
@@ -49,6 +51,28 @@
 
     [Parameter, EditorRequired]
     public SyncEngine Engine { get; set; } = null!;
+
+    /// <summary>Reads the settings again: an Allow always rule may have been added since the folder was opened.</summary>
+    protected override async Task OnInitializedAsync()
+    {
+        _loaded = Engine.Settings;
+        _form = new ProjectSettingsForm(_loaded);
+        try
+        {
+            await Engine.ReloadSettingsAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Not connected: the form shows what the engine knows; saving reads them again.
+            return;
+        }
+
+        if (!_form.IsDirty)
+        {
+            _loaded = Engine.Settings;
+            _form = new ProjectSettingsForm(_loaded);
+        }
+    }
 
     /// <summary>Takes over what the engine knows (the server's reply to a save, a new session) unless it is being edited.</summary>
     protected override void OnParametersSet()
@@ -66,7 +90,7 @@
         _failed = false;
         try
         {
-            await Engine.SaveSettingsAsync(_form.ToSettings());
+            await Engine.SaveSettingsAsync(_form.ToSettings);
             _loaded = Engine.Settings;
             _form = new ProjectSettingsForm(_loaded);
             _status = "Saved.";

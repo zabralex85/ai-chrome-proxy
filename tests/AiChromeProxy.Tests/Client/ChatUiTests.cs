@@ -148,6 +148,48 @@ public sealed class ChatUiTests
 	}
 
 	[Fact]
+	public void Settings_AllowedTools_OnePerLine_DirtyOnlyWhenEdited()
+	{
+		var form = new ProjectSettingsForm(new ProjectSettings { AgentAllowedTools = ["Bash(ls)", "Read"] });
+
+		Assert.Equal("Bash(ls)\nRead", form.AllowedTools);
+		Assert.False(form.IsDirty);
+		Assert.Equal(string.Empty, new ProjectSettingsForm(ProjectSettings.Default).AllowedTools);
+
+		form.AllowedTools = "Bash(ls)";
+		Assert.True(form.IsDirty);
+	}
+
+	[Fact]
+	public void Settings_ToSettings_OnlyEditedFieldsReplaceTheCurrentOnes()
+	{
+		var loaded = new ProjectSettings { AgentAllowedTools = ["Bash(ls)"] };
+		var current = new ProjectSettings { Excludes = "*.tmp", AgentAllowedTools = ["Bash(ls)", "Bash(make test)"], AgentModel = "sonnet" };
+		var form = new ProjectSettingsForm(loaded) { Permissions = "all" };
+
+		var settings = form.ToSettings(current);
+
+		// A rule Claude got allowed (and excludes set elsewhere) since the form loaded are kept; the model was not edited either.
+		Assert.Equal(["Bash(ls)", "Bash(make test)"], settings.AgentAllowedTools);
+		Assert.Equal(("*.tmp", "sonnet", "all"), (settings.Excludes, settings.AgentModel, settings.AgentPermissions));
+	}
+
+	[Fact]
+	public void Settings_EditedAllowedTools_ReplaceTheCurrentList_BlankLinesAndDuplicatesDropped()
+	{
+		var current = new ProjectSettings { AgentAllowedTools = ["Bash(ls)", "Bash(rm x)", "Bash(make test)"] };
+		var form = new ProjectSettingsForm(new ProjectSettings { AgentAllowedTools = ["Bash(ls)", "Bash(rm x)"] })
+		{
+			AllowedTools = "Bash(ls)\r\n\n  Read  \nBash(ls)\n",
+		};
+
+		Assert.Equal(["Bash(ls)", "Read"], form.ToSettings(current).AgentAllowedTools);
+
+		form.AllowedTools = " \n ";
+		Assert.Null(form.ToSettings(current).AgentAllowedTools);
+	}
+
+	[Fact]
 	public void Settings_ToSettings_AskAndEmptyModelAreTheDefaults()
 	{
 		var saved = new ProjectSettings { AgentPermissions = "all", AgentModel = "opus" };

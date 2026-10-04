@@ -176,6 +176,18 @@ public sealed class ChatSteps(IPage page)
 		await page.GetByRole(AriaRole.Button, new() { Name = "Save" }).ClickAsync();
 	}
 
+	[Then("the always-allowed rules are {string}")]
+	public async Task ThenTheAlwaysAllowedRulesAreAsync(string rules) =>
+		await Expect(page.GetByLabel("Always allowed (one rule per line)")).ToHaveValueAsync(rules);
+
+	[When("I clear the always-allowed rules and save")]
+	public async Task WhenIClearTheAlwaysAllowedRulesAndSaveAsync()
+	{
+		await page.GetByLabel("Always allowed (one rule per line)").FillAsync(string.Empty);
+		await page.GetByRole(AriaRole.Button, new() { Name = "Save" }).ClickAsync();
+		await Expect(page.GetByTestId("settings-status")).ToHaveTextAsync("Saved.");
+	}
+
 	[Then("the settings are saved")]
 	public async Task ThenTheSettingsAreSavedAsync()
 	{

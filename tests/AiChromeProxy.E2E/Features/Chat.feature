@@ -22,6 +22,16 @@ Scenario: An answer with a diagram, a tool call and a permission request
 	And the last run cost is "$0.12"
 	And I save screenshots named "done"
 
+Scenario: An always-allowed command is listed in the project settings and can be removed there
+	Given the app is connected with a synced folder open
+	When I type "tour please" and press Enter
+	And I click "Allow always in this project" on the permission card
+	Then Claude's answer says "approve: allow"
+	When I click the project settings button
+	Then the always-allowed rules are "Bash(dotnet build)"
+	When I clear the always-allowed rules and save
+	Then the always-allowed rules are ""
+
 Scenario: Text after a tool call streams in too
 	Given the app is connected with a synced folder open
 	When I type "twotext please" and press Enter

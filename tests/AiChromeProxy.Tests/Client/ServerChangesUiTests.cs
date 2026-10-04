@@ -135,6 +135,33 @@ public sealed class ServerChangesUiTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Settings_Save_ReadsTheCurrentSettingsFirst_KeepsRulesAddedMeanwhile()
+	{
+		await SyncedAsync();
+		var form = new ProjectSettingsForm(_engine.Settings) { Model = "opus" };
+
+		// Allow always in a chat run while the form is open.
+		_server.Projects.SaveSettings(Repo, _server.Projects.GetSettings(Repo) with { AgentAllowedTools = ["Bash(make test)"] });
+		await _engine.SaveSettingsAsync(form.ToSettings);
+
+		Assert.Equal(["Bash(make test)"], _server.Projects.GetSettings(Repo).AgentAllowedTools);
+		Assert.Equal("opus", _server.Projects.GetSettings(Repo).AgentModel);
+		Assert.Equal("Bash(make test)", new ProjectSettingsForm(_engine.Settings).AllowedTools);
+	}
+
+	[Fact]
+	public async Task Settings_Reload_ShowsRulesAddedOnTheServer()
+	{
+		await SyncedAsync();
+		_server.Projects.SaveSettings(Repo, _server.Projects.GetSettings(Repo) with { AgentAllowedTools = ["Bash(ls)"] });
+
+		var settings = await _engine.ReloadSettingsAsync();
+
+		Assert.Equal(["Bash(ls)"], settings.AgentAllowedTools);
+		Assert.Same(settings, _engine.Settings);
+	}
+
+	[Fact]
 	public async Task Settings_Save_SendsThemAndEngineReadsThemBack()
 	{
 		await SyncedAsync();
