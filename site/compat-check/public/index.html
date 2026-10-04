@@ -1,1 +1,50 @@
-<!doctype html><title>Compatibility check</title>
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="color-scheme" content="light dark">
+	<meta name="description" content="Checks whether ai-chrome-proxy can run in this browser.">
+	<title>ai-chrome-proxy compatibility check</title>
+	<link rel="stylesheet" href="/style.css">
+	<script type="module" src="/js/page/main.js"></script>
+</head>
+<body>
+	<main>
+		<header>
+			<h1>Can ai-chrome-proxy run in this browser?</h1>
+			<p class="lead">Open this page in the browser on the machine you'll work from (for example, over RDP).</p>
+		</header>
+
+		<section id="verdict" class="verdict checking" aria-live="polite">
+			<h2 id="verdict-title">Checking…</h2>
+			<p id="verdict-text"></p>
+			<ul id="verdict-list"></ul>
+		</section>
+
+		<noscript><p class="note">This check needs JavaScript.</p></noscript>
+
+		<ol id="checks" class="checks"></ol>
+
+		<section class="panel">
+			<h2>Folder access</h2>
+			<p class="note">Pick any empty or scratch folder. The page creates one temporary file there and deletes it right away.</p>
+			<button id="pick" type="button" disabled>Pick a test folder</button>
+		</section>
+
+		<section class="panel">
+			<h2>Share the result</h2>
+			<div class="action">
+				<button id="copy" type="button" disabled>Copy result</button>
+				<p id="copy-status" class="status" role="status"></p>
+			</div>
+			<textarea id="copy-text" readonly hidden rows="13" aria-label="Result summary"></textarea>
+			<div class="action">
+				<button id="send" type="button" disabled>Send anonymous report</button>
+				<p class="note">Sends only: browser, version, OS family, the result of each check and today's date. No IP address, no file or folder names.</p>
+			</div>
+			<p id="send-status" class="status" role="status"></p>
+		</section>
+	</main>
+</body>
+</html>

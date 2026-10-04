@@ -4,6 +4,7 @@
 	"type": "module",
 	"scripts": {
 		"build": "tsc -p tsconfig.json && tsc -p tsconfig.page.json",
+		"deploy": "npm run build && wrangler deploy",
 		"test": "tsc -p tsconfig.json && tsc -p tsconfig.page.json && tsc -p tsconfig.worker.json --noEmit && node --test \"build/test/*.test.js\""
 	},
 	"devDependencies": {
