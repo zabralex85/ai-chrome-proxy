@@ -1,0 +1,11 @@
+{
+	"name": "aicp-compat",
+	"main": "src/worker/index.ts",
+	"compatibility_date": "2026-10-04",
+	"assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*"] },
+	"d1_databases": [
+		{ "binding": "DB", "database_name": "aicp-compat", "database_id": "<your-d1-database-id>" }
+	]
+	// Optional custom domain:
+	// "routes": [{ "pattern": "check.example.com", "custom_domain": true }]
+}

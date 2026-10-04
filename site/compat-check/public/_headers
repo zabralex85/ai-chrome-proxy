@@ -1,0 +1,4 @@
+/*
+  Content-Security-Policy: default-src 'self'; connect-src 'self'; worker-src blob:; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
