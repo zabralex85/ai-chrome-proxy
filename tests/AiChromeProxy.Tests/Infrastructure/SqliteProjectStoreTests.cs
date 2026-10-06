@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AiChromeProxy.Domain.Chat;
 using AiChromeProxy.Domain.Sync;
 using AiChromeProxy.Infrastructure.Hosting;
 using AiChromeProxy.Infrastructure.Projects;
@@ -141,6 +142,32 @@ public sealed class SqliteProjectStoreTests : IDisposable
 		Assert.Single(bases);
 		Assert.Equal("1", bases["a.txt"]);
 		Assert.Equal(2L, Scalar("PRAGMA user_version"));
+	}
+
+	[Fact]
+	public void ToolsSnapshot_RoundTrip_NewestWins_ApartFromTheSettings()
+	{
+		var store = Create();
+		Assert.Null(store.GetToolsSnapshot("r"));
+		store.SaveSettings("r", new ProjectSettings { AgentModel = "opus" });
+		var old = new ClaudeToolsSnapshot([new ClaudeMcpServer("old", null, "connected")], [], DateTimeOffset.UnixEpoch, ClaudeToolsSnapshot.FromRun);
+		var snapshot = new ClaudeToolsSnapshot(
+			[new ClaudeMcpServer("plugin:design:chat", "plugin", "failed", "ECONNREFUSED")],
+			[new ClaudePlugin("design@market", "design", "1.0.0", false)],
+			new DateTimeOffset(2026, 10, 6, 12, 0, 0, TimeSpan.Zero),
+			ClaudeToolsSnapshot.FromCheck);
+
+		store.SaveToolsSnapshot("r", old);
+		store.SaveToolsSnapshot("r", snapshot);
+
+		// Saving settings (even with the row's key among the extra keys) neither drops nor overwrites it, and reading them does not show it.
+		var settings = store.SaveSettings("r", new ProjectSettings { AgentModel = "sonnet", Extra = new() { [SqliteProjectStore.ToolsKey] = JsonSerializer.SerializeToElement(1) } });
+		var stored = Create().GetToolsSnapshot("r")!;
+		Assert.Equal(snapshot.Servers, stored.Servers);
+		Assert.Equal(snapshot.Plugins, stored.Plugins);
+		Assert.Equal((snapshot.CheckedAt, snapshot.From), (stored.CheckedAt, stored.From));
+		Assert.Equal(new ProjectSettings { AgentModel = "sonnet" }, settings);
+		Assert.Null(store.GetToolsSnapshot("other"));
 	}
 
 	private SqliteProjectStore Create() => new(Options.Create(new ProjectsOptions { Database = _path }));

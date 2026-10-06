@@ -415,5 +415,9 @@ public sealed class PermissionBrokerTests
 		public ProjectSettings GetSettings(string repo) => throw new IOException("locked");
 
 		public ProjectSettings SaveSettings(string repo, ProjectSettings settings) => throw new IOException("locked");
+
+		public ClaudeToolsSnapshot? GetToolsSnapshot(string repo) => throw new IOException("locked");
+
+		public void SaveToolsSnapshot(string repo, ClaudeToolsSnapshot snapshot) => throw new IOException("locked");
 	}
 }

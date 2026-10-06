@@ -9,7 +9,7 @@ namespace AiChromeProxy.Application;
 
 public static class DependencyInjection
 {
-	/// <summary>Registers the envelope router and its handlers (singletons). Needs an <see cref="IMirrorStore"/>, an <see cref="IProjectStore"/>, an <see cref="IChatStore"/> and an <see cref="IAgentRunner"/> (Infrastructure) and logging (the host); an <see cref="IApprovalEndpoint"/> (the Server) is optional.</summary>
+	/// <summary>Registers the envelope router and its handlers (singletons). Needs an <see cref="IMirrorStore"/>, an <see cref="IProjectStore"/>, an <see cref="IChatStore"/>, an <see cref="IAgentRunner"/> and an <see cref="IClaudeToolsProbe"/> (Infrastructure) and logging (the host); an <see cref="IApprovalEndpoint"/> (the Server) is optional.</summary>
 	public static IServiceCollection AddApplication(this IServiceCollection services)
 	{
 		services.TryAddSingleton(TimeProvider.System);
@@ -31,6 +31,11 @@ public static class DependencyInjection
 		foreach (var type in ChatHandler.Types)
 		{
 			services.AddSingleton<IEnvelopeHandler>(sp => new ChatHandler(type, sp.GetRequiredService<ChatService>()));
+		}
+
+		foreach (var type in ClaudeToolsHandler.Types)
+		{
+			services.AddSingleton<IEnvelopeHandler>(sp => ActivatorUtilities.CreateInstance<ClaudeToolsHandler>(sp, type));
 		}
 
 		services.AddSingleton<EnvelopeRouter>();

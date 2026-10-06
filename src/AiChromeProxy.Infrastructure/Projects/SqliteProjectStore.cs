@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AiChromeProxy.Application.Sync;
+using AiChromeProxy.Domain.Chat;
 using AiChromeProxy.Domain.Sync;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Options;
@@ -10,6 +11,9 @@ namespace AiChromeProxy.Infrastructure.Projects;
 /// <summary>SQLite (WAL) implementation of <see cref="IProjectStore"/>: one connection per call, schema kept by <see cref="AicpDatabase"/>.</summary>
 public sealed class SqliteProjectStore : IProjectStore
 {
+	/// <summary>The setting row holding the <see cref="ClaudeToolsSnapshot"/> (JSON); not a setting, so never read or replaced as one.</summary>
+	public const string ToolsKey = "agent.tools";
+
 	private readonly string _path;
 
 	public SqliteProjectStore(IOptions<ProjectsOptions> options)
@@ -98,7 +102,7 @@ public sealed class SqliteProjectStore : IProjectStore
 		var json = new JsonObject();
 		using (var connection = Open())
 		{
-			using (var command = Command(connection, "SELECT key, value FROM setting WHERE repo = $repo", ("$repo", repo)))
+			using (var command = Command(connection, "SELECT key, value FROM setting WHERE repo = $repo AND key <> $tools", ("$repo", repo), ("$tools", ToolsKey)))
 			{
 				using (var reader = command.ExecuteReader())
 				{
@@ -117,13 +121,13 @@ public sealed class SqliteProjectStore : IProjectStore
 	{
 		// Serializing the record yields every non-null property plus the Extra keys, camelCase.
 		var rows = JsonSerializer.SerializeToElement(settings, JsonSerializerOptions.Web).EnumerateObject()
-			.Where(p => p.Value.ValueKind != JsonValueKind.Null)
+			.Where(p => p.Value.ValueKind != JsonValueKind.Null && p.Name != ToolsKey)
 			.ToList();
 		using (var connection = Open())
 		{
 			using (var transaction = connection.BeginTransaction())
 			{
-				using (var delete = Command(connection, "DELETE FROM setting WHERE repo = $repo", ("$repo", repo)))
+				using (var delete = Command(connection, "DELETE FROM setting WHERE repo = $repo AND key <> $tools", ("$repo", repo), ("$tools", ToolsKey)))
 				{
 					delete.Transaction = transaction;
 					delete.ExecuteNonQuery();
@@ -143,6 +147,29 @@ public sealed class SqliteProjectStore : IProjectStore
 		}
 
 		return GetSettings(repo);
+	}
+
+	public ClaudeToolsSnapshot? GetToolsSnapshot(string repo)
+	{
+		using (var connection = Open())
+		{
+			using (var command = Command(connection, "SELECT value FROM setting WHERE repo = $repo AND key = $tools", ("$repo", repo), ("$tools", ToolsKey)))
+			{
+				return command.ExecuteScalar() is string json ? JsonSerializer.Deserialize<ClaudeToolsSnapshot>(json, JsonSerializerOptions.Web) : null;
+			}
+		}
+	}
+
+	public void SaveToolsSnapshot(string repo, ClaudeToolsSnapshot snapshot)
+	{
+		var json = JsonSerializer.Serialize(snapshot, JsonSerializerOptions.Web);
+		using (var connection = Open())
+		{
+			using (var command = Command(connection, "INSERT INTO setting (repo, key, value) VALUES ($repo, $tools, $value) ON CONFLICT(repo, key) DO UPDATE SET value = excluded.value", ("$repo", repo), ("$tools", ToolsKey), ("$value", json)))
+			{
+				command.ExecuteNonQuery();
+			}
+		}
 	}
 
 	private static SqliteCommand Command(SqliteConnection connection, string sql, params (string Name, object? Value)[] parameters)

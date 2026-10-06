@@ -9,6 +9,8 @@
 //   FAKE_AGENT_STDERR       when set, this text is written to stderr first
 //   FAKE_AGENT_ARGS_FILE    when set, the received arguments are written to this file, one per line (UTF-8)
 //   FAKE_AGENT_EXIT_CODE    exit code (default 0)
+// Invoked as `mcp list` or `plugin list --json` (Check now), it prints the file at FAKE_AGENT_MCP_LIST or FAKE_AGENT_PLUGIN_LIST as it is (`mcp list`
+// also writes a noise line to stderr, like Claude Code does) and exits with FAKE_AGENT_EXIT_CODE; FAKE_AGENT_PROBE_DELAY_MS pauses first.
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -18,6 +20,32 @@ var argsFile = Environment.GetEnvironmentVariable("FAKE_AGENT_ARGS_FILE");
 if (!string.IsNullOrEmpty(argsFile))
 {
 	await File.WriteAllLinesAsync(argsFile, args);
+}
+
+var exitCode = int.TryParse(Environment.GetEnvironmentVariable("FAKE_AGENT_EXIT_CODE"), out var code) ? code : 0;
+if (args is ["mcp", "list"] or ["plugin", "list", "--json"])
+{
+	if (int.TryParse(Environment.GetEnvironmentVariable("FAKE_AGENT_PROBE_DELAY_MS"), out var probeDelay) && probeDelay > 0)
+	{
+		await Task.Delay(probeDelay);
+	}
+
+	if (args[0] == "mcp")
+	{
+		await Console.Error.WriteLineAsync("[mcp-sdk] fake: a warning on stderr");
+	}
+
+	// The bytes as they are: Claude Code writes UTF-8 (the marks), whatever the console code page.
+	var answer = Environment.GetEnvironmentVariable(args[0] == "mcp" ? "FAKE_AGENT_MCP_LIST" : "FAKE_AGENT_PLUGIN_LIST");
+	if (!string.IsNullOrEmpty(answer) && File.Exists(answer))
+	{
+		using (var stdout = Console.OpenStandardOutput())
+		{
+			await stdout.WriteAsync(await File.ReadAllBytesAsync(answer));
+		}
+	}
+
+	return exitCode;
 }
 
 string stdin;
@@ -62,7 +90,7 @@ if (!string.IsNullOrEmpty(script) && File.Exists(script))
 	}
 }
 
-return int.TryParse(Environment.GetEnvironmentVariable("FAKE_AGENT_EXIT_CODE"), out var code) ? code : 0;
+return exitCode;
 
 // Calls mcp__aicp__approve like Claude Code would and returns a stream-json assistant line with the answer.
 static async Task<string> ApproveAsync(string[] args, string step)

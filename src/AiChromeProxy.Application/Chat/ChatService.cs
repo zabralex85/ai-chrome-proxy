@@ -345,6 +345,7 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 	private async Task<ChatEvent> ReadAsync(Run run, IAgentProcess process, CancellationTokenSource idle)
 	{
 		var parser = new StreamJsonParser(_parserLogger);
+		var toolsSaved = false;
 		ChatEvent? result = null;
 		using (var stop = CancellationTokenSource.CreateLinkedTokenSource(run.Token, idle.Token))
 		{
@@ -360,6 +361,12 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 						{
 							_store.SetClaudeSession(run.SessionId!, claudeId);
 							run.ClaudeId = claudeId;
+						}
+
+						if (!toolsSaved && parser.Tools is { } tools)
+						{
+							toolsSaved = true;
+							SaveTools(run, tools with { CheckedAt = _time.GetUtcNow() });
 						}
 
 						if (result is not null)
@@ -394,6 +401,19 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 
 		var code = await ExitedAsync(process);
 		return Failed(run, process.Stderr is { Length: > 0 } stderr ? stderr : code is null ? "Claude's output ended but it did not exit." : $"Claude exited with code {code} without a result.");
+	}
+
+	/// <summary>Stores what the run's <c>init</c> reported about Claude's MCP servers and plugins; a failure is logged, never fails the run.</summary>
+	private void SaveTools(Run run, ClaudeToolsSnapshot tools)
+	{
+		try
+		{
+			_projects.SaveToolsSnapshot(run.Repo, tools);
+		}
+		catch (Exception ex)
+		{
+			_logger.LogWarning(ex, "Chat run {RunId}: storing the Claude tools snapshot failed", run.Id);
+		}
 	}
 
 	/// <summary>The exit code; null when the process did not exit within <see cref="ExitGrace"/> (it is killed then; e.g. a child still holds a pipe).</summary>

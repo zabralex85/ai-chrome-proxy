@@ -130,6 +130,42 @@ public sealed class ClaudeRunnerTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Start_CmdShim_DropsToolNamesCmdCannotTake_PassesTheRestAndQuotesEndToEnd()
+	{
+		var shim = Path.Combine(_folder, "claude.cmd");
+		await File.WriteAllTextAsync(shim, "@echo off" + Environment.NewLine + "\"" + FakeAgent + "\" %*" + Environment.NewLine, TestContext.Current.CancellationToken);
+		var received = Path.Combine(_folder, "args.txt");
+		var options = new AgentOptions { Command = shim, Env = { ["FAKE_AGENT_ARGS_FILE"] = received } };
+		var run = new AgentRun(_folder, "hi", DisabledMcpServers: ["a|b", "blender", "say \"hi\" & go"], DisabledPlugins: ["x%y@m", "design@market"], ApprovedMcpServers: ["c!d", "x^y"]);
+
+		using (var process = await Runner(options).StartAsync(run, TestContext.Current.CancellationToken))
+		{
+			Assert.Equal(0, await process.Exited);
+		}
+
+		var args = await File.ReadAllLinesAsync(received, TestContext.Current.CancellationToken);
+		Assert.Equal(ClaudeArguments.Build(run with { DisabledMcpServers = ["blender"], DisabledPlugins = ["design@market"], ApprovedMcpServers = [] }, options), args);
+		Assert.Equal("""{"enabledPlugins":{"design@market":false},"deniedMcpServers":[{"serverName":"blender"}]}""", args[Array.IndexOf(args, "--settings") + 1]);
+	}
+
+	[Fact]
+	public async Task Start_CmdShim_QuoteInAToolNamePassesThrough()
+	{
+		var shim = Path.Combine(_folder, "claude.cmd");
+		await File.WriteAllTextAsync(shim, "@echo off" + Environment.NewLine + "\"" + FakeAgent + "\" %*" + Environment.NewLine, TestContext.Current.CancellationToken);
+		var received = Path.Combine(_folder, "args.txt");
+		var options = new AgentOptions { Command = shim, Env = { ["FAKE_AGENT_ARGS_FILE"] = received } };
+		var run = new AgentRun(_folder, "hi", DisabledMcpServers: ["say \"hi\" now"]);
+
+		using (var process = await Runner(options).StartAsync(run, TestContext.Current.CancellationToken))
+		{
+			Assert.Equal(0, await process.Exited);
+		}
+
+		Assert.Equal(ClaudeArguments.Build(run, options), await File.ReadAllLinesAsync(received, TestContext.Current.CancellationToken));
+	}
+
+	[Fact]
 	public void IdleTimeout_FromOptions()
 	{
 		Assert.Equal(TimeSpan.FromMinutes(10), Runner(new AgentOptions()).IdleTimeout);

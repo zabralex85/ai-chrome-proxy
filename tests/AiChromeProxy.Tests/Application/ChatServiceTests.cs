@@ -287,6 +287,42 @@ public sealed class ChatServiceTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Run_SavesTheToolsSnapshotFromItsInit_StampedOnce()
+	{
+		var client = new Client("c1");
+		await SendAsync(client, Repo, null, "Hi");
+		var process = await _runner.NextAsync();
+		var at = _time.GetUtcNow();
+
+		process.Write("""{"type":"system","subtype":"init","session_id":"sess-1","mcp_servers":[{"name":"codegraph","status":"connected","source":"user"}],"plugins":[{"name":"design","source":"design@market","version":"1.0.0"}]}""", Message);
+		await client.WaitAsync(e => e.Kind == ChatEventKinds.Message);
+		_time.Advance(TimeSpan.FromMinutes(1));
+		process.Write("""{"type":"system","subtype":"init","session_id":"sess-1","mcp_servers":[]}""", Result);
+		process.Exit();
+		await client.WaitAsync(e => e.Kind == ChatEventKinds.Result);
+
+		var saved = _projects.GetToolsSnapshot(Repo)!;
+		Assert.Equal((at, ClaudeToolsSnapshot.FromRun), (saved.CheckedAt, saved.From));
+		Assert.Equal(new ClaudeMcpServer("codegraph", "user", "connected"), Assert.Single(saved.Servers));
+		Assert.Equal(new ClaudePlugin("design@market", "design", "1.0.0", true), Assert.Single(saved.Plugins));
+	}
+
+	[Fact]
+	public async Task Run_ToolsSnapshotStoreFails_RunGoesOn()
+	{
+		_projects.FailToolsSnapshot = true;
+		var client = new Client("c1");
+		await SendAsync(client, Repo, null, "Hi");
+		var process = await _runner.NextAsync();
+
+		process.Write(Init, Result);
+		process.Exit();
+
+		Assert.True((await client.WaitAsync(e => e.Kind == ChatEventKinds.Result)).Ok);
+		Assert.Contains(_logger.Messages, m => m.Contains("tools snapshot", StringComparison.Ordinal));
+	}
+
+	[Fact]
 	public async Task History_PagedWithinTheLimit_UntilFinal()
 	{
 		var session = _store.CreateSession(Repo, "t");

@@ -3,6 +3,7 @@ using AiChromeProxy.Application.Chat;
 using AiChromeProxy.Client.Transport;
 using AiChromeProxy.Domain;
 using AiChromeProxy.Domain.Chat;
+using AiChromeProxy.Domain.Sync;
 using AiChromeProxy.Infrastructure.Security;
 using AiChromeProxy.Server.Security;
 using AiChromeProxy.Server.Transport;
@@ -40,6 +41,9 @@ public sealed class ChatHubTests : IAsyncDisposable
 			b.UseSetting("CloudflareAccess:Audience", TestAccessIssuer.Audience);
 			b.UseSetting("Mirror:Root", _mirror);
 			b.UseSetting("Projects:Database", Path.Combine(_testRoot, "aicp.db"));
+			b.UseSetting("Agent:Command", Path.Combine(AppContext.BaseDirectory, "AiChromeProxy.FakeAgent.exe"));
+			b.UseSetting("Agent:Env:FAKE_AGENT_MCP_LIST", Path.Combine(AppContext.BaseDirectory, "Application", "Fixtures", "claude-tools", "mcp-list-2.1.289.txt"));
+			b.UseSetting("Agent:Env:FAKE_AGENT_PLUGIN_LIST", Path.Combine(_testRoot, "plugins.json"));
 			b.ConfigureServices(s =>
 			{
 				s.AddHttpClient(CloudflareAccessTokenValidator.JwksHttpClient).ConfigurePrimaryHttpMessageHandler(() => _issuer.Handler());
@@ -85,6 +89,29 @@ public sealed class ChatHubTests : IAsyncDisposable
 			Assert.Equal((started.SessionId, started.RunId, true), (done.SessionId, done.RunId, done.Ok));
 			Assert.Equal(Path.Combine(_mirror, "r"), process.Run.RepoFolder);
 			Assert.False(process.Killed);
+		}
+	}
+
+	[Fact]
+	public async Task ToolsCheck_RunsTheProbeInTheMirror_ThenGetShowsTheStoredSnapshot()
+	{
+		var ct = TestContext.Current.CancellationToken;
+		Directory.CreateDirectory(Path.Combine(_mirror, "r"));
+		await File.WriteAllTextAsync(Path.Combine(_testRoot, "plugins.json"), """[{"id":"design@market","version":"1.0.0","enabled":true}]""", ct);
+		await using (var client = new SignalRTransport(Connection()))
+		{
+			await client.ConnectAsync(ct);
+			await client.RequestAsync(Envelope.Create(MessageTypes.ProjectSettingsSet, new ProjectSettingsPayload("r", new ProjectSettings { AgentDisabledPlugins = ["design@market"] })), Timeout, ct);
+
+			var checkedTools = Read<ClaudeToolsPayload>(await client.RequestAsync(Envelope.Create(MessageTypes.AgentToolsCheck, new ClaudeToolsRequest("r")), TimeSpan.FromSeconds(60), ct));
+			var stored = Read<ClaudeToolsPayload>(await client.RequestAsync(Envelope.Create(MessageTypes.AgentToolsGet, new ClaudeToolsRequest("r")), Timeout, ct));
+
+			Assert.Null(checkedTools.Error);
+			Assert.Equal((ClaudeToolsSnapshot.FromCheck, 10), (checkedTools.From, checkedTools.Servers.Count));
+			Assert.Equal(new ClaudePluginRow("design@market", "design", "1.0.0", true, false), Assert.Single(checkedTools.Plugins));
+			Assert.Equal(checkedTools.CheckedAt, stored.CheckedAt);
+			Assert.Equal(checkedTools.Servers, stored.Servers);
+			Assert.Equal(checkedTools.Plugins, stored.Plugins);
 		}
 	}
 
