@@ -1,0 +1,13 @@
+Checking MCP server health…
+
+[mcp-sdk] SEP-2352: stored OAuth credential has no 'issuer' stamp (pre-upgrade storage or provider not round-tripping the value). SEP-2352 isolation is inactive for this read; ensure your provider round-trips the issuer field.
+claude.ai Docs: https://docs.example.com/mcp - ✔ Connected
+claude.ai Tracker: https://tracker.example.com/v1/mcp - ! Needs authentication
+plugin:security:scanner: node C:/Users/me/.claude/plugins/cache/market/security/1.0.0/bin/mcp.js --root C:/repo - ✔ Connected
+plugin:design:chat: https://chat.example.com/mcp (HTTP) - ! Needs authentication
+plugin:design:google calendar:  (HTTP) - - Not configured
+remote-tools: http://127.0.0.1:13337/mcp (HTTP) - ✘ Failed to connect — ECONNREFUSED: ECONNREFUSED: Unable to connect. Is the computer able to access the url?
+events: http://127.0.0.1:8000/sse (SSE) - ✘ Failed to connect — SSE error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?
+codegraph: codegraph serve --mcp - ✔ Connected
+designer: C:\Program Files\Designer\mcp-server.exe --app desktop - ✔ Connected
+team-db: npx -y db-mcp - ⏸ Pending approval

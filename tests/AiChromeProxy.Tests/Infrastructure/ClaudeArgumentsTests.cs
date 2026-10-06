@@ -87,6 +87,54 @@ public sealed class ClaudeArgumentsTests
 	}
 
 	[Fact]
+	public void Settings_EachList_CompactJson_BeforeEveryVariadicFlag()
+	{
+		var run = Run("ask", "http://127.0.0.1:1/mcp/approve", "t", resume: "abc", tools: ["Read"]) with
+		{
+			DisabledMcpServers = ["blender", "aicp", "plugin:design:google calendar"],
+			DisabledPlugins = ["design@market"],
+			ApprovedMcpServers = ["team-db"],
+		};
+
+		var args = ClaudeArguments.Build(run, new AgentOptions());
+
+		Assert.Equal([.. Base, "--resume", "abc", "--settings"], args.Take(8));
+		Assert.Equal(
+			"""{"enabledPlugins":{"design@market":false},"deniedMcpServers":[{"serverName":"blender"},{"serverName":"plugin:design:google calendar"}],"enabledMcpjsonServers":["team-db"]}""",
+			args[8]);
+		Assert.Equal("--permission-mode", args[9]);
+		Assert.Single(args, a => a == "--settings");
+	}
+
+	[Fact]
+	public void Settings_OnlyNonEmptyLists_NoneOrOnlyAicp_NoFlag()
+	{
+		Assert.Equal(
+			"""{"deniedMcpServers":[{"serverName":"x"}]}""",
+			Settings(Run() with { DisabledMcpServers = ["x"], DisabledPlugins = [], ApprovedMcpServers = [" "] }));
+		Assert.Equal("""{"enabledMcpjsonServers":["y"]}""", Settings(Run() with { ApprovedMcpServers = ["y", "aicp"] }));
+		Assert.DoesNotContain("--settings", ClaudeArguments.Build(Run() with { ApprovedMcpServers = ["aicp"] }, new AgentOptions()));
+		Assert.DoesNotContain("--settings", ClaudeArguments.Build(Run(), new AgentOptions()));
+		Assert.DoesNotContain("--settings", ClaudeArguments.Build(Run() with { DisabledMcpServers = ["aicp", "", "a\nb"] }, new AgentOptions()));
+	}
+
+	[Fact]
+	public void Settings_EntriesTrimmed_TooLongAndControlDropped_AtMost100()
+	{
+		string[] names = [" a ", "a", new string('x', 201), new string('y', 200), "tab\there", .. Enumerable.Range(0, 150).Select(i => $"s{i}")];
+
+		var json = Settings(Run() with { DisabledMcpServers = names });
+
+		using (var doc = JsonDocument.Parse(json!))
+		{
+			var denied = doc.RootElement.GetProperty("deniedMcpServers").EnumerateArray().Select(e => e.GetProperty("serverName").GetString()).ToList();
+			Assert.Equal(100, denied.Count);
+			Assert.Equal(["a", new string('y', 200), "s0"], denied.Take(3));
+			Assert.Equal("s97", denied[^1]);
+		}
+	}
+
+	[Fact]
 	public void ResolveCommand_PrefersExeInAnyDirOverCmd()
 	{
 		string[] dirs = [@"C:\a", "", @"C:\b"];
@@ -125,4 +173,11 @@ public sealed class ClaudeArgumentsTests
 
 	private static AgentRun Run(string permissions = "ask", string? url = null, string? token = null, string? resume = null, string? model = null, string[]? tools = null)
 		=> new(@"C:\mirror\repo", "hello", resume, permissions, model, tools, url, token);
+
+	private static string? Settings(AgentRun run)
+	{
+		var args = ClaudeArguments.Build(run, new AgentOptions());
+		var at = args.ToList().IndexOf("--settings");
+		return at < 0 ? null : args[at + 1];
+	}
 }

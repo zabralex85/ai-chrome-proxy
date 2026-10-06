@@ -152,7 +152,10 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 				string.IsNullOrWhiteSpace(settings.AgentModel) ? null : settings.AgentModel,
 				settings.AgentAllowedTools,
 				url,
-				token);
+				token,
+				settings.AgentDisabledMcpServers,
+				settings.AgentDisabledPlugins,
+				settings.AgentApprovedMcpServers);
 
 			// Stored before the run starts: its seq precedes the run's events.
 			Store(run, [.. Parts(run, new ChatEvent(run.SessionId, run.Id, 0, ChatEventKinds.Prompt, Text: text))]);
@@ -303,6 +306,7 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 			Push(run.Repo, Envelope.Create(MessageTypes.ChatSessions, Sessions(run.Repo)));
 			try
 			{
+				agentRun = agentRun with { ApprovedMcpServers = await ApprovedAsync(run, agentRun.ApprovedMcpServers) };
 				process = await _runner.StartAsync(agentRun, run.Token);
 			}
 			catch (Exception ex) when (ex is FileNotFoundException or InvalidOperationException or Win32Exception)
@@ -342,6 +346,7 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 	private async Task<ChatEvent> ReadAsync(Run run, IAgentProcess process, CancellationTokenSource idle)
 	{
 		var parser = new StreamJsonParser(_parserLogger);
+		var toolsSaved = false;
 		ChatEvent? result = null;
 		using (var stop = CancellationTokenSource.CreateLinkedTokenSource(run.Token, idle.Token))
 		{
@@ -357,6 +362,12 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 						{
 							_store.SetClaudeSession(run.SessionId!, claudeId);
 							run.ClaudeId = claudeId;
+						}
+
+						if (!toolsSaved && parser.Tools is { } tools)
+						{
+							toolsSaved = true;
+							SaveTools(run, tools with { CheckedAt = _time.GetUtcNow() });
 						}
 
 						if (result is not null)
@@ -391,6 +402,39 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 
 		var code = await ExitedAsync(process);
 		return Failed(run, process.Stderr is { Length: > 0 } stderr ? stderr : code is null ? "Claude's output ended but it did not exit." : $"Claude exited with code {code} without a result.");
+	}
+
+	/// <summary>
+	/// The approved <c>.mcp.json</c> servers whose entry is unchanged since it was approved (<see cref="McpJson.Approved"/>); a changed one is left out
+	/// (and logged), so Claude does not start it until it is approved again.
+	/// </summary>
+	private async Task<IReadOnlyList<string>?> ApprovedAsync(Run run, IReadOnlyList<string>? approvals)
+	{
+		if (approvals is not { Count: > 0 })
+		{
+			return approvals;
+		}
+
+		var (approved, stale) = McpJson.Approved(approvals, await McpJson.ReadAsync(_mirror, run.Repo, run.Token));
+		foreach (var name in stale)
+		{
+			_logger.LogInformation("Chat run {RunId}: the .mcp.json server {Server} in {Repo} changed (or is gone) since it was approved, so it stays off", run.Id, name, run.Repo);
+		}
+
+		return approved;
+	}
+
+	/// <summary>Stores what the run's <c>init</c> reported about Claude's MCP servers and plugins; a failure is logged, never fails the run.</summary>
+	private void SaveTools(Run run, ClaudeToolsSnapshot tools)
+	{
+		try
+		{
+			_projects.SaveToolsSnapshot(run.Repo, tools);
+		}
+		catch (Exception ex)
+		{
+			_logger.LogWarning(ex, "Chat run {RunId}: storing the Claude tools snapshot failed", run.Id);
+		}
 	}
 
 	/// <summary>The exit code; null when the process did not exit within <see cref="ExitGrace"/> (it is killed then; e.g. a child still holds a pipe).</summary>

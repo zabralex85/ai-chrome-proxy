@@ -1,0 +1,8 @@
+Checking MCP server health…
+
+github: npx -y @modelcontextprotocol/server-github - ✔ Connected
+blender: uvx blender-mcp - ✘ Failed to connect — connect ECONNREFUSED 127.0.0.1:9876
+linear: https://mcp.example.com/linear (HTTP) - ! Needs authentication
+team-db: npx -y db-mcp - ⏸ Pending approval
+plugin:design:figma: https://mcp.example.com/figma (HTTP) - ✔ Connected
+aicp: http://127.0.0.1:5180/mcp/approve (HTTP) - ✔ Connected

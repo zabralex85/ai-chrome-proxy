@@ -18,6 +18,9 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 	/// <summary>How long a request waits for its reply (a reconnect cancels it sooner).</summary>
 	public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
 
+	/// <summary>How long <b>Check now</b> waits: the server runs <c>claude mcp list</c> and <c>claude plugin list</c> side by side, up to 60 s each.</summary>
+	public static readonly TimeSpan ToolsCheckTimeout = TimeSpan.FromSeconds(90);
+
 	private const string NoFolder = "Open a folder first.";
 
 	private const string TooLong = "The message is too long; shorten it.";
@@ -235,6 +238,25 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 		}
 
 		return card is not null && await TryAsync(MessageTypes.ChatApprove, new ChatApprovePayload(card.RunId, requestId, decision));
+	}
+
+	/// <summary>
+	/// The open folder's Claude tools as last recorded (<c>agent.tools.get</c>), or after a fresh check (<c>agent.tools.check</c>, which may take
+	/// up to <see cref="ToolsCheckTimeout"/>; a failed check answers the old rows with <c>error</c> set).
+	/// </summary>
+	/// <exception cref="InvalidOperationException">No folder is open.</exception>
+	public async Task<ClaudeToolsPayload> ToolsAsync(bool check)
+	{
+		string? repo;
+		CancellationToken token;
+		lock (_gate)
+		{
+			token = _epochCts.Token;
+			repo = _repo ?? sync.Repo;
+		}
+
+		var request = Envelope.Create(check ? MessageTypes.AgentToolsCheck : MessageTypes.AgentToolsGet, new ClaudeToolsRequest(repo ?? throw new InvalidOperationException(NoFolder)));
+		return Read<ClaudeToolsPayload>(await transport.RequestAsync(request, check ? ToolsCheckTimeout : RequestTimeout, token));
 	}
 
 	private static T Read<T>(Envelope envelope) => envelope.Payload.Deserialize<T>(JsonSerializerOptions.Web)!;

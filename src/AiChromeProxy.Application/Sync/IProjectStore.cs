@@ -1,3 +1,4 @@
+using AiChromeProxy.Domain.Chat;
 using AiChromeProxy.Domain.Sync;
 
 namespace AiChromeProxy.Application.Sync;
@@ -22,4 +23,10 @@ public interface IProjectStore
 
 	/// <summary>Replaces the settings (null properties remove the key; Extra keys are written as they are).</summary>
 	ProjectSettings SaveSettings(string repo, ProjectSettings settings);
+
+	/// <summary>The last stored report of Claude's MCP servers and plugins for the repo, or null.</summary>
+	ClaudeToolsSnapshot? GetToolsSnapshot(string repo);
+
+	/// <summary>Replaces the stored report (kept apart from the settings: saving settings leaves it alone).</summary>
+	void SaveToolsSnapshot(string repo, ClaudeToolsSnapshot snapshot);
 }

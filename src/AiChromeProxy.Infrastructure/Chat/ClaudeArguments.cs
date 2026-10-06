@@ -1,6 +1,8 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using AiChromeProxy.Application.Chat;
+using AiChromeProxy.Domain.Chat;
 
 namespace AiChromeProxy.Infrastructure.Chat;
 
@@ -14,6 +16,7 @@ public static class ClaudeArguments
 
 	/// <summary>
 	/// The arguments for one turn. <c>--allowedTools</c> is variadic, so it comes right before <c>--append-system-prompt</c>, which ends its list;
+	/// <c>--settings</c> (the project's MCP server and plugin switches) comes before every variadic flag (<c>--mcp-config</c> too), so none swallows it;
 	/// <see cref="AgentOptions.Args"/> follow last.
 	/// </summary>
 	public static IReadOnlyList<string> Build(AgentRun run, AgentOptions options)
@@ -22,6 +25,11 @@ public static class ClaudeArguments
 		if (!string.IsNullOrEmpty(run.ResumeId))
 		{
 			args.AddRange(["--resume", run.ResumeId]);
+		}
+
+		if (Settings(run) is { } settings)
+		{
+			args.AddRange(["--settings", settings]);
 		}
 
 		switch (run.Permissions)
@@ -109,6 +117,34 @@ public static class ClaudeArguments
 		}
 
 		return line.Append('"').ToString();
+	}
+
+	/// <summary>
+	/// The <c>--settings</c> JSON (compact) from the project's lists, each cleaned by <see cref="ClaudeToolEntries.Clean"/>: <c>enabledPlugins</c> (each
+	/// disabled id → false), <c>deniedMcpServers</c> and <c>enabledMcpjsonServers</c> (never <see cref="ClaudeToolEntries.ApprovalServer"/>); null when all are empty.
+	/// </summary>
+	private static string? Settings(AgentRun run)
+	{
+		var json = new JsonObject();
+		var plugins = ClaudeToolEntries.Clean(run.DisabledPlugins);
+		if (plugins.Count > 0)
+		{
+			json["enabledPlugins"] = new JsonObject(plugins.Select(id => KeyValuePair.Create(id, (JsonNode?)false)));
+		}
+
+		var denied = ClaudeToolEntries.Clean(run.DisabledMcpServers).Where(n => n != ClaudeToolEntries.ApprovalServer).ToList();
+		if (denied.Count > 0)
+		{
+			json["deniedMcpServers"] = new JsonArray([.. denied.Select(n => (JsonNode?)new JsonObject { ["serverName"] = n })]);
+		}
+
+		var approved = ClaudeToolEntries.Clean(run.ApprovedMcpServers).Where(n => n != ClaudeToolEntries.ApprovalServer).ToList();
+		if (approved.Count > 0)
+		{
+			json["enabledMcpjsonServers"] = new JsonArray([.. approved.Select(n => (JsonNode?)n)]);
+		}
+
+		return json.Count == 0 ? null : json.ToJsonString();
 	}
 
 	private static string McpConfig(string url, string token) => JsonSerializer.Serialize(new

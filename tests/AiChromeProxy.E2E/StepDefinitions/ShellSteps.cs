@@ -140,7 +140,7 @@ public sealed class ShellSteps(IPage page)
 	[When("I click the project settings button")]
 	public async Task WhenIClickTheProjectSettingsButtonAsync()
 	{
-		await page.GetByRole(AriaRole.Button, new() { Name = "Project settings" }).ClickAsync();
+		await page.GetByRole(AriaRole.Button, new() { Name = "Project settings", Exact = true }).ClickAsync();
 	}
 
 	[Then("the Project settings tab is active")]

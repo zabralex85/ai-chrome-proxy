@@ -253,7 +253,16 @@ public sealed class ChatServiceTests : IDisposable
 	[Fact]
 	public async Task NextTurn_ResumesClaudeSession_WithProjectSettings()
 	{
-		_projects.SaveSettings(Repo, new ProjectSettings { AgentPermissions = "all", AgentModel = "opus", AgentAllowedTools = ["Bash(ls)"] });
+		await File.WriteAllTextAsync(Path.Combine(_root, Repo, McpJson.FileName), McpJsonText("npx"), Ct);
+		_projects.SaveSettings(Repo, new ProjectSettings
+		{
+			AgentPermissions = "all",
+			AgentModel = "opus",
+			AgentAllowedTools = ["Bash(ls)"],
+			AgentDisabledMcpServers = ["blender"],
+			AgentDisabledPlugins = ["design@market"],
+			AgentApprovedMcpServers = [TeamDbApproval("npx")],
+		});
 		var client = new Client("c1");
 		var first = await SendAsync(client, Repo, null, "One");
 		var process = await _runner.NextAsync();
@@ -268,9 +277,78 @@ public sealed class ChatServiceTests : IDisposable
 
 		Assert.Equal(first.SessionId, second.SessionId);
 		Assert.NotEqual(first.RunId, second.RunId);
-		Assert.Equal(new AgentRun(Path.Combine(_root, Repo), "Two", "sess-1", "all", "opus"), next.Run with { AllowedTools = null });
+		Assert.Equal(
+			new AgentRun(Path.Combine(_root, Repo), "Two", "sess-1", "all", "opus"),
+			next.Run with { AllowedTools = null, DisabledMcpServers = null, DisabledPlugins = null, ApprovedMcpServers = null });
 		Assert.Equal(["Bash(ls)"], next.Run.AllowedTools!);
+		Assert.Equal(["blender"], next.Run.DisabledMcpServers!);
+		Assert.Equal(["design@market"], next.Run.DisabledPlugins!);
+		Assert.Equal(["team-db"], next.Run.ApprovedMcpServers!);
 		Assert.Null(next.Run.ApprovalUrl);
+	}
+
+	[Fact]
+	public async Task Run_SavesTheToolsSnapshotFromItsInit_StampedOnce()
+	{
+		var client = new Client("c1");
+		await SendAsync(client, Repo, null, "Hi");
+		var process = await _runner.NextAsync();
+		var at = _time.GetUtcNow();
+
+		process.Write("""{"type":"system","subtype":"init","session_id":"sess-1","mcp_servers":[{"name":"codegraph","status":"connected","source":"user"}],"plugins":[{"name":"design","source":"design@market","version":"1.0.0"}]}""", Message);
+		await client.WaitAsync(e => e.Kind == ChatEventKinds.Message);
+		_time.Advance(TimeSpan.FromMinutes(1));
+		process.Write("""{"type":"system","subtype":"init","session_id":"sess-1","mcp_servers":[]}""", Result);
+		process.Exit();
+		await client.WaitAsync(e => e.Kind == ChatEventKinds.Result);
+
+		var saved = _projects.GetToolsSnapshot(Repo)!;
+		Assert.Equal((at, ClaudeToolsSnapshot.FromRun), (saved.CheckedAt, saved.From));
+		Assert.Equal(new ClaudeMcpServer("codegraph", "user", "connected"), Assert.Single(saved.Servers));
+		Assert.Equal(new ClaudePlugin("design@market", "design", "1.0.0", true), Assert.Single(saved.Plugins));
+	}
+
+	[Theory]
+	[InlineData("cmd", false)]
+	[InlineData(null, false)]
+	[InlineData(null, true)]
+	[InlineData("npx", false)]
+	public async Task ApprovedMcpJsonServer_ChangedOrGone_NotPassed_Logged(string? command, bool invalid)
+	{
+		if (command is not null)
+		{
+			await File.WriteAllTextAsync(Path.Combine(_root, Repo, McpJson.FileName), McpJsonText(command), Ct);
+		}
+		else if (invalid)
+		{
+			await File.WriteAllTextAsync(Path.Combine(_root, Repo, McpJson.FileName), "{ not json", Ct);
+		}
+
+		_projects.SaveSettings(Repo, new ProjectSettings { AgentApprovedMcpServers = [TeamDbApproval("npx"), "legacy"] });
+		var client = new Client("c1");
+		await SendAsync(client, Repo, null, "Hi");
+
+		var process = await _runner.NextAsync();
+
+		Assert.Equal(command == "npx" ? ["team-db"] : [], process.Run.ApprovedMcpServers!);
+		Assert.Contains(_logger.Entries, e => e.Level == LogLevel.Information && e.Message.Contains("legacy", StringComparison.Ordinal));
+		Assert.Equal(command != "npx", _logger.Messages.Any(m => m.Contains("server team-db", StringComparison.Ordinal)));
+		process.Exit();
+	}
+
+	[Fact]
+	public async Task Run_ToolsSnapshotStoreFails_RunGoesOn()
+	{
+		_projects.FailToolsSnapshot = true;
+		var client = new Client("c1");
+		await SendAsync(client, Repo, null, "Hi");
+		var process = await _runner.NextAsync();
+
+		process.Write(Init, Result);
+		process.Exit();
+
+		Assert.True((await client.WaitAsync(e => e.Kind == ChatEventKinds.Result)).Ok);
+		Assert.Contains(_logger.Messages, m => m.Contains("tools snapshot", StringComparison.Ordinal));
 	}
 
 	[Fact]
@@ -676,6 +754,10 @@ public sealed class ChatServiceTests : IDisposable
 		var next = await _runner.NextAsync();
 		Assert.Equal((null, null), (next.Run.ApprovalUrl, next.Run.ApprovalToken));
 	}
+
+	private static string McpJsonText(string command) => $$$$"""{"mcpServers":{"team-db":{"command":"{{{{command}}}}","args":["-y","db-mcp"]}}}""";
+
+	private static string TeamDbApproval(string command) => ClaudeToolEntries.Approval("team-db", McpJson.Parse(McpJsonText(command))["team-db"].Hash);
 
 	private async Task<ChatEvent> AdvanceUntilAsync(Client client, Func<ChatEvent, bool> match)
 	{

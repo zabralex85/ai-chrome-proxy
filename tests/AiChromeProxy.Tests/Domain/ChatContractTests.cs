@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using AiChromeProxy.Domain;
 using AiChromeProxy.Domain.Chat;
 using AiChromeProxy.Domain.Sync;
@@ -222,6 +223,36 @@ public sealed class ChatContractTests
 		Assert.Equal(["Bash(ls)", "Read"], settings.AgentAllowedTools);
 		Assert.Contains("\"other\":1", JsonSerializer.Serialize(settings, JsonSerializerOptions.Web), StringComparison.Ordinal);
 		Assert.DoesNotContain("OrDefault", JsonSerializer.Serialize(settings, JsonSerializerOptions.Web), StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public void ProjectSettings_ClaudeToolLists_RoundTrip()
+	{
+		var json = """{"agentDisabledMcpServers":["blender"],"agentDisabledPlugins":["design@market"],"agentApprovedMcpServers":["team-db"]}""";
+
+		var settings = JsonSerializer.Deserialize<ProjectSettings>(json, JsonSerializerOptions.Web)!;
+
+		Assert.Equal(["blender"], settings.AgentDisabledMcpServers);
+		Assert.Equal(["design@market"], settings.AgentDisabledPlugins);
+		Assert.Equal(["team-db"], settings.AgentApprovedMcpServers);
+		Assert.Null(settings.Extra);
+		Assert.Equal(json, JsonSerializer.Serialize(settings, new JsonSerializerOptions(JsonSerializerOptions.Web) { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull }));
+	}
+
+	[Fact]
+	public void ClaudeToolsPayload_CamelCaseShape()
+	{
+		var payload = new ClaudeToolsPayload(
+			"repo",
+			[new ClaudeMcpServerRow("plugin:design:slack", "plugin", ClaudeToolStatuses.NeedsAuth, true, "design", Command: "npx x", EntryHash: "ab")],
+			[new ClaudePluginRow("design@market", "design", "1.0.0", true, true)],
+			new DateTimeOffset(2026, 10, 6, 12, 0, 0, TimeSpan.Zero),
+			ClaudeToolsSnapshot.FromRun);
+
+		Assert.Equal(
+			"""{"repo":"repo","servers":[{"name":"plugin:design:slack","source":"plugin","status":"needs-auth","onHere":true,"plugin":"design","reason":null,"command":"npx x","entryHash":"ab"}],"plugins":[{"id":"design@market","name":"design","version":"1.0.0","enabled":true,"onHere":true,"status":null}],"checkedAt":"2026-10-06T12:00:00+00:00","from":"run","error":null}""",
+			Json(payload));
+		Assert.Equal(("agent.tools.get", "agent.tools.check", "agent.tools"), (MessageTypes.AgentToolsGet, MessageTypes.AgentToolsCheck, MessageTypes.AgentTools));
 	}
 
 	[Theory]

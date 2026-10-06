@@ -163,6 +163,63 @@ public sealed class StreamJsonParserTests
 		Assert.Equal(["src/A.cs", "D:\\other\\B.cs"], events.Select(e => e.Summary));
 	}
 
+	[Fact]
+	public void Init_ToolsSnapshot_ServersAndPlugins_UnknownFieldsIgnored_NoEvents()
+	{
+		var parser = new StreamJsonParser();
+		Assert.Null(parser.Tools);
+
+		var events = parser.Feed("""
+			{"type":"system","subtype":"init","cwd":"C:\\mirror\\repo","session_id":"s","tools":["Bash"],"model":"m","extra":{"a":1},
+			"mcp_servers":[{"name":"codegraph","status":"connected","source":"user"},{"name":"plugin:design:slack","status":"needs-auth","source":"plugin"},{"name":"bare"},{"status":"connected"},7],
+			"plugins":[{"name":"caveman","path":"C:\\p","source":"caveman@caveman"},{"name":"agentic-security","path":"C:\\q","source":"agentic-security@clearcapabilities","version":"0.89.0"},{"name":"local"},{"path":"x"}]}
+			""".ReplaceLineEndings(string.Empty));
+
+		Assert.Empty(events);
+		Assert.Equal(ClaudeToolsSnapshot.FromRun, parser.Tools!.From);
+		Assert.Equal(
+			[
+				new ClaudeMcpServer("codegraph", "user", ClaudeToolStatuses.Connected),
+				new ClaudeMcpServer("plugin:design:slack", "plugin", ClaudeToolStatuses.NeedsAuth),
+				new ClaudeMcpServer("bare", null, ClaudeToolStatuses.Unknown),
+			],
+			parser.Tools.Servers);
+		Assert.Equal(
+			[
+				new ClaudePlugin("caveman@caveman", "caveman", null, true),
+				new ClaudePlugin("agentic-security@clearcapabilities", "agentic-security", "0.89.0", true),
+				new ClaudePlugin("local", "local", null, true),
+			],
+			parser.Tools.Plugins);
+	}
+
+	[Fact]
+	public void Init_Caps_AtMost500_LongNamesAndIdsSkipped()
+	{
+		var parser = new StreamJsonParser();
+		var longName = new string('x', 201);
+		var servers = string.Join(',', Enumerable.Range(0, 600).Select(i => $$"""{"name":"s{{i}}"}""").Prepend($$"""{"name":"{{longName}}"}"""));
+		var plugins = string.Join(',', Enumerable.Range(0, 600).Select(i => $$"""{"name":"p{{i}}"}""").Prepend($$"""{"name":"a","source":"{{longName}}"}""").Prepend($$"""{"name":"{{longName}}"}"""));
+
+		parser.Feed($$"""{"type":"system","subtype":"init","mcp_servers":[{{servers}}],"plugins":[{{plugins}}]}""");
+
+		Assert.Equal((ClaudeToolEntries.MaxReported, "s0"), (parser.Tools!.Servers.Count, parser.Tools.Servers[0].Name));
+		Assert.Equal((ClaudeToolEntries.MaxReported, "p0"), (parser.Tools.Plugins.Count, parser.Tools.Plugins[0].Id));
+	}
+
+	[Fact]
+	public void Init_MissingLists_EmptySnapshot_OtherSystemLinesIgnored()
+	{
+		var parser = new StreamJsonParser();
+
+		parser.Feed("""{"type":"system","subtype":"hook_started","mcp_servers":[{"name":"x"}]}""");
+		Assert.Null(parser.Tools);
+
+		parser.Feed("""{"type":"system","subtype":"init","mcp_servers":{"name":"x"}}""");
+		Assert.Empty(parser.Tools!.Servers);
+		Assert.Empty(parser.Tools.Plugins);
+	}
+
 	private static (StreamJsonParser Parser, List<ChatEvent> Events) Run(string fixture)
 	{
 		var parser = new StreamJsonParser();

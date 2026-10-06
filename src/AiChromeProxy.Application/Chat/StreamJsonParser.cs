@@ -30,6 +30,12 @@ public sealed class StreamJsonParser
 	public string? ClaudeSessionId { get; private set; }
 
 	/// <summary>
+	/// Gets the MCP servers and plugins of the run's <c>system/init</c> event (<see cref="ClaudeToolsSnapshot.FromRun"/>), or null before it;
+	/// <see cref="ClaudeToolsSnapshot.CheckedAt"/> is left for the caller to stamp.
+	/// </summary>
+	public ClaudeToolsSnapshot? Tools { get; private set; }
+
+	/// <summary>
 	/// Parses one output line; never throws (a bad line yields no events).
 	/// Contract: a <c>message</c> event replaces all <c>text</c> events emitted since the previous
 	/// <c>message</c>, <c>tool</c>, <c>toolResult</c> or <c>result</c> event (Claude Code emits one assistant line per content block after its deltas).
@@ -126,11 +132,28 @@ public sealed class StreamJsonParser
 	private static IEnumerable<JsonObject> Blocks(JsonObject root) =>
 		root["message"] is JsonObject message && message["content"] is JsonArray content ? content.OfType<JsonObject>() : [];
 
+	/// <summary>The init's servers: at most <see cref="ClaudeToolEntries.MaxReported"/>, a name longer than <see cref="ClaudeToolEntries.MaxLength"/> skipped.</summary>
+	private static List<ClaudeMcpServer> InitServers(JsonNode? list) =>
+		list is JsonArray a
+			? [.. a.Where(s => Str(s, "name") is { Length: > 0 and <= ClaudeToolEntries.MaxLength })
+				.Take(ClaudeToolEntries.MaxReported)
+				.Select(s => new ClaudeMcpServer(Str(s, "name")!, Str(s, "source"), Str(s, "status") ?? ClaudeToolStatuses.Unknown))]
+			: [];
+
+	/// <summary>The init's plugins (id: <c>source</c>, else the name): at most <see cref="ClaudeToolEntries.MaxReported"/>, a longer name or id skipped.</summary>
+	private static List<ClaudePlugin> InitPlugins(JsonNode? list) =>
+		list is JsonArray a
+			? [.. a.Where(p => Str(p, "name") is { Length: > 0 and <= ClaudeToolEntries.MaxLength } && (Str(p, "source")?.Length ?? 0) <= ClaudeToolEntries.MaxLength)
+				.Take(ClaudeToolEntries.MaxReported)
+				.Select(p => new ClaudePlugin(Str(p, "source") is { Length: > 0 } id ? id : Str(p, "name")!, Str(p, "name")!, Str(p, "version"), true))]
+			: [];
+
 	private IReadOnlyList<ChatEvent> Init(JsonObject root)
 	{
 		if (Str(root, "subtype") == "init")
 		{
 			_cwd = Str(root, "cwd") ?? _cwd;
+			Tools = new ClaudeToolsSnapshot(InitServers(root["mcp_servers"]), InitPlugins(root["plugins"]), default, ClaudeToolsSnapshot.FromRun);
 		}
 
 		return [];
