@@ -5,7 +5,7 @@ Date: 2026-10-06. Builds on [4 Claude chat](2026-10-04-claude-chat-design.md) (r
 ## What Claude Code offers (verified on 2.1.289)
 
 - Each run's `system`/`init` event lists `mcp_servers: [{ name, status, source }]` (`status`: `connected`, `failed`, `needs-auth`, `pending`; `source`: `user`, `project`, `local`, `plugin`, `claudeai`; plugin servers are named `plugin:<plugin>:<server>`) and `plugins: [{ name, source, version?, path }]` (`source` is the plugin id `name@marketplace`).
-- `claude mcp list` health-checks the configured servers without a model call; one line per server: `<name>: <command or url> - <mark> <status text>` with `✔ Connected`, `✗ Failed to connect`, `! Needs authentication`, `⏸ Pending approval` (other lines — progress, warnings — are noise).
+- `claude mcp list` health-checks the configured servers without a model call; one line per server: `<name>: <command or url> - <mark> <status text>` with `✔ Connected`, `✘ Failed to connect — <reason>`, `! Needs authentication`, `- Not configured`, `⏸ Pending approval` (from the help text; not seen in a recording) (other lines — progress, warnings — are noise).
 - `claude plugin list --json` lists installed plugins: `[{ id, version, scope, enabled, ... }]` without a model call.
 - Per run, `--settings '<json>'` adds settings on top of the user's: `{"enabledPlugins": {"<id>": false}}` turns a plugin (and its MCP servers) off, `{"deniedMcpServers": [{"serverName": "<name>"}]}` turns an MCP server off, `{"enabledMcpjsonServers": ["<name>"]}` approves a project `.mcp.json` server. Nothing in Claude's own files changes.
 
