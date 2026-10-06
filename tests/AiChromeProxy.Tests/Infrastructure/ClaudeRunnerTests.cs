@@ -5,7 +5,7 @@ using Microsoft.Extensions.Options;
 
 namespace AiChromeProxy.Tests.Infrastructure;
 
-public sealed class ClaudeRunnerTests : IDisposable
+public sealed class ClaudeRunnerTests : IAsyncDisposable
 {
 	private static readonly string FakeAgent = Path.Combine(AppContext.BaseDirectory, "AiChromeProxy.FakeAgent.exe");
 
@@ -13,7 +13,8 @@ public sealed class ClaudeRunnerTests : IDisposable
 
 	public ClaudeRunnerTests() => Directory.CreateDirectory(_folder);
 
-	public void Dispose() => Directory.Delete(_folder, recursive: true);
+	// A killed fake agent can hold the folder a moment longer.
+	public async ValueTask DisposeAsync() => await TestFolder.DeleteAsync(_folder);
 
 	[Fact]
 	public async Task Start_RunsTheCommand_PromptOnStdin_LinesFromStdout()

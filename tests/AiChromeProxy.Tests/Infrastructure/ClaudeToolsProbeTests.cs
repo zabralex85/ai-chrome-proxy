@@ -6,7 +6,7 @@ using Microsoft.Extensions.Options;
 namespace AiChromeProxy.Tests.Infrastructure;
 
 /// <summary><see cref="ClaudeToolsProbe"/> against the fake agent (<c>FAKE_AGENT_MCP_LIST</c>, <c>FAKE_AGENT_PLUGIN_LIST</c>).</summary>
-public sealed class ClaudeToolsProbeTests : IDisposable
+public sealed class ClaudeToolsProbeTests : IAsyncDisposable
 {
 	private static readonly string FakeAgent = Path.Combine(AppContext.BaseDirectory, "AiChromeProxy.FakeAgent.exe");
 	private static readonly string McpList = Path.Combine(AppContext.BaseDirectory, "Application", "Fixtures", "claude-tools", "mcp-list-2.1.289.txt");
@@ -21,7 +21,8 @@ public sealed class ClaudeToolsProbeTests : IDisposable
 		File.WriteAllText(_plugins, """[{"id":"design@market","version":"1.0.0","scope":"user","enabled":false},{"id":"security@market","enabled":true}]""");
 	}
 
-	public void Dispose() => Directory.Delete(_folder, recursive: true);
+	// A fake agent killed at its timeout can hold the folder a moment longer.
+	public async ValueTask DisposeAsync() => await TestFolder.DeleteAsync(_folder);
 
 	[Fact]
 	public async Task Check_ParsesBothCommands_StderrNoiseSkipped_RunsInTheFolder()
