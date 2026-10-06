@@ -1,0 +1,4 @@
+[
+  { "id": "design@example-market", "version": "1.2.0", "scope": "user", "enabled": true },
+  { "id": "notes@example-market", "version": "0.3.1", "scope": "user", "enabled": false }
+]

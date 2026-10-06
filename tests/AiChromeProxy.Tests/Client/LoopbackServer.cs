@@ -4,6 +4,7 @@ using AiChromeProxy.Application.Sync;
 using AiChromeProxy.Application.Transport;
 using AiChromeProxy.Client.Transport;
 using AiChromeProxy.Domain;
+using AiChromeProxy.Domain.Chat;
 using AiChromeProxy.Infrastructure.Sync;
 using AiChromeProxy.Tests.Application;
 using AiChromeProxy.Tests.Server;
@@ -32,6 +33,7 @@ public sealed class LoopbackServer : IDisposable
 			.. SyncHandler.Types.Select(t => (IEnvelopeHandler)new SyncHandler(t, _sessions)),
 			.. ProjectSettingsHandler.Types.Select(t => new ProjectSettingsHandler(t, Projects, _sessions)),
 			.. ChatHandler.Types.Select(t => new ChatHandler(t, Chat)),
+			.. ClaudeToolsHandler.Types.Select(t => new ClaudeToolsHandler(t, Projects, store, new ToolsProbe(this), TimeProvider.System, new ListLogger<ClaudeToolsHandler>())),
 		]);
 		Transport.Reply = ReplyAsync;
 		Transport.SetState(TransportState.Connected);
@@ -57,6 +59,9 @@ public sealed class LoopbackServer : IDisposable
 
 	/// <summary>The server's permission broker: a test asks it for an approval the way the approval tool does.</summary>
 	public PermissionBroker Broker { get; }
+
+	/// <summary>What <b>Check now</b>'s probe answers for the mirror folder it runs in.</summary>
+	public Func<string, (ClaudeToolsSnapshot? Snapshot, string? Error)> Probe { get; set; } = _ => (null, "Check failed: no probe.");
 
 	/// <summary>When set, pushes are lost (a connection that is down): <see cref="Reconnect"/> and a catch-up bring the client back up to date.</summary>
 	public bool DropPushes { get; set; }
@@ -110,6 +115,11 @@ public sealed class LoopbackServer : IDisposable
 		{
 			return EnvelopeRouter.Error(request, new ErrorPayload(ErrorCodes.Internal));
 		}
+	}
+
+	private sealed class ToolsProbe(LoopbackServer server) : IClaudeToolsProbe
+	{
+		public Task<(ClaudeToolsSnapshot? Snapshot, string? Error)> CheckAsync(string folder) => Task.FromResult(server.Probe(folder));
 	}
 
 	private sealed class ApprovalEndpoint : IApprovalEndpoint

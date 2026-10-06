@@ -36,6 +36,7 @@
                data-testid="settings-model" @bind="_form.Model" @bind:event="oninput" />
         <label class="field" for="settings-allowed">Always allowed (one rule per line)</label>
         <textarea id="settings-allowed" class="mono" rows="6" spellcheck="false" data-testid="settings-allowed" @bind="_form.AllowedTools" @bind:event="oninput"></textarea>
+        <ClaudeToolsSection @ref="_tools" Form="_form" Changed="() => { }" />
         <div class="settings-actions">
             <button type="submit" class="button primary" data-testid="settings-save" disabled="@(!_form.IsDirty)">Save</button>
             <span role="status" class="@(_failed ? "state-error" : "muted")" data-testid="settings-status">@_status</span>
@@ -46,6 +47,7 @@
 @code {
     private ProjectSettings _loaded = null!;
     private ProjectSettingsForm _form = null!;
+    private ClaudeToolsSection? _tools;
     private string? _status;
     private bool _failed;
 
@@ -94,6 +96,11 @@
             _loaded = Engine.Settings;
             _form = new ProjectSettingsForm(_loaded);
             _status = "Saved.";
+            if (_tools is not null)
+            {
+                // The merge reads the switches at request time: what was switched off now shows so.
+                await _tools.LoadAsync();
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

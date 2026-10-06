@@ -8,6 +8,8 @@
 //   FAKE_AGENT_STDIN_FILE   when set, the stdin text is written to this file
 //   FAKE_AGENT_STDERR       when set, this text is written to stderr first
 //   FAKE_AGENT_ARGS_FILE    when set, the received arguments are written to this file, one per line (UTF-8)
+//   FAKE_AGENT_ARGS_DIR     when set, a run (not `mcp list` / `plugin list`) also writes them to `<dir>/<name of the working folder>.args`, so that
+//                           scenarios sharing one host each find their own (the working folder is the repo's mirror)
 //   FAKE_AGENT_EXIT_CODE    exit code (default 0)
 // Invoked as `mcp list` or `plugin list --json` (Check now), it prints the file at FAKE_AGENT_MCP_LIST or FAKE_AGENT_PLUGIN_LIST as it is (`mcp list`
 // also writes a noise line to stderr, like Claude Code does) and exits with FAKE_AGENT_EXIT_CODE; FAKE_AGENT_PROBE_DELAY_MS pauses first.
@@ -46,6 +48,13 @@ if (args is ["mcp", "list"] or ["plugin", "list", "--json"])
 	}
 
 	return exitCode;
+}
+
+var argsDir = Environment.GetEnvironmentVariable("FAKE_AGENT_ARGS_DIR");
+if (!string.IsNullOrEmpty(argsDir))
+{
+	var folder = Path.GetFileName(Environment.CurrentDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+	await File.WriteAllLinesAsync(Path.Combine(argsDir, folder + ".args"), args);
 }
 
 string stdin;

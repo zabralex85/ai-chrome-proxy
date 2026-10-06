@@ -19,6 +19,9 @@ public sealed class BrowserHooks(IObjectContainer container)
 	/// <summary>Where the server keeps the mirrors of this run.</summary>
 	public static string MirrorRoot => _server!.MirrorRoot;
 
+	/// <summary>Where the fake agent writes each run's arguments (<c>&lt;repo&gt;.args</c>).</summary>
+	public static string ArgsDirectory => _server!.ArgsDirectory;
+
 	[BeforeTestRun]
 	public static async Task StartAsync()
 	{

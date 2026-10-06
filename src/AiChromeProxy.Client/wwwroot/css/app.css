@@ -1822,6 +1822,143 @@ h1:focus-visible {
     font: inherit;
 }
 
+/* Project settings: Claude tools */
+.claude-tools {
+    margin: 4px 0 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+}
+
+.tools-check {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    margin-bottom: 12px;
+}
+
+.tools-error {
+    margin: 0 0 12px;
+}
+
+.claude-tools h3.field {
+    margin: 16px 0 4px;
+    font-size: 13px;
+}
+
+.tools-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.tools-row,
+.tools-none {
+    padding: 7px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.tools-main {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;
+    min-height: 22px;
+}
+
+.tools-name {
+    color: var(--fg-strong);
+    font-weight: 600;
+    word-break: break-word;
+}
+
+.tools-source {
+    color: var(--fg-muted);
+    font-size: 12px;
+}
+
+.tools-badge {
+    padding: 1px 7px;
+    border: 1px solid currentColor;
+    border-radius: 9px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 16px;
+    white-space: nowrap;
+}
+
+.tools-tone-ok { color: var(--ok); }
+.tools-tone-warn { color: var(--warn); }
+.tools-tone-error { color: var(--error); }
+.tools-tone-muted { color: var(--fg-muted); }
+
+.claude-tools .switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    color: var(--fg-muted);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.switch input {
+    position: relative;
+    flex: none;
+    width: 28px;
+    height: 16px;
+    margin: 0;
+    border-radius: 8px;
+    background: var(--fg-muted);
+    appearance: none;
+    cursor: pointer;
+    transition: background-color var(--ease);
+}
+
+.switch input::before {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--bg);
+    transition: transform var(--ease);
+}
+
+.switch input:checked {
+    background: var(--accent-bg);
+}
+
+.switch input:checked::before {
+    background: #ffffff;
+    transform: translateX(12px);
+}
+
+.switch input:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+}
+
+.tools-hint,
+.tools-reason {
+    margin: 4px 0 0;
+    font-size: 12px;
+}
+
+.tools-reason {
+    word-break: break-word;
+}
+
+.tools-hint code {
+    padding: 0 4px;
+    border-radius: 3px;
+    background: var(--bg-hover);
+    font-family: var(--font-mono);
+    font-size: 11px;
+}
+
 @media (prefers-reduced-motion: reduce) {
     *,
     *::before,

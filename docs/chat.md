@@ -56,6 +56,15 @@ The approval tool is an MCP endpoint, `/mcp/approve`, reachable only from `127.0
 
 **Project settings** → *Always allowed (one rule per line)* lists the project's rules (`agentAllowedTools`, passed to Claude as `--allowedTools`). Delete a line and **Save** to revoke a rule; you can also add rules in Claude Code's syntax (e.g. `Bash(npm test)`). The tab reads the settings again when it opens and right before saving, and a save replaces only the fields you changed, so a rule that a run added while the tab was open is kept unless you edited the list.
 
+## Claude tools
+
+**Project settings** → **Claude tools** lists the MCP servers and plugins of the home computer's Claude Code (the service account's, the same one that runs your messages) with their last known status and an **On in this project** switch.
+
+- Statuses come from two places: every message (Claude Code reports its servers and plugins when a run starts; "Last checked … (from a message)") and **Check now**, which runs `claude mcp list` and `claude plugin list --json` in the mirror folder without spending a message ("(by Check now)"). A check takes up to a minute ("Checking…"), starts the MCP servers like a run would, and one check per folder runs at a time. A failed check keeps the old list and says why. Until either has happened: "No data yet — send a message or press Check now."
+- Badges: **Connected**; **Needs sign-in** (the server needs an OAuth login: "Sign in on the home computer: run `claude`, then `/mcp`."); **Failed** (it did not start or answer; the reason is shown, and "Check the server on the home computer: `claude mcp get <name>`."); **Not configured**; **Waiting for approval** (a project `.mcp.json` server nobody approved; its switch approves it for this project); **Off in this project** (switched off here; shown after a message, a check still reports the server's own status); **Not installed** (switched off here but no longer installed: switch it back on to drop the entry); **Unknown**. Problems are listed first.
+- Switches change the form; **Save** stores them in the project's settings (`agentDisabledMcpServers`, `agentDisabledPlugins`, `agentApprovedMcpServers`). They apply from the next message: the run gets one `--settings` argument (`deniedMcpServers`, `enabledPlugins: { id: false }`, `enabledMcpjsonServers`). Nothing in Claude Code's own files (`~/.claude.json`, `~/.claude/settings.json`, the repo's `.claude/`) changes. A plugin's servers ("plugin X") have no switch of their own: the plugin's switch turns them off with it.
+- The approval server `aicp` is never listed and never turned off. Plugin skills, agents and slash commands are not listed.
+
 ## Sessions and runs
 
 - Sessions are stored in `aicp.db` and survive restarts and page reloads; a new message continues the session with `--resume`. Your messages appear in the history. **New chat** starts another session.
@@ -109,3 +118,5 @@ Run this before a release that touches the chat. Use a test repository.
 - [ ] `curl http://127.0.0.1:<port>/mcp/approve` without the token: 404. From another machine the port does not answer (the Server listens on loopback only: connection refused); through the tunnel, Cloudflare Access asks for a login first.
 - [ ] *Always allowed* in the Project settings lists a rule added with **Allow always**; deleting it and saving brings the card back next time.
 - [ ] Open the app from a page on another origin: the hub refuses it (403).
+- [ ] **Claude tools** on the real install: after a message and after **Check now** the servers and plugins and their statuses match `claude mcp list` and `claude plugin list` run as the service account (a failed server shows **Failed** with its reason, the check itself does not fail).
+- [ ] Switch a server off (e.g. `blender`) and **Save**: the next message's run does not load it (ask Claude to list its MCP tools; the tab then shows **Off in this project**); switch it back on and it is back on the next message. Same for a plugin.

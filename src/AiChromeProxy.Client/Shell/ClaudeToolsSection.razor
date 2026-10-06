@@ -1,0 +1,171 @@
+@using AiChromeProxy.Client.Chat
+@using AiChromeProxy.Domain.Chat
+@implements IDisposable
+@inject ChatEngine Chat
+@inject TimeProvider Time
+
+@* The Claude tools of the Project settings tab: statuses as last recorded (a run's init line or Check now) and the On in this project switches,
+   which edit the form (saved with the tab's Save). Nothing is pushed when a run records new statuses: they are read again when the tab opens,
+   after a save and when a run ends. *@
+<section class="claude-tools" data-testid="claude-tools" aria-labelledby="claude-tools-heading">
+    <h2 id="claude-tools-heading">Claude tools</h2>
+    <div class="tools-check">
+        <span class="muted" data-testid="tools-checked">@(_tools is null ? null : ClaudeToolsView.LastChecked(_tools, Time.GetUtcNow()) ?? ClaudeToolsView.Empty)</span>
+        <button type="button" class="button secondary" data-testid="tools-check" disabled="@_checking" @onclick="CheckAsync">@(_checking ? "Checking…" : "Check now")</button>
+    </div>
+    @if (_error is not null)
+    {
+        <p class="state-error tools-error" role="alert" data-testid="tools-error">@_error</p>
+    }
+    @if (_tools is { } tools && (tools.Servers.Count > 0 || tools.Plugins.Count > 0 || tools.CheckedAt is not null))
+    {
+        <h3 class="field">MCP servers</h3>
+        <ul class="tools-list" data-testid="tools-servers">
+            @foreach (var row in tools.Servers)
+            {
+                var hint = ClaudeToolsView.Hint(row);
+                <li class="tools-row" data-testid="tool-server" data-name="@row.Name" @key="row.Name">
+                    <div class="tools-main">
+                        <span class="tools-name">@ClaudeToolsView.Name(row)</span>
+                        <span class="tools-source">@ClaudeToolsView.Source(row)</span>
+                        <span class="tools-badge tools-tone-@ClaudeToolsView.Tone(row.Status)" data-testid="tool-status">@ClaudeToolsView.Badge(row.Status)</span>
+                        @if (ClaudeToolsView.HasSwitch(row))
+                        {
+                            <label class="switch">
+                                <input type="checkbox" role="switch" aria-label="@($"{row.Name}: On in this project")" checked="@ClaudeToolsView.IsOn(Form, row)"
+                                       @onchange="e => SetAsync(() => ClaudeToolsView.SetOn(Form, row, e.Value is true))" />
+                                <span>On in this project</span>
+                            </label>
+                        }
+                    </div>
+                    @if (hint is not null)
+                    {
+                        <p class="tools-hint" data-testid="tool-hint">
+                            @foreach (var (text, code) in ClaudeToolsView.Parts(hint))
+                            {
+                                if (code)
+                                {
+                                    <code>@text</code>
+                                }
+                                else
+                                {
+                                    @text
+                                }
+                            }
+                        </p>
+                    }
+                    @if (row.Status == ClaudeToolStatuses.Failed && !string.IsNullOrEmpty(row.Reason))
+                    {
+                        <p class="tools-reason muted" data-testid="tool-reason">@row.Reason</p>
+                    }
+                </li>
+            }
+            @if (tools.Servers.Count == 0)
+            {
+                <li class="tools-none muted">None.</li>
+            }
+        </ul>
+        <h3 class="field">Plugins</h3>
+        <ul class="tools-list" data-testid="tools-plugins">
+            @foreach (var row in tools.Plugins)
+            {
+                <li class="tools-row" data-testid="tool-plugin" data-name="@row.Id" @key="row.Id">
+                    <div class="tools-main">
+                        <span class="tools-name">@row.Name</span>
+                        <span class="tools-source">@ClaudeToolsView.Source(row)</span>
+                        @if (row.Status is not null)
+                        {
+                            <span class="tools-badge tools-tone-@ClaudeToolsView.Tone(row.Status)" data-testid="tool-status">@ClaudeToolsView.Badge(row.Status)</span>
+                        }
+                        <label class="switch">
+                            <input type="checkbox" role="switch" aria-label="@($"{row.Name}: On in this project")" checked="@ClaudeToolsView.IsOn(Form, row)"
+                                   @onchange="e => SetAsync(() => ClaudeToolsView.SetOn(Form, row, e.Value is true))" />
+                            <span>On in this project</span>
+                        </label>
+                    </div>
+                </li>
+            }
+            @if (tools.Plugins.Count == 0)
+            {
+                <li class="tools-none muted">None.</li>
+            }
+        </ul>
+    }
+</section>
+
+@code {
+    private ClaudeToolsPayload? _tools;
+    private string? _error;
+    private bool _checking;
+    private bool _running;
+
+    /// <summary>The tab's form: the switches edit its lists.</summary>
+    [Parameter, EditorRequired]
+    public ProjectSettingsForm Form { get; set; } = null!;
+
+    /// <summary>Raised after a switch changed the form (the tab's Save becomes enabled).</summary>
+    [Parameter]
+    public EventCallback Changed { get; set; }
+
+    /// <summary>Reads the statuses again (<c>agent.tools.get</c>), e.g. after a save: an entry switched off shows as such.</summary>
+    public async Task LoadAsync()
+    {
+        try
+        {
+            _tools = await Chat.ToolsAsync(check: false);
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = ClaudeToolsView.Error(ex);
+        }
+
+        StateHasChanged();
+    }
+
+    public void Dispose() => Chat.Changed -= OnChatChanged;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _running = Chat.Running;
+        Chat.Changed += OnChatChanged;
+        await LoadAsync();
+    }
+
+    private async Task CheckAsync()
+    {
+        _checking = true;
+        _error = null;
+        try
+        {
+            _tools = await Chat.ToolsAsync(check: true);
+            _error = _tools.Error;
+        }
+        catch (Exception ex)
+        {
+            _error = ClaudeToolsView.Error(ex);
+        }
+        finally
+        {
+            _checking = false;
+        }
+    }
+
+    private async Task SetAsync(Action change)
+    {
+        change();
+        await Changed.InvokeAsync();
+    }
+
+    /// <summary>A run that ends has recorded its statuses (from its init line).</summary>
+    private void OnChatChanged()
+    {
+        var running = Chat.Running;
+        if (_running && !running)
+        {
+            _ = InvokeAsync(LoadAsync);
+        }
+
+        _running = running;
+    }
+}

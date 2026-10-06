@@ -20,6 +20,7 @@ public sealed class AppServer : IAsyncDisposable
 		// A fresh mirror and database per run: project settings and baselines of an earlier run must not leak in.
 		var root = Path.Combine(Path.GetTempPath(), "aicp-e2e", Guid.NewGuid().ToString("N"));
 		MirrorRoot = Path.Combine(root, "mirror");
+		ArgsDirectory = Directory.CreateDirectory(Path.Combine(root, "args")).FullName;
 		_factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
 		{
 			b.UseEnvironment(Environments.Development);
@@ -34,6 +35,11 @@ public sealed class AppServer : IAsyncDisposable
 			b.UseSetting("Agent:Command", Path.Combine(AppContext.BaseDirectory, "AiChromeProxy.FakeAgent.exe"));
 			b.UseSetting("Agent:Env:FAKE_AGENT_SCRIPT_DIR", Path.Combine(AppContext.BaseDirectory, "Fixtures"));
 			b.UseSetting("Agent:Env:FAKE_AGENT_DELAY_MS", "120");
+
+			// Check now: the fake's answers to `mcp list` and `plugin list --json`; each run's arguments land in <ArgsDirectory>/<repo>.args.
+			b.UseSetting("Agent:Env:FAKE_AGENT_MCP_LIST", Path.Combine(AppContext.BaseDirectory, "Fixtures", "mcp-list.txt"));
+			b.UseSetting("Agent:Env:FAKE_AGENT_PLUGIN_LIST", Path.Combine(AppContext.BaseDirectory, "Fixtures", "plugin-list.json"));
+			b.UseSetting("Agent:Env:FAKE_AGENT_ARGS_DIR", ArgsDirectory);
 		});
 		_factory.UseKestrel();
 		_factory.StartServer();
@@ -46,6 +52,9 @@ public sealed class AppServer : IAsyncDisposable
 
 	/// <summary>Where the server keeps the mirrors (one folder per repo).</summary>
 	public string MirrorRoot { get; }
+
+	/// <summary>Where the fake agent writes each run's arguments, as <c>&lt;repo&gt;.args</c>.</summary>
+	public string ArgsDirectory { get; }
 
 	public ValueTask DisposeAsync() => _factory.DisposeAsync();
 
