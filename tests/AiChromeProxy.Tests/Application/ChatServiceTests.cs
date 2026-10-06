@@ -253,7 +253,15 @@ public sealed class ChatServiceTests : IDisposable
 	[Fact]
 	public async Task NextTurn_ResumesClaudeSession_WithProjectSettings()
 	{
-		_projects.SaveSettings(Repo, new ProjectSettings { AgentPermissions = "all", AgentModel = "opus", AgentAllowedTools = ["Bash(ls)"] });
+		_projects.SaveSettings(Repo, new ProjectSettings
+		{
+			AgentPermissions = "all",
+			AgentModel = "opus",
+			AgentAllowedTools = ["Bash(ls)"],
+			AgentDisabledMcpServers = ["blender"],
+			AgentDisabledPlugins = ["design@market"],
+			AgentApprovedMcpServers = ["team-db"],
+		});
 		var client = new Client("c1");
 		var first = await SendAsync(client, Repo, null, "One");
 		var process = await _runner.NextAsync();
@@ -268,8 +276,13 @@ public sealed class ChatServiceTests : IDisposable
 
 		Assert.Equal(first.SessionId, second.SessionId);
 		Assert.NotEqual(first.RunId, second.RunId);
-		Assert.Equal(new AgentRun(Path.Combine(_root, Repo), "Two", "sess-1", "all", "opus"), next.Run with { AllowedTools = null });
+		Assert.Equal(
+			new AgentRun(Path.Combine(_root, Repo), "Two", "sess-1", "all", "opus"),
+			next.Run with { AllowedTools = null, DisabledMcpServers = null, DisabledPlugins = null, ApprovedMcpServers = null });
 		Assert.Equal(["Bash(ls)"], next.Run.AllowedTools!);
+		Assert.Equal(["blender"], next.Run.DisabledMcpServers!);
+		Assert.Equal(["design@market"], next.Run.DisabledPlugins!);
+		Assert.Equal(["team-db"], next.Run.ApprovedMcpServers!);
 		Assert.Null(next.Run.ApprovalUrl);
 	}
 

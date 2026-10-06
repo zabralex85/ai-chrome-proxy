@@ -152,7 +152,10 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 				string.IsNullOrWhiteSpace(settings.AgentModel) ? null : settings.AgentModel,
 				settings.AgentAllowedTools,
 				url,
-				token);
+				token,
+				settings.AgentDisabledMcpServers,
+				settings.AgentDisabledPlugins,
+				settings.AgentApprovedMcpServers);
 
 			// Stored before the run starts: its seq precedes the run's events.
 			Store(run, [.. Parts(run, new ChatEvent(run.SessionId, run.Id, 0, ChatEventKinds.Prompt, Text: text))]);

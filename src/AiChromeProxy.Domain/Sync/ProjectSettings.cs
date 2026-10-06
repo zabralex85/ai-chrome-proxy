@@ -23,6 +23,15 @@ public sealed record ProjectSettings
 	/// <summary>Tool rules passed as <c>--allowedTools</c> (e.g. <c>Bash(ls)</c>); "Allow always" adds to it.</summary>
 	public IReadOnlyList<string>? AgentAllowedTools { get; init; }
 
+	/// <summary>MCP server names turned off in this project (passed as <c>deniedMcpServers</c> in <c>--settings</c>).</summary>
+	public IReadOnlyList<string>? AgentDisabledMcpServers { get; init; }
+
+	/// <summary>Plugin ids (<c>name@marketplace</c>) turned off in this project (passed as <c>enabledPlugins: { id: false }</c> in <c>--settings</c>).</summary>
+	public IReadOnlyList<string>? AgentDisabledPlugins { get; init; }
+
+	/// <summary>Project <c>.mcp.json</c> server names approved in this project (passed as <c>enabledMcpjsonServers</c> in <c>--settings</c>).</summary>
+	public IReadOnlyList<string>? AgentApprovedMcpServers { get; init; }
+
 	/// <summary>Keys later sub-projects add: kept as they are.</summary>
 	[JsonExtensionData]
 	public Dictionary<string, JsonElement>? Extra { get; init; }

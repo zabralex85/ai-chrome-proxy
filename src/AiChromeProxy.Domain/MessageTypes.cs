@@ -74,4 +74,13 @@ public static class MessageTypes
 
 	/// <summary>Server → client: a live event of a run (<c>Chat.ChatEvent</c>).</summary>
 	public const string ChatEvent = "chat.event";
+
+	/// <summary>Client → server: asks for the repo's Claude tools as last recorded (<c>Chat.ClaudeToolsRequest</c>); reply <see cref="AgentTools"/>.</summary>
+	public const string AgentToolsGet = "agent.tools.get";
+
+	/// <summary>Client → server: checks the repo's Claude tools now (<c>Chat.ClaudeToolsRequest</c>); reply <see cref="AgentTools"/>.</summary>
+	public const string AgentToolsCheck = "agent.tools.check";
+
+	/// <summary>Server → client: the repo's MCP servers and plugins (<c>Chat.ClaudeToolsPayload</c>).</summary>
+	public const string AgentTools = "agent.tools";
 }

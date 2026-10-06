@@ -25,6 +25,7 @@
   <ItemGroup>
     <None Update="testconfig.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Application\Fixtures\stream-json\*.jsonl" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Application\Fixtures\claude-tools\*.txt" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\src\AiChromeProxy.Tray\app.manifest" Link="Tray\app.manifest" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\src\AiChromeProxy.Client\wwwroot\index.html" Link="Client\index.html" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
