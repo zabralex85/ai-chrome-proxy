@@ -134,6 +134,39 @@ public sealed class ClaudeToolsHandlerTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Get_ProjectServersCarryTheirMcpJsonEntry()
+	{
+		await File.WriteAllTextAsync(Path.Combine(_root, Repo, McpJson.FileName), """{"mcpServers":{"team-db":{"command":"npx","args":["-y","db-mcp"]}}}""", Ct);
+		_projects.SaveToolsSnapshot(Repo, new ClaudeToolsSnapshot([new ClaudeMcpServer("team-db", null, ClaudeToolStatuses.Pending)], [], DateTimeOffset.UnixEpoch, ClaudeToolsSnapshot.FromCheck));
+
+		var row = Assert.Single(Read((await _get.HandleAsync(Request(MessageTypes.AgentToolsGet, Repo), new Client().Context, Ct))!).Servers);
+
+		Assert.Equal(("npx -y db-mcp", McpJson.Hash(System.Text.Json.Nodes.JsonNode.Parse("""{"command":"npx","args":["-y","db-mcp"]}"""))), (row.Command, row.EntryHash));
+	}
+
+	[Fact]
+	public async Task Check_OtherRepoWaitsForTheRunningProbe_BothReply()
+	{
+		Directory.CreateDirectory(Path.Combine(_root, "Other"));
+		var probe = new GatedProbe();
+		var check = new ClaudeToolsHandler(MessageTypes.AgentToolsCheck, _projects, new FileSystemMirrorStore(Options.Create(new MirrorOptions { Root = _root })), probe, _time, new ListLogger<ClaudeToolsHandler>());
+		var first = new Client();
+		var second = new Client();
+
+		await check.HandleAsync(Request(MessageTypes.AgentToolsCheck, Repo), first.Context, Ct);
+		Assert.True(await probe.Started.WaitAsync(Wait, Ct));
+		await check.HandleAsync(Request(MessageTypes.AgentToolsCheck, "Other"), second.Context, Ct);
+		Assert.False(await probe.Started.WaitAsync(TimeSpan.FromMilliseconds(300), Ct));
+
+		probe.Go.Release();
+		Assert.Equal("done " + Repo, Read(await first.Reply.Task.WaitAsync(Wait, Ct)).Error);
+		Assert.True(await probe.Started.WaitAsync(Wait, Ct));
+		probe.Go.Release();
+		Assert.Equal("done Other", Read(await second.Reply.Task.WaitAsync(Wait, Ct)).Error);
+		Assert.Equal(1, probe.MaxRunning);
+	}
+
+	[Fact]
 	public async Task Check_StoreFails_InternalErrorReply_GoneConnectionIgnored()
 	{
 		_projects.FailToolsSnapshot = true;
@@ -170,6 +203,36 @@ public sealed class ClaudeToolsHandlerTests : IDisposable
 			Interlocked.Increment(ref _calls);
 			Started.TrySetResult(folder);
 			return Answer.Task;
+		}
+	}
+
+	/// <summary>A probe that signals each start and answers once released, counting how many run at once.</summary>
+	private sealed class GatedProbe : IClaudeToolsProbe
+	{
+		private readonly Lock _lock = new();
+		private int _running;
+
+		public SemaphoreSlim Started { get; } = new(0);
+
+		public SemaphoreSlim Go { get; } = new(0);
+
+		public int MaxRunning { get; private set; }
+
+		public async Task<(ClaudeToolsSnapshot? Snapshot, string? Error)> CheckAsync(string folder)
+		{
+			lock (_lock)
+			{
+				MaxRunning = Math.Max(MaxRunning, ++_running);
+			}
+
+			Started.Release();
+			await Go.WaitAsync();
+			lock (_lock)
+			{
+				_running--;
+			}
+
+			return (null, "done " + Path.GetFileName(folder));
 		}
 	}
 

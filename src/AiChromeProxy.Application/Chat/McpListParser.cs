@@ -6,7 +6,9 @@ namespace AiChromeProxy.Application.Chat;
 /// <summary>
 /// Reads <c>claude mcp list</c>: one <c>&lt;name&gt;: &lt;command or url&gt; - &lt;mark&gt; &lt;text&gt;</c> line per server; other lines (progress,
 /// warnings, blanks) are skipped. The name ends at the first <c>": "</c> (names may hold <c>:</c> and spaces, as in <c>plugin:design:chat</c>);
-/// the mark is the last <c>" - &lt;symbol&gt; "</c> (a command may hold <c>" - "</c>).
+/// the mark is the last <c>" - &lt;symbol&gt; "</c> (a command may hold <c>" - "</c>; an unknown mark, even outside the BMP, is <c>unknown</c>).
+/// At most <see cref="ClaudeToolEntries.MaxReported"/> servers; a name longer than <see cref="ClaudeToolEntries.MaxLength"/> is skipped and a reason cut
+/// to <see cref="ClaudeToolEntries.MaxReasonLength"/>.
 /// </summary>
 public static partial class McpListParser
 {
@@ -17,7 +19,7 @@ public static partial class McpListParser
 		foreach (var line in output.Split('\n'))
 		{
 			var m = Line().Match(line.TrimEnd('\r'));
-			if (!m.Success || m.Groups["name"].Value.StartsWith('['))
+			if (!m.Success || m.Groups["name"].Value.StartsWith('[') || m.Groups["name"].Length > ClaudeToolEntries.MaxLength)
 			{
 				continue;
 			}
@@ -36,12 +38,16 @@ public static partial class McpListParser
 			var dash = text.IndexOf('—', StringComparison.Ordinal);
 			var reason = status == ClaudeToolStatuses.Failed && dash >= 0 ? text[(dash + 1)..].Trim() : null;
 			var source = name.StartsWith("plugin:", StringComparison.Ordinal) ? "plugin" : name.StartsWith("claude.ai ", StringComparison.Ordinal) ? "claudeai" : null;
-			servers.Add(new ClaudeMcpServer(name, source, status, reason is { Length: > 0 } ? reason : null));
+			servers.Add(new ClaudeMcpServer(name, source, status, reason is { Length: > 0 } ? reason[..Math.Min(reason.Length, ClaudeToolEntries.MaxReasonLength)] : null));
+			if (servers.Count == ClaudeToolEntries.MaxReported)
+			{
+				break;
+			}
 		}
 
 		return servers;
 	}
 
-	[GeneratedRegex(@"^(?<name>.+?): (?<target>.*) - (?<mark>[^\w\s])️? (?<text>.+)$")]
+	[GeneratedRegex(@"^(?<name>.+?): (?<target>.*) - (?<mark>\p{Cs}{2}|[^\w\s])️? (?<text>.+)$")]
 	private static partial Regex Line();
 }

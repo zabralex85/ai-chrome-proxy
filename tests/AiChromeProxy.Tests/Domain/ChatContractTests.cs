@@ -244,13 +244,13 @@ public sealed class ChatContractTests
 	{
 		var payload = new ClaudeToolsPayload(
 			"repo",
-			[new ClaudeMcpServerRow("plugin:design:slack", "plugin", ClaudeToolStatuses.NeedsAuth, true, "design")],
+			[new ClaudeMcpServerRow("plugin:design:slack", "plugin", ClaudeToolStatuses.NeedsAuth, true, "design", Command: "npx x", EntryHash: "ab")],
 			[new ClaudePluginRow("design@market", "design", "1.0.0", true, true)],
 			new DateTimeOffset(2026, 10, 6, 12, 0, 0, TimeSpan.Zero),
 			ClaudeToolsSnapshot.FromRun);
 
 		Assert.Equal(
-			"""{"repo":"repo","servers":[{"name":"plugin:design:slack","source":"plugin","status":"needs-auth","onHere":true,"plugin":"design","reason":null}],"plugins":[{"id":"design@market","name":"design","version":"1.0.0","enabled":true,"onHere":true,"status":null}],"checkedAt":"2026-10-06T12:00:00+00:00","from":"run","error":null}""",
+			"""{"repo":"repo","servers":[{"name":"plugin:design:slack","source":"plugin","status":"needs-auth","onHere":true,"plugin":"design","reason":null,"command":"npx x","entryHash":"ab"}],"plugins":[{"id":"design@market","name":"design","version":"1.0.0","enabled":true,"onHere":true,"status":null}],"checkedAt":"2026-10-06T12:00:00+00:00","from":"run","error":null}""",
 			Json(payload));
 		Assert.Equal(("agent.tools.get", "agent.tools.check", "agent.tools"), (MessageTypes.AgentToolsGet, MessageTypes.AgentToolsCheck, MessageTypes.AgentTools));
 	}

@@ -27,6 +27,17 @@ public sealed class PluginListParserTests
 			PluginListParser.Parse(json));
 	}
 
+	[Fact]
+	public void Caps_AtMost500_LongIdsSkipped()
+	{
+		var json = "[" + string.Join(',', Enumerable.Range(0, 600).Select(i => $$"""{"id":"p{{i}}@m"}""").Prepend($$"""{"id":"{{new string('x', 201)}}"}""")) + "]";
+
+		var plugins = PluginListParser.Parse(json);
+
+		Assert.Equal(ClaudeToolEntries.MaxReported, plugins.Count);
+		Assert.Equal(("p0@m", "p499@m"), (plugins[0].Id, plugins[^1].Id));
+	}
+
 	[Theory]
 	[InlineData("not json")]
 	[InlineData("{\"id\":\"x\"}")]

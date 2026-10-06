@@ -71,12 +71,39 @@ public sealed class ClaudeToolsSteps(IPage page)
 	[Then("the run's --settings deny the MCP server {string} and turn off the plugin {string}")]
 	public async Task ThenTheRunsSettingsDenyAsync(string server, string plugin)
 	{
-		var repo = await page.GetByTestId("folder-name").TextContentAsync();
-		var args = await File.ReadAllLinesAsync(Path.Combine(BrowserHooks.ArgsDirectory, repo + ".args"));
-		var settings = JsonNode.Parse(args[Array.IndexOf(args, "--settings") + 1])!;
+		var settings = (await RunSettingsAsync())!;
 		Xunit.Assert.Equal(server, (string?)settings["deniedMcpServers"]![0]!["serverName"]);
 		Xunit.Assert.False((bool)settings["enabledPlugins"]![plugin]!);
 	}
+
+	/// <summary>Writes <c>.mcp.json</c> straight into the repo's mirror (as Claude would), with one stdio server.</summary>
+	[Given("the mirror's .mcp.json runs {string} as {string}")]
+	[When("the mirror's .mcp.json runs {string} as {string}")]
+	public async Task GivenTheMirrorsMcpJsonRunsAsync(string command, string name)
+	{
+		var parts = command.Split(' ');
+		var json = new JsonObject { ["mcpServers"] = new JsonObject { [name] = new JsonObject { ["command"] = parts[0], ["args"] = new JsonArray([.. parts[1..].Select(a => (JsonNode?)a)]) } } };
+		await File.WriteAllTextAsync(Path.Combine(BrowserHooks.MirrorRoot, await RepoAsync(), ".mcp.json"), json.ToJsonString());
+	}
+
+	[Then("the server {string} shows the command {string}")]
+	public async Task ThenTheServerShowsTheCommandAsync(string name, string command) =>
+		await Expect(Server(name).GetByTestId("tool-command")).ToHaveTextAsync(command);
+
+	[When("I switch {string} on")]
+	public async Task WhenISwitchOnAsync(string label) => await page.GetByRole(AriaRole.Switch, new() { Name = label, Exact = true }).CheckAsync();
+
+	/// <summary>So that the next run's arguments are the ones read (the steps below wait for the file).</summary>
+	[When("I forget the last run's arguments")]
+	public async Task WhenIForgetTheLastRunsArgumentsAsync() => File.Delete(await ArgsFileAsync());
+
+	[Then("the run's --settings approve the .mcp.json server {string}")]
+	public async Task ThenTheRunsSettingsApproveAsync(string name) =>
+		Xunit.Assert.Equal([name], (await RunSettingsAsync())?["enabledMcpjsonServers"]?.AsArray().Select(n => (string?)n) ?? []);
+
+	[Then("the run's --settings do not approve the .mcp.json server {string}")]
+	public async Task ThenTheRunsSettingsDoNotApproveAsync(string name) =>
+		Xunit.Assert.DoesNotContain(name, (await RunSettingsAsync())?["enabledMcpjsonServers"]?.AsArray().Select(n => (string?)n) ?? []);
 
 	/// <summary>When E2E_SCREENSHOT_DIR is set: the section at 1280x900 in the dark and the light theme, as claude-tools-{theme}.png.</summary>
 	[Then("I save Claude tools screenshots")]
@@ -105,4 +132,29 @@ public sealed class ClaudeToolsSteps(IPage page)
 	}
 
 	private ILocator Server(string name) => page.Locator($"[data-testid=tool-server][data-name='{name}']");
+
+	private async Task<string> RepoAsync() => (await page.GetByTestId("folder-name").TextContentAsync())!;
+
+	private async Task<string> ArgsFileAsync() => Path.Combine(BrowserHooks.ArgsDirectory, await RepoAsync() + ".args");
+
+	/// <summary>The <c>--settings</c> JSON of the last run (null without one), once the fake agent has written its arguments.</summary>
+	private async Task<JsonNode?> RunSettingsAsync()
+	{
+		var file = await ArgsFileAsync();
+		var deadline = DateTime.UtcNow.AddSeconds(30);
+		while (true)
+		{
+			try
+			{
+				var args = await File.ReadAllLinesAsync(file);
+				var at = Array.IndexOf(args, "--settings");
+				return at < 0 ? null : JsonNode.Parse(args[at + 1]);
+			}
+			catch (IOException) when (DateTime.UtcNow < deadline)
+			{
+				// Not written yet, or still being written by the fake agent.
+				await page.WaitForTimeoutAsync(100);
+			}
+		}
+	}
 }

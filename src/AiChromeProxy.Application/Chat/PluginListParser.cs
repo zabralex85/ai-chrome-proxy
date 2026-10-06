@@ -7,7 +7,10 @@ namespace AiChromeProxy.Application.Chat;
 /// <summary>Reads <c>claude plugin list --json</c>: <c>[{ id, version, enabled, ... }]</c>; other fields are ignored.</summary>
 public static class PluginListParser
 {
-	/// <summary>The plugins in the order listed (entries without an id are skipped; a missing <c>enabled</c> counts as true).</summary>
+	/// <summary>
+	/// The plugins in the order listed, at most <see cref="ClaudeToolEntries.MaxReported"/> (entries without an id or with one longer than
+	/// <see cref="ClaudeToolEntries.MaxLength"/> are skipped; a missing <c>enabled</c> counts as true).
+	/// </summary>
 	/// <exception cref="FormatException">The output is not a JSON array.</exception>
 	public static IReadOnlyList<ClaudePlugin> Parse(string json)
 	{
@@ -27,7 +30,8 @@ public static class PluginListParser
 		}
 
 		return [.. items.OfType<JsonObject>()
-			.Where(p => Str(p, "id") is { Length: > 0 })
+			.Where(p => Str(p, "id") is { Length: > 0 and <= ClaudeToolEntries.MaxLength })
+			.Take(ClaudeToolEntries.MaxReported)
 			.Select(p => new ClaudePlugin(Str(p, "id")!, NameOf(Str(p, "id")!), Str(p, "version"), p["enabled"] is not JsonValue v || !v.TryGetValue<bool>(out var on) || on))];
 	}
 

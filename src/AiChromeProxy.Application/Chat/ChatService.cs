@@ -306,6 +306,7 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 			Push(run.Repo, Envelope.Create(MessageTypes.ChatSessions, Sessions(run.Repo)));
 			try
 			{
+				agentRun = agentRun with { ApprovedMcpServers = await ApprovedAsync(run, agentRun.ApprovedMcpServers) };
 				process = await _runner.StartAsync(agentRun, run.Token);
 			}
 			catch (Exception ex) when (ex is FileNotFoundException or InvalidOperationException or Win32Exception)
@@ -401,6 +402,26 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 
 		var code = await ExitedAsync(process);
 		return Failed(run, process.Stderr is { Length: > 0 } stderr ? stderr : code is null ? "Claude's output ended but it did not exit." : $"Claude exited with code {code} without a result.");
+	}
+
+	/// <summary>
+	/// The approved <c>.mcp.json</c> servers whose entry is unchanged since it was approved (<see cref="McpJson.Approved"/>); a changed one is left out
+	/// (and logged), so Claude does not start it until it is approved again.
+	/// </summary>
+	private async Task<IReadOnlyList<string>?> ApprovedAsync(Run run, IReadOnlyList<string>? approvals)
+	{
+		if (approvals is not { Count: > 0 })
+		{
+			return approvals;
+		}
+
+		var (approved, stale) = McpJson.Approved(approvals, await McpJson.ReadAsync(_mirror, run.Repo, run.Token));
+		foreach (var name in stale)
+		{
+			_logger.LogInformation("Chat run {RunId}: the .mcp.json server {Server} in {Repo} changed (or is gone) since it was approved, so it stays off", run.Id, name, run.Repo);
+		}
+
+		return approved;
 	}
 
 	/// <summary>Stores what the run's <c>init</c> reported about Claude's MCP servers and plugins; a failure is logged, never fails the run.</summary>

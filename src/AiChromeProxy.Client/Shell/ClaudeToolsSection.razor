@@ -23,7 +23,7 @@
         <ul class="tools-list" data-testid="tools-servers">
             @foreach (var row in tools.Servers)
             {
-                var hint = ClaudeToolsView.Hint(row);
+                var hint = ClaudeToolsView.Hint(row, Form);
                 <li class="tools-row" data-testid="tool-server" data-name="@row.Name" @key="row.Name">
                     <div class="tools-main">
                         <span class="tools-name">@ClaudeToolsView.Name(row)</span>
@@ -38,6 +38,10 @@
                             </label>
                         }
                     </div>
+                    @if (row.Command is not null)
+                    {
+                        <p class="tools-command" data-testid="tool-command" title="@row.Command">@row.Command</p>
+                    }
                     @if (hint is not null)
                     {
                         <p class="tools-hint" data-testid="tool-hint">

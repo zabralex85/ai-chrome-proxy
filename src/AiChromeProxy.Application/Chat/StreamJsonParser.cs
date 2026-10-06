@@ -132,14 +132,20 @@ public sealed class StreamJsonParser
 	private static IEnumerable<JsonObject> Blocks(JsonObject root) =>
 		root["message"] is JsonObject message && message["content"] is JsonArray content ? content.OfType<JsonObject>() : [];
 
+	/// <summary>The init's servers: at most <see cref="ClaudeToolEntries.MaxReported"/>, a name longer than <see cref="ClaudeToolEntries.MaxLength"/> skipped.</summary>
 	private static List<ClaudeMcpServer> InitServers(JsonNode? list) =>
 		list is JsonArray a
-			? [.. a.Where(s => Str(s, "name") is { Length: > 0 }).Select(s => new ClaudeMcpServer(Str(s, "name")!, Str(s, "source"), Str(s, "status") ?? ClaudeToolStatuses.Unknown))]
+			? [.. a.Where(s => Str(s, "name") is { Length: > 0 and <= ClaudeToolEntries.MaxLength })
+				.Take(ClaudeToolEntries.MaxReported)
+				.Select(s => new ClaudeMcpServer(Str(s, "name")!, Str(s, "source"), Str(s, "status") ?? ClaudeToolStatuses.Unknown))]
 			: [];
 
+	/// <summary>The init's plugins (id: <c>source</c>, else the name): at most <see cref="ClaudeToolEntries.MaxReported"/>, a longer name or id skipped.</summary>
 	private static List<ClaudePlugin> InitPlugins(JsonNode? list) =>
 		list is JsonArray a
-			? [.. a.Where(p => Str(p, "name") is { Length: > 0 }).Select(p => new ClaudePlugin(Str(p, "source") is { Length: > 0 } id ? id : Str(p, "name")!, Str(p, "name")!, Str(p, "version"), true))]
+			? [.. a.Where(p => Str(p, "name") is { Length: > 0 and <= ClaudeToolEntries.MaxLength } && (Str(p, "source")?.Length ?? 0) <= ClaudeToolEntries.MaxLength)
+				.Take(ClaudeToolEntries.MaxReported)
+				.Select(p => new ClaudePlugin(Str(p, "source") is { Length: > 0 } id ? id : Str(p, "name")!, Str(p, "name")!, Str(p, "version"), true))]
 			: [];
 
 	private IReadOnlyList<ChatEvent> Init(JsonObject root)

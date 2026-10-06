@@ -15,6 +15,10 @@ public sealed class ClaudeToolsUiTests : IDisposable
 
 	private static readonly DateTimeOffset Now = new(2026, 10, 6, 12, 0, 0, TimeSpan.Zero);
 
+	private static readonly string OldHash = new('a', 64);
+
+	private static readonly string NewHash = new('b', 64);
+
 	private readonly LoopbackServer _server = new();
 	private readonly FakeFolder _folder = new();
 	private readonly SyncEngine _sync;
@@ -46,15 +50,32 @@ public sealed class ClaudeToolsUiTests : IDisposable
 	[Fact]
 	public void Hint_UnderNeedsSignInAndFailedRowsOnly_CodeBetweenBackticks()
 	{
-		Assert.Equal("Sign in on the home computer: run `claude`, then `/mcp`.", ClaudeToolsView.Hint(Server("linear", "needs-auth")));
-		var failed = ClaudeToolsView.Hint(Server("blender", "failed"))!;
+		var form = new ProjectSettingsForm(ProjectSettings.Default);
+		Assert.Equal("Sign in on the home computer: run `claude`, then `/mcp`.", ClaudeToolsView.Hint(Server("linear", "needs-auth"), form));
+		var failed = ClaudeToolsView.Hint(Server("blender", "failed"), form)!;
 		Assert.Equal("Check the server on the home computer: `claude mcp get blender`.", failed);
-		Assert.Null(ClaudeToolsView.Hint(Server("github", "connected")));
-		Assert.Null(ClaudeToolsView.Hint(Server("team-db", "pending")));
+		Assert.Null(ClaudeToolsView.Hint(Server("github", "connected"), form));
+		Assert.Null(ClaudeToolsView.Hint(Pending("team-db", OldHash), form));
 
 		Assert.Equal(
 			[("Check the server on the home computer: ", false), ("claude mcp get blender", true), (".", false)],
 			ClaudeToolsView.Parts(failed));
+	}
+
+	[Fact]
+	public void Hint_PendingServerApprovedForAnOlderEntry_ChangedUntilApprovedAgain()
+	{
+		var form = new ProjectSettingsForm(new ProjectSettings { AgentApprovedMcpServers = [ClaudeToolEntries.Approval("team-db", OldHash), "other"] });
+		var teamDb = Pending("team-db", NewHash);
+
+		Assert.False(ClaudeToolsView.IsOn(form, teamDb));
+		Assert.Equal("Changed since you approved it — check `.mcp.json` and approve again.", ClaudeToolsView.Hint(teamDb, form));
+		Assert.Equal(ClaudeToolsView.ChangedHint, ClaudeToolsView.Hint(Pending("other", NewHash), form));
+
+		ClaudeToolsView.SetOn(form, teamDb, true);
+
+		Assert.Null(ClaudeToolsView.Hint(teamDb, form));
+		Assert.Equal(["other", ClaudeToolEntries.Approval("team-db", NewHash)], form.ToSettings().AgentApprovedMcpServers);
 	}
 
 	[Fact]
@@ -70,6 +91,8 @@ public sealed class ClaudeToolsUiTests : IDisposable
 		Assert.Equal(string.Empty, ClaudeToolsView.Source(Server("github", "connected")));
 		Assert.Equal("github", ClaudeToolsView.Name(Server("github", "connected")));
 		Assert.True(ClaudeToolsView.HasSwitch(Server("github", "connected")));
+		Assert.True(ClaudeToolsView.HasSwitch(Pending("team-db", NewHash)));
+		Assert.False(ClaudeToolsView.HasSwitch(Server("team-db", "pending")));
 
 		Assert.Equal("design@market · v1.2.0", ClaudeToolsView.Source(new ClaudePluginRow("design@market", "design", "1.2.0", true, true)));
 		Assert.Equal("notes@market · off in Claude Code", ClaudeToolsView.Source(new ClaudePluginRow("notes@market", "notes", null, false, true)));
@@ -91,7 +114,7 @@ public sealed class ClaudeToolsUiTests : IDisposable
 		var form = new ProjectSettingsForm(new ProjectSettings { AgentDisabledMcpServers = ["blender"] });
 		var blender = Server("blender", "off");
 		var github = Server("github", "connected");
-		var teamDb = Server("team-db", "pending");
+		var teamDb = Pending("team-db", NewHash);
 		var design = new ClaudePluginRow("design@market", "design", "1.0.0", true, true);
 
 		Assert.Equal((false, true, false, true), (ClaudeToolsView.IsOn(form, blender), ClaudeToolsView.IsOn(form, github), ClaudeToolsView.IsOn(form, teamDb), ClaudeToolsView.IsOn(form, design)));
@@ -106,7 +129,7 @@ public sealed class ClaudeToolsUiTests : IDisposable
 		Assert.Equal((true, false, true, false), (ClaudeToolsView.IsOn(form, blender), ClaudeToolsView.IsOn(form, github), ClaudeToolsView.IsOn(form, teamDb), ClaudeToolsView.IsOn(form, design)));
 		var settings = form.ToSettings();
 		Assert.Equal(["github"], settings.AgentDisabledMcpServers);
-		Assert.Equal(["team-db"], settings.AgentApprovedMcpServers);
+		Assert.Equal([ClaudeToolEntries.Approval("team-db", NewHash)], settings.AgentApprovedMcpServers);
 		Assert.Equal(["design@market"], settings.AgentDisabledPlugins);
 
 		// Switched back: an unapproved pending server is not disabled; nothing is left to save.
@@ -215,6 +238,8 @@ public sealed class ClaudeToolsUiTests : IDisposable
 	}
 
 	private static ClaudeMcpServerRow Server(string name, string status) => new(name, null, status, status != "off");
+
+	private static ClaudeMcpServerRow Pending(string name, string hash) => new(name, "project", ClaudeToolStatuses.Pending, false, Command: "npx -y db-mcp", EntryHash: hash);
 
 	private static ClaudeToolsPayload Payload(DateTimeOffset? at, string? from) => new(Repo, [], [], at, from);
 

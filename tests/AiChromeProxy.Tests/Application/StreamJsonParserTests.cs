@@ -194,6 +194,20 @@ public sealed class StreamJsonParserTests
 	}
 
 	[Fact]
+	public void Init_Caps_AtMost500_LongNamesAndIdsSkipped()
+	{
+		var parser = new StreamJsonParser();
+		var longName = new string('x', 201);
+		var servers = string.Join(',', Enumerable.Range(0, 600).Select(i => $$"""{"name":"s{{i}}"}""").Prepend($$"""{"name":"{{longName}}"}"""));
+		var plugins = string.Join(',', Enumerable.Range(0, 600).Select(i => $$"""{"name":"p{{i}}"}""").Prepend($$"""{"name":"a","source":"{{longName}}"}""").Prepend($$"""{"name":"{{longName}}"}"""));
+
+		parser.Feed($$"""{"type":"system","subtype":"init","mcp_servers":[{{servers}}],"plugins":[{{plugins}}]}""");
+
+		Assert.Equal((ClaudeToolEntries.MaxReported, "s0"), (parser.Tools!.Servers.Count, parser.Tools.Servers[0].Name));
+		Assert.Equal((ClaudeToolEntries.MaxReported, "p0"), (parser.Tools.Plugins.Count, parser.Tools.Plugins[0].Id));
+	}
+
+	[Fact]
 	public void Init_MissingLists_EmptySnapshot_OtherSystemLinesIgnored()
 	{
 		var parser = new StreamJsonParser();

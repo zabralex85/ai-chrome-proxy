@@ -6,14 +6,16 @@ namespace AiChromeProxy.Client.Shell;
 
 /// <summary>
 /// What the <b>Claude tools</b> section of the Project settings tab shows for an <c>agent.tools</c> payload and which of the form's lists its
-/// <b>On in this project</b> switches edit: a server's switch edits the disabled servers (for a <c>pending</c> project server: the approved ones), a
-/// plugin's the disabled plugins; a plugin's servers have none (the plugin's switch covers them).
+/// <b>On in this project</b> switches edit: a server's switch edits the disabled servers (for a <c>pending</c> project server: the approved ones, each
+/// pinned to the hash of its <c>.mcp.json</c> entry), a plugin's the disabled plugins; a plugin's servers have none (the plugin's switch covers them).
 /// </summary>
 public static class ClaudeToolsView
 {
 	public const string Empty = "No data yet — send a message or press Check now.";
 
 	public const string SignInHint = "Sign in on the home computer: run `claude`, then `/mcp`.";
+
+	public const string ChangedHint = "Changed since you approved it — check `.mcp.json` and approve again.";
 
 	/// <summary>The badge text of a status (<see cref="ClaudeToolStatuses"/>).</summary>
 	public static string Badge(string? status) => status switch
@@ -37,11 +39,15 @@ public static class ClaudeToolsView
 		_ => "muted",
 	};
 
-	/// <summary>The hint under a problem row (backticks mark code), or null.</summary>
-	public static string? Hint(ClaudeMcpServerRow row) => row.Status switch
+	/// <summary>
+	/// The hint under a problem row (backticks mark code), or null; a <c>pending</c> server the form approved for an older version of its entry
+	/// gets <see cref="ChangedHint"/>.
+	/// </summary>
+	public static string? Hint(ClaudeMcpServerRow row, ProjectSettingsForm form) => row.Status switch
 	{
 		ClaudeToolStatuses.NeedsAuth => SignInHint,
 		ClaudeToolStatuses.Failed => $"Check the server on the home computer: `claude mcp get {row.Name}`.",
+		ClaudeToolStatuses.Pending when !IsOn(form, row) && form.ApprovedMcpServers.Any(a => ClaudeToolEntries.ApprovalName(a) == row.Name) => ChangedHint,
 		_ => null,
 	};
 
@@ -79,30 +85,35 @@ public static class ClaudeToolsView
 		return $"Last checked {time} ({(tools.From == ClaudeToolsSnapshot.FromCheck ? "by Check now" : "from a message")})";
 	}
 
-	/// <summary>Whether the row has its own switch (a plugin's server has not).</summary>
-	public static bool HasSwitch(ClaudeMcpServerRow row) => row.Plugin is null;
+	/// <summary>Whether the row has its own switch: a plugin's server has not, nor a <c>pending</c> one whose <c>.mcp.json</c> entry is unknown (nothing to approve).</summary>
+	public static bool HasSwitch(ClaudeMcpServerRow row) => row.Plugin is null && (row.Status != ClaudeToolStatuses.Pending || row.EntryHash is not null);
 
-	/// <summary>The switch as the form has it now.</summary>
+	/// <summary>The switch as the form has it now (a <c>pending</c> server is on when the form approves its current entry).</summary>
 	public static bool IsOn(ProjectSettingsForm form, ClaudeMcpServerRow row) =>
-		!form.DisabledMcpServers.Contains(row.Name) && (row.Status != ClaudeToolStatuses.Pending || form.ApprovedMcpServers.Contains(row.Name));
+		!form.DisabledMcpServers.Contains(row.Name)
+		&& (row.Status != ClaudeToolStatuses.Pending || (row.EntryHash is { } hash && form.ApprovedMcpServers.Contains(ClaudeToolEntries.Approval(row.Name, hash))));
 
-	/// <summary>Turns a server on or off in the form: off disables it (a pending one is just not approved), on enables (and approves a pending one).</summary>
+	/// <summary>
+	/// Turns a server on or off in the form: off disables it (a pending one is just not approved), on enables (and approves a pending one's current
+	/// entry, replacing approvals of older ones).
+	/// </summary>
 	public static void SetOn(ProjectSettingsForm form, ClaudeMcpServerRow row, bool on)
 	{
 		var pending = row.Status == ClaudeToolStatuses.Pending;
+		if (pending)
+		{
+			form.ApprovedMcpServers.RemoveWhere(a => ClaudeToolEntries.ApprovalName(a) == row.Name);
+		}
+
 		if (on)
 		{
 			form.DisabledMcpServers.Remove(row.Name);
-			if (pending)
+			if (pending && row.EntryHash is { } hash)
 			{
-				form.ApprovedMcpServers.Add(row.Name);
+				form.ApprovedMcpServers.Add(ClaudeToolEntries.Approval(row.Name, hash));
 			}
 		}
-		else if (pending)
-		{
-			form.ApprovedMcpServers.Remove(row.Name);
-		}
-		else
+		else if (!pending)
 		{
 			form.DisabledMcpServers.Add(row.Name);
 		}

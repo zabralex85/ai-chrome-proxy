@@ -26,6 +26,9 @@ public sealed class ClaudeToolsMergeTests
 		new("caveman@caveman", "caveman", null, false),
 	];
 
+	private static readonly IReadOnlyDictionary<string, McpJsonEntry> Project = McpJson.Parse(
+		"""{"mcpServers":{"team-db":{"command":"npx","args":["-y","db-mcp"]},"other-db":{"url":"https://db/mcp"},"Blender":{"command":"b"},"notion":{"command":"n"}}}""");
+
 	[Fact]
 	public void NoSnapshot_NoSwitches_Empty()
 	{
@@ -48,15 +51,16 @@ public sealed class ClaudeToolsMergeTests
 	[Fact]
 	public void Check_StatusesKept_AicpHidden_PendingNeedsApproval_ProblemsFirstThenName()
 	{
-		var payload = ClaudeToolsMerge.Merge("repo", Snapshot(ClaudeToolsSnapshot.FromCheck), new ProjectSettings { AgentApprovedMcpServers = ["team-db"] }, "boom");
+		var approval = ClaudeToolEntries.Approval("team-db", Project["team-db"].Hash);
+		var payload = ClaudeToolsMerge.Merge("repo", Snapshot(ClaudeToolsSnapshot.FromCheck), new ProjectSettings { AgentApprovedMcpServers = [approval] }, "boom", Project);
 
 		Assert.Equal((At, "check", "boom"), (payload.CheckedAt!.Value, payload.From!, payload.Error!));
 		Assert.Equal(
 			[
 				new ClaudeMcpServerRow("Blender", "user", ClaudeToolStatuses.Failed, true, null, "ECONNREFUSED"),
-				new ClaudeMcpServerRow("other-db", "project", ClaudeToolStatuses.Pending, false),
+				new ClaudeMcpServerRow("other-db", "project", ClaudeToolStatuses.Pending, false, Command: "https://db/mcp", EntryHash: Project["other-db"].Hash),
 				new ClaudeMcpServerRow("plugin:design:slack", "plugin", ClaudeToolStatuses.NeedsAuth, true, "design"),
-				new ClaudeMcpServerRow("team-db", "project", ClaudeToolStatuses.Pending, true),
+				new ClaudeMcpServerRow("team-db", "project", ClaudeToolStatuses.Pending, true, Command: "npx -y db-mcp", EntryHash: Project["team-db"].Hash),
 				new ClaudeMcpServerRow("codegraph", "user", ClaudeToolStatuses.Connected, true),
 				new ClaudeMcpServerRow("notion", "claudeai", ClaudeToolStatuses.NotConfigured, true),
 				new ClaudeMcpServerRow("weird", "user", ClaudeToolStatuses.Unknown, true),
@@ -96,6 +100,38 @@ public sealed class ClaudeToolsMergeTests
 				new ClaudePluginRow("old@market", "old", null, false, false, old),
 			],
 			payload.Plugins);
+	}
+
+	[Theory]
+	[InlineData("npx")]
+	[InlineData(null)]
+	public void ApprovedBeforeTheEntryChanged_OrWithoutHash_PendingAndOffAgain(string? approvedCommand)
+	{
+		var old = McpJson.Parse($$$$"""{"mcpServers":{"team-db":{"command":"{{{{approvedCommand}}}}","args":["-y","db-mcp"]}}}""")["team-db"].Hash;
+		var changed = McpJson.Parse("""{"mcpServers":{"team-db":{"command":"cmd","args":["/c","evil"]}}}""");
+		var approval = approvedCommand is null ? "team-db" : ClaudeToolEntries.Approval("team-db", old);
+		var snapshot = new ClaudeToolsSnapshot([new("team-db", "project", ClaudeToolStatuses.Connected)], [], At, ClaudeToolsSnapshot.FromRun);
+
+		var row = Assert.Single(ClaudeToolsMerge.Merge("repo", snapshot, new ProjectSettings { AgentApprovedMcpServers = [approval] }, null, changed).Servers);
+
+		Assert.Equal(new ClaudeMcpServerRow("team-db", "project", ClaudeToolStatuses.Pending, false, Command: "cmd /c evil", EntryHash: changed["team-db"].Hash), row);
+	}
+
+	[Fact]
+	public void DuplicateNamesAndIds_ShownOnce_AbsentPluginServerKeepsASwitch()
+	{
+		var snapshot = new ClaudeToolsSnapshot(
+			[new("a", "user", ClaudeToolStatuses.Connected), new("a", "user", ClaudeToolStatuses.Failed)],
+			[new("p", "p", null, true), new("p", "p", "2", true)],
+			At,
+			ClaudeToolsSnapshot.FromCheck);
+
+		var payload = ClaudeToolsMerge.Merge("repo", snapshot, new ProjectSettings { AgentDisabledMcpServers = ["plugin:x:y"] });
+
+		Assert.Equal(
+			[new ClaudeMcpServerRow("a", "user", ClaudeToolStatuses.Connected, true), new ClaudeMcpServerRow("plugin:x:y", null, ClaudeToolStatuses.Missing, false)],
+			payload.Servers);
+		Assert.Equal([new ClaudePluginRow("p", "p", null, true, true)], payload.Plugins);
 	}
 
 	[Fact]

@@ -121,7 +121,7 @@ public static class ClaudeArguments
 
 	/// <summary>
 	/// The <c>--settings</c> JSON (compact) from the project's lists, each cleaned by <see cref="ClaudeToolEntries.Clean"/>: <c>enabledPlugins</c> (each
-	/// disabled id → false), <c>deniedMcpServers</c> (never <see cref="ClaudeToolEntries.ApprovalServer"/>), <c>enabledMcpjsonServers</c>; null when all are empty.
+	/// disabled id → false), <c>deniedMcpServers</c> and <c>enabledMcpjsonServers</c> (never <see cref="ClaudeToolEntries.ApprovalServer"/>); null when all are empty.
 	/// </summary>
 	private static string? Settings(AgentRun run)
 	{
@@ -138,7 +138,7 @@ public static class ClaudeArguments
 			json["deniedMcpServers"] = new JsonArray([.. denied.Select(n => (JsonNode?)new JsonObject { ["serverName"] = n })]);
 		}
 
-		var approved = ClaudeToolEntries.Clean(run.ApprovedMcpServers);
+		var approved = ClaudeToolEntries.Clean(run.ApprovedMcpServers).Where(n => n != ClaudeToolEntries.ApprovalServer).ToList();
 		if (approved.Count > 0)
 		{
 			json["enabledMcpjsonServers"] = new JsonArray([.. approved.Select(n => (JsonNode?)n)]);

@@ -37,3 +37,24 @@ Scenario: A server and a plugin switched off are left out of the next run
 	When I click the project settings button
 	Then the MCP server "github" says "Off in this project"
 	And the switch "github: On in this project" is off
+
+Scenario: An approved .mcp.json server runs until its entry changes
+	Given the app is connected with a synced folder open
+	And the mirror's .mcp.json runs "npx -y db-mcp" as "team-db"
+	When I click the project settings button
+	And I click Check now
+	Then the server "team-db" shows the command "npx -y db-mcp"
+	When I switch "team-db: On in this project" on
+	And I save the settings
+	And I type "tools please" and press Enter
+	Then Claude's answer says "Tools answer."
+	And the run's --settings approve the .mcp.json server "team-db"
+	When the mirror's .mcp.json runs "cmd /c evil" as "team-db"
+	And I forget the last run's arguments
+	And I type "tools again" and press Enter
+	Then the run's --settings do not approve the .mcp.json server "team-db"
+	When I click the project settings button
+	And I click Check now
+	Then the MCP server "team-db" says "Waiting for approval"
+	And the server "team-db" shows the command "cmd /c evil"
+	And the hint under "team-db" says "Changed since you approved it — check .mcp.json and approve again."

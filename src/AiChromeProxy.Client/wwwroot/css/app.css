@@ -1951,6 +1951,17 @@ h1:focus-visible {
     word-break: break-word;
 }
 
+/* What a project .mcp.json server runs: one line, cut with an ellipsis (the full text is in the title). */
+.tools-command {
+    margin: 4px 0 0;
+    overflow: hidden;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
 .tools-hint code {
     padding: 0 4px;
     border-radius: 3px;

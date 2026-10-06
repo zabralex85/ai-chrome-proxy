@@ -112,7 +112,8 @@ public sealed class ClaudeArgumentsTests
 		Assert.Equal(
 			"""{"deniedMcpServers":[{"serverName":"x"}]}""",
 			Settings(Run() with { DisabledMcpServers = ["x"], DisabledPlugins = [], ApprovedMcpServers = [" "] }));
-		Assert.Equal("""{"enabledMcpjsonServers":["y"]}""", Settings(Run() with { ApprovedMcpServers = ["y"] }));
+		Assert.Equal("""{"enabledMcpjsonServers":["y"]}""", Settings(Run() with { ApprovedMcpServers = ["y", "aicp"] }));
+		Assert.DoesNotContain("--settings", ClaudeArguments.Build(Run() with { ApprovedMcpServers = ["aicp"] }, new AgentOptions()));
 		Assert.DoesNotContain("--settings", ClaudeArguments.Build(Run(), new AgentOptions()));
 		Assert.DoesNotContain("--settings", ClaudeArguments.Build(Run() with { DisabledMcpServers = ["aicp", "", "a\nb"] }, new AgentOptions()));
 	}

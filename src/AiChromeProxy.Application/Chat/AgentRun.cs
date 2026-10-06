@@ -14,7 +14,10 @@ namespace AiChromeProxy.Application.Chat;
 /// <param name="ApprovalToken">The run's bearer token for <paramref name="ApprovalUrl"/>.</param>
 /// <param name="DisabledMcpServers">MCP servers turned off in this project (setting <c>agentDisabledMcpServers</c>).</param>
 /// <param name="DisabledPlugins">Plugin ids turned off in this project (setting <c>agentDisabledPlugins</c>).</param>
-/// <param name="ApprovedMcpServers">Project <c>.mcp.json</c> servers approved in this project (setting <c>agentApprovedMcpServers</c>).</param>
+/// <param name="ApprovedMcpServers">
+/// Project <c>.mcp.json</c> servers approved in this project (setting <c>agentApprovedMcpServers</c>); <see cref="ChatService"/> passes only those
+/// whose entry is unchanged since (<see cref="McpJson.Approved"/>).
+/// </param>
 /// <remarks><see cref="ToString"/> hides <paramref name="ApprovalToken"/>, so a logged run never shows it.</remarks>
 public sealed record AgentRun(
 	string RepoFolder,
