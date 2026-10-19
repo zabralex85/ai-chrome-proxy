@@ -299,6 +299,19 @@ export async function readText(path: string): Promise<string | null> {
     }
 }
 
+/** When a file of the picked folder was last modified (ms since the epoch), read now, or null when it is not there. Throws on an invalid path. */
+export async function modified(path: string): Promise<number | null> {
+    const { folders, name } = splitPath(path);
+    try {
+        return (await (await (await parentOf(folders, false)).getFileHandle(name)).getFile()).lastModified;
+    } catch (e) {
+        if (isNotFound(e)) {
+            return null;
+        }
+        throw e;
+    }
+}
+
 /** AiChromeProxy.Client.Sync.FileBytes (bytes as base64: a byte[] inside an object is read from a JSON string, not a Uint8Array) */
 interface FileBytes {
     bytes: string;

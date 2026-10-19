@@ -1,4 +1,5 @@
 using AiChromeProxy.Application.Chat;
+using AiChromeProxy.Application.Packages;
 using AiChromeProxy.Application.Projects;
 using AiChromeProxy.Application.Sync;
 using AiChromeProxy.Application.Transport;
@@ -6,6 +7,7 @@ using AiChromeProxy.Client.Transport;
 using AiChromeProxy.Domain;
 using AiChromeProxy.Domain.Chat;
 using AiChromeProxy.Infrastructure.Chat;
+using AiChromeProxy.Infrastructure.Packages;
 using AiChromeProxy.Infrastructure.Sync;
 using AiChromeProxy.Tests.Application;
 using AiChromeProxy.Tests.Server;
@@ -29,6 +31,7 @@ public sealed class LoopbackServer : IDisposable
 		_sessions = new SyncSessions(store, Projects, new ListLogger<SyncSession>(), TimeProvider.System, Watcher);
 		Broker = new PermissionBroker(Projects, TimeProvider.System, new ListLogger<PermissionBroker>());
 		Attachments = new ChatAttachments(new FileSystemAttachmentStore(Options.Create(new AttachmentsOptions { Root = AttachmentsRoot })), TimeProvider.System);
+		Packages = new PackageUploads(new FileSystemPackageStore(Options.Create(new PackagesOptions { Root = PackagesRoot })), new ListLogger<PackageUploads>());
 		Chat = new ChatService(Chats, store, Projects, Agent, TimeProvider.System, new ListLogger<ChatService>(), Broker, new ApprovalEndpoint(), attachments: Attachments);
 		_router = new EnvelopeRouter(
 		[
@@ -36,6 +39,7 @@ public sealed class LoopbackServer : IDisposable
 			.. ProjectSettingsHandler.Types.Select(t => new ProjectSettingsHandler(t, Projects, _sessions)),
 			.. ChatHandler.Types.Select(t => new ChatHandler(t, Chat)),
 			new ChatAttachHandler(Attachments),
+			.. PackagesHandler.Types.Select(t => new PackagesHandler(t, Packages)),
 			.. ClaudeToolsHandler.Types.Select(t => new ClaudeToolsHandler(t, Projects, store, new ToolsProbe(this), TimeProvider.System, new ListLogger<ClaudeToolsHandler>())),
 		]);
 		Transport.Reply = ReplyAsync;
@@ -46,7 +50,13 @@ public sealed class LoopbackServer : IDisposable
 
 	public string AttachmentsRoot { get; } = Path.Combine(TempRootCleanup.Root, Guid.NewGuid().ToString("N"));
 
+	/// <summary>The server's <c>Packages:Root</c> (NuGet packages under <c>nuget\&lt;id&gt;\&lt;version&gt;</c>).</summary>
+	public string PackagesRoot { get; } = Path.Combine(TempRootCleanup.Root, Guid.NewGuid().ToString("N"));
+
 	public FakeTransport Transport { get; } = new();
+
+	/// <summary>The server's package uploads (a real store under <see cref="PackagesRoot"/>).</summary>
+	public PackageUploads Packages { get; }
 
 	/// <summary>The server's attachment uploads.</summary>
 	public ChatAttachments Attachments { get; }
@@ -85,6 +95,7 @@ public sealed class LoopbackServer : IDisposable
 		Transport.SetState(TransportState.Reconnecting);
 		_sessions.Close(ConnectionId);
 		Chat.Unsubscribe(ConnectionId);
+		Packages.Close(ConnectionId);
 		_connection++;
 		Transport.SetState(TransportState.Connected);
 	}
@@ -104,6 +115,11 @@ public sealed class LoopbackServer : IDisposable
 		if (Directory.Exists(AttachmentsRoot))
 		{
 			Directory.Delete(AttachmentsRoot, recursive: true);
+		}
+
+		if (Directory.Exists(PackagesRoot))
+		{
+			Directory.Delete(PackagesRoot, recursive: true);
 		}
 	}
 
