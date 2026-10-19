@@ -1,4 +1,5 @@
 using AiChromeProxy.Application.Chat;
+using AiChromeProxy.Application.Packages;
 using AiChromeProxy.Application.Projects;
 using AiChromeProxy.Application.Sync;
 using AiChromeProxy.Application.Transport;
@@ -9,7 +10,7 @@ namespace AiChromeProxy.Application;
 
 public static class DependencyInjection
 {
-	/// <summary>Registers the envelope router and its handlers (singletons). Needs an <see cref="IMirrorStore"/>, an <see cref="IProjectStore"/>, an <see cref="IChatStore"/>, an <see cref="IAgentRunner"/>, an <see cref="IClaudeToolsProbe"/> and an <see cref="IAttachmentStore"/> (Infrastructure) and logging (the host); an <see cref="IApprovalEndpoint"/> (the Server) is optional.</summary>
+	/// <summary>Registers the envelope router and its handlers (singletons). Needs an <see cref="IMirrorStore"/>, an <see cref="IProjectStore"/>, an <see cref="IChatStore"/>, an <see cref="IAgentRunner"/>, an <see cref="IClaudeToolsProbe"/> and an <see cref="IAttachmentStore"/>, an <see cref="IPackageStore"/> (Infrastructure) and logging (the host); an <see cref="IApprovalEndpoint"/> (the Server) is optional.</summary>
 	public static IServiceCollection AddApplication(this IServiceCollection services)
 	{
 		services.TryAddSingleton(TimeProvider.System);
@@ -38,6 +39,12 @@ public static class DependencyInjection
 		foreach (var type in ClaudeToolsHandler.Types)
 		{
 			services.AddSingleton<IEnvelopeHandler>(sp => ActivatorUtilities.CreateInstance<ClaudeToolsHandler>(sp, type));
+		}
+
+		services.AddSingleton<PackageUploads>();
+		foreach (var type in PackagesHandler.Types)
+		{
+			services.AddSingleton<IEnvelopeHandler>(sp => new PackagesHandler(type, sp.GetRequiredService<PackageUploads>()));
 		}
 
 		services.AddSingleton<EnvelopeRouter>();

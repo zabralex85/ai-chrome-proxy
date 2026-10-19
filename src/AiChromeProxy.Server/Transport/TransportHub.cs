@@ -1,4 +1,5 @@
 using AiChromeProxy.Application.Chat;
+using AiChromeProxy.Application.Packages;
 using AiChromeProxy.Application.Sync;
 using AiChromeProxy.Application.Transport;
 using AiChromeProxy.Domain;
@@ -8,7 +9,7 @@ using Microsoft.AspNetCore.SignalR;
 
 namespace AiChromeProxy.Server.Transport;
 
-public sealed class TransportHub(EnvelopeRouter router, SyncSessions syncSessions, ChatService chat, IHubContext<TransportHub> hub, TimeProvider time, ILogger<TransportHub> logger) : Hub
+public sealed class TransportHub(EnvelopeRouter router, SyncSessions syncSessions, ChatService chat, PackageUploads packages, IHubContext<TransportHub> hub, TimeProvider time, ILogger<TransportHub> logger) : Hub
 {
 	public const string Path = "/hub";
 	public const string ReceiveMethod = "Receive";
@@ -62,6 +63,7 @@ public sealed class TransportHub(EnvelopeRouter router, SyncSessions syncSession
 	{
 		(Context.Items[ExpiryTimerKey] as IDisposable)?.Dispose();
 		syncSessions.Close(Context.ConnectionId);
+		packages.Close(Context.ConnectionId);
 		chat.Unsubscribe(Context.ConnectionId);
 		return base.OnDisconnectedAsync(exception);
 	}
