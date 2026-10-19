@@ -387,6 +387,87 @@ public sealed class ChatEngineTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Stop_ShowsStoppingAtOnce_UntilTheRunEnded_AndPressingTwiceSendsOneCancel()
+	{
+		var process = await StartAsync("long job");
+		process.Write(Init);
+		var changes = 0;
+		_chat.Changed += () => changes++;
+		Assert.False(_chat.Stopping);
+
+		var release = new TaskCompletionSource();
+		var reply = _server.Transport.Reply!;
+		_server.Transport.Reply = async e =>
+		{
+			if (e.Type == MessageTypes.ChatCancel)
+			{
+				await release.Task;
+			}
+
+			return await reply(e);
+		};
+		var first = _chat.StopAsync();
+		Assert.True(_chat.Stopping);
+		Assert.True(changes > 0);
+		await _chat.StopAsync();
+		release.SetResult();
+		await first;
+		await UntilAsync(() => !_chat.Running);
+
+		Assert.False(_chat.Stopping);
+		Assert.Single(_server.Transport.Sent, e => e.Type == MessageTypes.ChatCancel);
+	}
+
+	[Fact]
+	public async Task Stop_WhenTheRequestFails_StoppingIsOffAgain()
+	{
+		var process = await StartAsync("long job");
+		process.Write(Init);
+		var reply = _server.Transport.Reply!;
+		_server.Transport.Reply = e => e.Type == MessageTypes.ChatCancel ? throw new InvalidOperationException("down") : reply(e);
+
+		await _chat.StopAsync();
+
+		Assert.False(_chat.Stopping);
+		Assert.True(_chat.Running);
+	}
+
+	[Fact]
+	public async Task Stop_WithoutAKnownRunId_StopsTheFoldersRun()
+	{
+		var process = await StartAsync("long job");
+		process.Write(Init);
+		await UntilAsync(() => _chat.Current.Items.Count == 1);
+
+		// The reloaded page sees the run in the listing, but the history that tells its run id is still on its way.
+		var history = new TaskCompletionSource();
+		var reply = _server.Transport.Reply!;
+		_server.Transport.Reply = async e =>
+		{
+			if (e.Type == MessageTypes.ChatHistory)
+			{
+				await history.Task;
+			}
+
+			return await reply(e);
+		};
+		var reloaded = new ChatEngine(_server.Transport, _sync, _time);
+		var initializing = reloaded.InitializeAsync();
+		await UntilAsync(() => reloaded.Running);
+		Assert.Null(reloaded.Current.ActiveRunId);
+		Assert.All(reloaded.Sessions, s => Assert.True(s.Running));
+
+		await reloaded.StopAsync();
+		await UntilAsync(() => process.Killed);
+		history.SetResult();
+		await initializing;
+
+		var cancel = _server.Transport.Sent.Last(e => e.Type == MessageTypes.ChatCancel).Payload.Deserialize<ChatCancelPayload>(JsonSerializerOptions.Web)!;
+		Assert.Equal((null, _sync.Repo), (cancel.RunId, cancel.Repo));
+		await UntilAsync(() => !_chat.Running && !reloaded.Running);
+	}
+
+	[Fact]
 	public async Task NewChat_VersusContinue_ResumeOnlyInTheSameSession()
 	{
 		var first = await StartAsync("one");

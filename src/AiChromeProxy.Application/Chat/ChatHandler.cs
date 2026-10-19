@@ -48,7 +48,7 @@ public sealed class ChatHandler(string type, ChatService chat) : IEnvelopeHandle
 	private Envelope Cancel(Envelope request)
 	{
 		var payload = Read<ChatCancelPayload>(request);
-		chat.Cancel(payload.RunId);
+		chat.Cancel(payload.RunId, payload.Repo);
 		return Envelope.Create(MessageTypes.ChatCancel, payload);
 	}
 
