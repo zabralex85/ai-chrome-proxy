@@ -2507,3 +2507,79 @@ h1:focus-visible {
 .button.danger:hover {
     background: var(--error-bg-hover);
 }
+
+.panel-body[hidden] {
+    display: none;
+}
+
+.left-tabs {
+    display: flex;
+    gap: 14px;
+}
+
+.left-tab {
+    padding: 0;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: none;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-muted);
+    cursor: pointer;
+}
+
+.left-tab:hover,
+.left-tab.active {
+    color: var(--fg-strong);
+}
+
+.left-tab.active {
+    border-bottom-color: var(--accent-bg);
+}
+
+.packages {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+
+.packages-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0 14px 10px;
+}
+
+.packages-heading {
+    margin: 10px 0 4px;
+}
+
+.packages > .packages-heading {
+    padding: 0 14px;
+}
+
+.packages-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 8px;
+    padding: 3px 0;
+}
+
+.packages-version,
+.packages-text {
+    color: var(--fg-muted);
+}
+
+.packages-row.state-failed .packages-text,
+.packages-row.state-notoncomputer .packages-text,
+.packages-problem {
+    color: var(--error, var(--fg));
+}
+
+.packages-note {
+    margin-top: 10px;
+}

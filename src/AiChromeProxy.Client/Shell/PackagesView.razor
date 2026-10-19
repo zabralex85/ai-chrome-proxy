@@ -1,0 +1,76 @@
+@using AiChromeProxy.Client.Packages
+@implements IDisposable
+
+<div class="packages" data-testid="packages-view">
+    @if (Engine.Source == SourceState.None && Unsupported)
+    {
+        <div class="empty-state" role="alert" data-testid="packages-unsupported">
+            <Icon Name="warning" Size="32" Class="empty-icon" />
+            <p>This browser cannot open folders; use Chrome or Edge.</p>
+        </div>
+    }
+    else if (Engine.Source == SourceState.None)
+    {
+        <h2 class="panel-title packages-heading">Sources</h2>
+        <div class="empty-state">
+            <Icon Name="folder-open" Size="32" Class="empty-icon" />
+            <p>Add your NuGet cache folder, usually <code>%USERPROFILE%\.nuget\packages</code>, so that private packages reach the home server.</p>
+            <button type="button" class="button primary" data-testid="packages-add-source" @onclick="Engine.AddSourceAsync">Add NuGet cache folder</button>
+        </div>
+    }
+    else
+    {
+        <h2 class="panel-title packages-heading">Sources</h2>
+        <div class="folder-row" data-testid="packages-source">
+            <Icon Name="folder" Class="kind-folder" />
+            <span class="folder-name">NuGet cache · @Engine.SourceName · @StateText(Engine.Source)</span>
+            @if (Engine.Source == SourceState.NeedsPermission)
+            {
+                <button type="button" class="button link" data-testid="packages-allow" @onclick="Engine.AllowAsync">Allow</button>
+            }
+            <button type="button" class="button link" data-testid="packages-remove-source" @onclick="Engine.RemoveSourceAsync">Remove</button>
+        </div>
+        <div class="packages-list">
+            <h2 class="panel-title packages-heading">Packages this folder needs</h2>
+            @if (Engine.Summary.Length > 0)
+            {
+                <div class="sync-summary" data-testid="packages-summary">@Engine.Summary</div>
+            }
+            @foreach (var project in Engine.Projects.Where(p => p.Problem is not null))
+            {
+                <div class="packages-problem" data-testid="packages-project-problem">@project.Path: @project.Problem</div>
+            }
+            @foreach (var row in Engine.Packages)
+            {
+                <div class="packages-row state-@row.State.ToString().ToLowerInvariant()" data-testid="packages-row">
+                    <span class="packages-id">@row.Id</span>
+                    <span class="packages-version">@row.Version</span>
+                    <span class="packages-text">@row.Text</span>
+                </div>
+            }
+            <p class="muted packages-note">Nothing in your project changes: the home server's Claude runs find these packages through environment variables.</p>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public PackagesEngine Engine { get; set; } = null!;
+
+    /// <summary>This browser lacks the File System Access API (the sync engine found out), so no folder can be added.</summary>
+    [Parameter]
+    public bool Unsupported { get; set; }
+
+    public void Dispose() => Engine.Changed -= OnChanged;
+
+    protected override void OnInitialized() => Engine.Changed += OnChanged;
+
+    private static string StateText(SourceState state) => state switch
+    {
+        SourceState.Ready => "Ready",
+        SourceState.NeedsPermission => "Needs permission",
+        _ => "Not found",
+    };
+
+    private void OnChanged() => _ = InvokeAsync(StateHasChanged);
+}

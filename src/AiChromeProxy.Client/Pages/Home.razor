@@ -2,12 +2,14 @@
 @using System.Diagnostics
 @using AiChromeProxy.Client.Chat
 @using AiChromeProxy.Client.Navigator
+@using AiChromeProxy.Client.Packages
 @using AiChromeProxy.Client.Sync
 @using AiChromeProxy.Client.Transport
 @using AiChromeProxy.Domain
 @inject ITransport Transport
 @inject SyncEngine Engine
 @inject ChatEngine Chat
+@inject PackagesEngine Packages
 @inject HttpClient Http
 @inject IJSRuntime JS
 @inject IFileViewer Viewer
@@ -24,7 +26,7 @@
             FilesAttention="@(_filesOpen ? null : Format.Attention(Engine.Folder, Engine.ErrorCount))"
             HistoryOpen="@_historyOpen" OnToggleHistory="() => _historyOpen = !_historyOpen" />
     @* Collapsed panels stay rendered (hidden by CSS) so the tree keeps its expanded folders and active row. *@
-    <Explorer Engine="Engine" Collapsed="@(!_filesOpen)" Selected="@TabSet.SelectedPath(_tabs.Active)" OnSelect="OpenFile" OnRenamed="TreeRenamed" OnDeleted="TreeDeleted"
+    <Explorer Engine="Engine" Packages="Packages" Collapsed="@(!_filesOpen)" Selected="@TabSet.SelectedPath(_tabs.Active)" OnSelect="OpenFile" OnRenamed="TreeRenamed" OnDeleted="TreeDeleted"
               OnShowErrors="() => _tabs.Show(TabSet.Errors)" OnShowConflict="ShowFirstConflict" />
     @if (_filesOpen)
     {
@@ -108,6 +110,14 @@
         await Chat.InitializeAsync();
         _ = Engine.RunAsync(_stop.Token);
         _ = PingEveryAsync(TimeSpan.FromSeconds(15));
+        try
+        {
+            await Packages.InitializeAsync();
+        }
+        catch (Exception e) when (e is JSException or InvalidOperationException)
+        {
+            // The Packages tab is optional: without its folder the tab shows no source, sync and chat carry on.
+        }
     }
 
     private async Task StartDragAsync(Side side, PointerEventArgs e)

@@ -12,6 +12,9 @@ public static class ClaudeArguments
 	/// <summary>Appended to the system prompt so the UI can render diagrams and link code.</summary>
 	public const string Convention = "You are used through a web UI. Draw diagrams as ```mermaid fenced blocks. Refer to code as `path:line` or `path#Symbol` relative to the repository root.";
 
+	/// <summary>Added to the system prompt when private NuGet packages are served through the fallback folder.</summary>
+	public const string PackagesHint = "Private NuGet packages are provided through a fallback packages folder. Do not edit nuget.config, project files or Directory.*.props to fix a restore; if a private package is missing, tell the user to restore the project on their computer (the Packages tab lists it).";
+
 	private const string ApprovalTool = "mcp__aicp__approve";
 
 	/// <summary>
@@ -19,7 +22,7 @@ public static class ClaudeArguments
 	/// <c>--settings</c> (the project's MCP server and plugin switches) comes before every variadic flag (<c>--mcp-config</c> too), so none swallows it;
 	/// <see cref="AgentOptions.Args"/> follow last.
 	/// </summary>
-	public static IReadOnlyList<string> Build(AgentRun run, AgentOptions options)
+	public static IReadOnlyList<string> Build(AgentRun run, AgentOptions options, bool privatePackages = false)
 	{
 		var args = new List<string> { "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages" };
 		if (!string.IsNullOrEmpty(run.ResumeId))
@@ -71,7 +74,7 @@ public static class ClaudeArguments
 			args.AddRange(dirs);
 		}
 
-		args.AddRange(["--append-system-prompt", Convention]);
+		args.AddRange(["--append-system-prompt", privatePackages ? Convention + " " + PackagesHint : Convention]);
 		args.AddRange(options.Args);
 		return args;
 	}

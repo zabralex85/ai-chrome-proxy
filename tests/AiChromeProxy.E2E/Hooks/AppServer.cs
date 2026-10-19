@@ -21,6 +21,7 @@ public sealed class AppServer : IAsyncDisposable
 		var root = Path.Combine(Path.GetTempPath(), "aicp-e2e", Guid.NewGuid().ToString("N"));
 		MirrorRoot = Path.Combine(root, "mirror");
 		AttachmentsRoot = Path.Combine(root, "attachments");
+		PackagesRoot = Path.Combine(root, "packages");
 		ArgsDirectory = Directory.CreateDirectory(Path.Combine(root, "args")).FullName;
 		_factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
 		{
@@ -31,6 +32,7 @@ public sealed class AppServer : IAsyncDisposable
 			b.UseSetting("Server:Port", FreePort().ToString(System.Globalization.CultureInfo.InvariantCulture));
 			b.UseSetting("Mirror:Root", MirrorRoot);
 			b.UseSetting("Attachments:Root", AttachmentsRoot);
+			b.UseSetting("Packages:Root", PackagesRoot);
 			b.UseSetting("Projects:Database", Path.Combine(root, "aicp.db"));
 
 			// Claude is a fake agent: it prints the fixture named after the first word of the message (Fixtures/tour.jsonl, slow.jsonl, twotext.jsonl), a little slowly.
@@ -57,6 +59,9 @@ public sealed class AppServer : IAsyncDisposable
 
 	/// <summary>Where the server keeps chat attachments (one folder per repo).</summary>
 	public string AttachmentsRoot { get; }
+
+	/// <summary>Where the server keeps private NuGet packages (<c>nuget\&lt;id&gt;\&lt;version&gt;</c>).</summary>
+	public string PackagesRoot { get; }
 
 	/// <summary>Where the fake agent writes each run's arguments, as <c>&lt;repo&gt;.args</c>.</summary>
 	public string ArgsDirectory { get; }

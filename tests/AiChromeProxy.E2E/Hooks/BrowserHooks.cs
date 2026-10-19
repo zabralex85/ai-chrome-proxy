@@ -25,6 +25,9 @@ public sealed class BrowserHooks(IObjectContainer container)
 	/// <summary>Where the server keeps chat attachments (<c>&lt;repo&gt;\&lt;id&gt;\&lt;name&gt;</c>).</summary>
 	public static string AttachmentsRoot => _server!.AttachmentsRoot;
 
+	/// <summary>Where the server keeps private NuGet packages (<c>nuget\&lt;id&gt;\&lt;version&gt;</c>).</summary>
+	public static string PackagesRoot => _server!.PackagesRoot;
+
 	[BeforeTestRun]
 	public static async Task StartAsync()
 	{

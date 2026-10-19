@@ -1,5 +1,6 @@
 using AiChromeProxy.Application.Chat;
 using AiChromeProxy.Infrastructure.Chat;
+using AiChromeProxy.Infrastructure.Packages;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -167,20 +168,64 @@ public sealed class ClaudeRunnerTests : IAsyncDisposable
 	}
 
 	[Fact]
+	public async Task Start_WithAPackagesFolder_TheProcessGetsTheNuGetEnvironment_AndThePromptHint()
+	{
+		var root = Path.Combine(_folder, "packages");
+		Directory.CreateDirectory(Path.Combine(root, "nuget"));
+		var envFile = Path.Combine(_folder, "env.txt");
+		var argsFile = Path.Combine(_folder, "args.txt");
+		var options = new AgentOptions { Command = FakeAgent, Env = { ["FAKE_AGENT_ENV_FILE"] = envFile, ["FAKE_AGENT_ARGS_FILE"] = argsFile } };
+		var inherited = Environment.GetEnvironmentVariable(PackageEnvironment.FallbackVariable);
+
+		using (var process = await Runner(options, root).StartAsync(new AgentRun(_folder, "hi"), TestContext.Current.CancellationToken))
+		{
+			Assert.Equal(0, await process.Exited);
+		}
+
+		var nuget = Path.Combine(root, "nuget");
+		var fallback = string.IsNullOrWhiteSpace(inherited) ? nuget : inherited.TrimEnd(';') + ";" + nuget;
+		Assert.Equal(
+			[$"NUGET_FALLBACK_PACKAGES={fallback}", "RestoreIgnoreFailedSources=true", "NuGetAudit=false", "WarningsNotAsErrors=NU1801"],
+			await File.ReadAllLinesAsync(envFile, TestContext.Current.CancellationToken));
+		var args = await File.ReadAllLinesAsync(argsFile, TestContext.Current.CancellationToken);
+		Assert.Contains(ClaudeArguments.PackagesHint, args[Array.IndexOf(args, "--append-system-prompt") + 1]);
+	}
+
+	[Fact]
+	public async Task Start_WithoutAPackagesFolder_AddsNoNuGetEnvironment_NorThePromptHint()
+	{
+		var envFile = Path.Combine(_folder, "env.txt");
+		var argsFile = Path.Combine(_folder, "args.txt");
+		var options = new AgentOptions { Command = FakeAgent, Env = { ["FAKE_AGENT_ENV_FILE"] = envFile, ["FAKE_AGENT_ARGS_FILE"] = argsFile } };
+
+		using (var process = await Runner(options).StartAsync(new AgentRun(_folder, "hi"), TestContext.Current.CancellationToken))
+		{
+			Assert.Equal(0, await process.Exited);
+		}
+
+		// Exactly what this test process has (inherited unchanged), whatever the host sets.
+		string[] names = [PackageEnvironment.FallbackVariable, "RestoreIgnoreFailedSources", "NuGetAudit", "WarningsNotAsErrors"];
+		Assert.Equal(names.Select(n => $"{n}={Environment.GetEnvironmentVariable(n)}"), await File.ReadAllLinesAsync(envFile, TestContext.Current.CancellationToken));
+		var args = await File.ReadAllLinesAsync(argsFile, TestContext.Current.CancellationToken);
+		Assert.DoesNotContain(ClaudeArguments.PackagesHint, args[Array.IndexOf(args, "--append-system-prompt") + 1]);
+	}
+
+	[Fact]
 	public void IdleTimeout_FromOptions()
 	{
 		Assert.Equal(TimeSpan.FromMinutes(10), Runner(new AgentOptions()).IdleTimeout);
 		Assert.Equal(TimeSpan.FromSeconds(5), Runner(new AgentOptions { IdleTimeout = TimeSpan.FromSeconds(5) }).IdleTimeout);
 	}
 
-	private static ClaudeRunner Runner(AgentOptions options)
+	private static ClaudeRunner Runner(AgentOptions options, string? packagesRoot = null)
 	{
 		if (options.Command == "claude")
 		{
 			options.Command = FakeAgent;
 		}
 
-		return new ClaudeRunner(Options.Create(options), NullLogger<ClaudeRunner>.Instance);
+		var store = new FileSystemPackageStore(Options.Create(new PackagesOptions { Root = packagesRoot ?? Path.Combine(TempRootCleanup.Root, "no-packages") }));
+		return new ClaudeRunner(Options.Create(options), store, NullLogger<ClaudeRunner>.Instance);
 	}
 
 	private async Task<List<string>> LinesAsync(ClaudeRunner runner, string prompt)

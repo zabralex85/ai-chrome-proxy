@@ -10,6 +10,8 @@
 //   FAKE_AGENT_ARGS_FILE    when set, the received arguments are written to this file, one per line (UTF-8)
 //   FAKE_AGENT_ARGS_DIR     when set, a run (not `mcp list` / `plugin list`) also writes them to `<dir>/<name of the working folder>.args`, so that
 //                           scenarios sharing one host each find their own (the working folder is the repo's mirror)
+//   FAKE_AGENT_ENV_FILE     when set, the run's NUGET_FALLBACK_PACKAGES, RestoreIgnoreFailedSources, NuGetAudit and WarningsNotAsErrors are written to
+//                           this file as `name=value` lines (UTF-8; an unset one as `name=`), so tests see the environment the process got
 //   FAKE_AGENT_EXIT_CODE    exit code (default 0)
 // Invoked as `mcp list` or `plugin list --json` (Check now), it prints the file at FAKE_AGENT_MCP_LIST or FAKE_AGENT_PLUGIN_LIST as it is (`mcp list`
 // also writes a noise line to stderr, like Claude Code does) and exits with FAKE_AGENT_EXIT_CODE; FAKE_AGENT_PROBE_DELAY_MS pauses first.
@@ -22,6 +24,13 @@ var argsFile = Environment.GetEnvironmentVariable("FAKE_AGENT_ARGS_FILE");
 if (!string.IsNullOrEmpty(argsFile))
 {
 	await File.WriteAllLinesAsync(argsFile, args);
+}
+
+var envFile = Environment.GetEnvironmentVariable("FAKE_AGENT_ENV_FILE");
+if (!string.IsNullOrEmpty(envFile))
+{
+	string[] names = ["NUGET_FALLBACK_PACKAGES", "RestoreIgnoreFailedSources", "NuGetAudit", "WarningsNotAsErrors"];
+	await File.WriteAllLinesAsync(envFile, names.Select(n => $"{n}={Environment.GetEnvironmentVariable(n)}"));
 }
 
 var exitCode = int.TryParse(Environment.GetEnvironmentVariable("FAKE_AGENT_EXIT_CODE"), out var code) ? code : 0;

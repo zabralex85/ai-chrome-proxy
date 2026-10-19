@@ -3,6 +3,7 @@ using AiChromeProxy.Application;
 using AiChromeProxy.Infrastructure;
 using AiChromeProxy.Infrastructure.Chat;
 using AiChromeProxy.Infrastructure.Hosting;
+using AiChromeProxy.Infrastructure.Packages;
 using AiChromeProxy.Infrastructure.Projects;
 using AiChromeProxy.Infrastructure.Security;
 using AiChromeProxy.Infrastructure.Sync;
@@ -41,6 +42,7 @@ builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.PostConfigure<MirrorOptions>(o => o.Root = MirrorOptions.ResolveRoot(o.Root, dataDir, builder.Environment.ContentRootPath));
 builder.Services.PostConfigure<AttachmentsOptions>(o => o.Root = AttachmentsOptions.ResolveRoot(o.Root, dataDir, builder.Environment.ContentRootPath));
+builder.Services.PostConfigure<PackagesOptions>(o => o.Root = PackagesOptions.ResolveRoot(o.Root, dataDir, builder.Environment.ContentRootPath));
 builder.Services.PostConfigure<ProjectsOptions>(o => o.Database = ProjectsOptions.ResolveDatabase(o.Database, dataDir, builder.Environment.ContentRootPath));
 builder.Services.Configure<TunnelOptions>(builder.Configuration.GetSection(TunnelOptions.Section));
 builder.Services.AddHostedService(sp => new CloudflaredSupervisor(

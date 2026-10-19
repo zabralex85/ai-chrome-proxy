@@ -32,6 +32,9 @@ public interface IFolderAccess
 	/// <summary>Text of a file in the folder (read now, not from the last scan), or null when it is not there; throws when it is there but cannot be read.</summary>
 	Task<string?> ReadTextAsync(string path);
 
+	/// <summary>When the file was last modified (ms since the epoch), read now; null when it is not there (excluded files too, e.g. <c>obj/project.assets.json</c>).</summary>
+	Task<long?> ModifiedAsync(string path);
+
 	/// <summary>The file as it is now (not from the last scan), at most <c>FileText.MaxBytes + 1</c> bytes of it; null when it is not there; throws when it is there but cannot be read (or the path is invalid).</summary>
 	Task<FileBytes?> ReadFileAsync(string path);
 

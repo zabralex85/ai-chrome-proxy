@@ -16,6 +16,23 @@ public sealed class ClaudeArgumentsTests
 	}
 
 	[Fact]
+	public void PrivatePackages_AppendsTheHintToTheConvention()
+	{
+		var args = ClaudeArguments.Build(Run(), new AgentOptions { Args = ["--x"] }, privatePackages: true);
+
+		Assert.Equal(["--append-system-prompt", ClaudeArguments.Convention + " " + ClaudeArguments.PackagesHint, "--x"], args.TakeLast(3));
+		Assert.Equal("Private NuGet packages are provided through a fallback packages folder. Do not edit nuget.config, project files or Directory.*.props to fix a restore; if a private package is missing, tell the user to restore the project on their computer (the Packages tab lists it).", ClaudeArguments.PackagesHint);
+	}
+
+	[Fact]
+	public void Default_HasNoPackagesHint()
+	{
+		var args = ClaudeArguments.Build(Run(), new AgentOptions());
+
+		Assert.Equal(["--append-system-prompt", ClaudeArguments.Convention], args.TakeLast(2));
+	}
+
+	[Fact]
 	public void Ask_WithApprovalEndpoint_AddsPromptToolAndMcpConfig()
 	{
 		var args = ClaudeArguments.Build(Run("ask", "http://127.0.0.1:5180/mcp/approve", "tok123"), new AgentOptions());

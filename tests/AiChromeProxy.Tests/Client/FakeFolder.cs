@@ -14,6 +14,9 @@ public sealed class FakeFolder : IFolderAccess
 
 	public Dictionary<string, byte[]> Files { get; } = new(StringComparer.Ordinal);
 
+	/// <summary>What <see cref="ModifiedAsync"/> answers per path; 1 for any other file in <see cref="Files"/>.</summary>
+	public Dictionary<string, long> Modified { get; } = new(StringComparer.Ordinal);
+
 	/// <summary>Files reported by the walk with this size but no content (e.g. larger than the sync limit).</summary>
 	public Dictionary<string, long> SizeOnly { get; } = new(StringComparer.Ordinal);
 
@@ -170,6 +173,9 @@ public sealed class FakeFolder : IFolderAccess
 
 		return Task.FromResult(Files.TryGetValue(path, out var b) && !Unreadable.Contains(path) ? Encoding.UTF8.GetString(b) : null);
 	}
+
+	public Task<long?> ModifiedAsync(string path) =>
+		Task.FromResult<long?>(Modified.TryGetValue(path, out var modified) ? modified : Files.ContainsKey(path) ? 1 : null);
 
 	public Task<FileBytes?> ReadFileAsync(string path)
 	{

@@ -1,8 +1,19 @@
+@using AiChromeProxy.Client.Packages
 @using AiChromeProxy.Client.Sync
 
 <aside class="panel panel-left @(Collapsed ? "collapsed" : null)" data-testid="file-tree" aria-label="Files">
-    <header class="panel-header"><span class="panel-title">Explorer</span></header>
-    <div class="panel-body" data-testid="explorer">
+    <header class="panel-header">
+        <div class="left-tabs" role="tablist" aria-label="Left panel" @onkeydown="OnTabKeyAsync">
+            <button @ref="_explorerTab" id="left-tab-explorer-id" type="button" role="tab" class="left-tab @(_packages ? null : "active")" aria-selected="@(_packages ? "false" : "true")"
+                    aria-controls="left-panel-explorer" tabindex="@(_packages ? -1 : 0)" data-testid="left-tab-explorer" @onclick="() => _packages = false">Explorer</button>
+            <button @ref="_packagesTab" id="left-tab-packages-id" type="button" role="tab" class="left-tab @(_packages ? "active" : null)" aria-selected="@(_packages ? "true" : "false")"
+                    aria-controls="left-panel-packages" tabindex="@(_packages ? 0 : -1)" data-testid="left-tab-packages" @onclick="() => _packages = true">Packages</button>
+        </div>
+    </header>
+    <div id="left-panel-packages" class="panel-body" role="tabpanel" aria-labelledby="left-tab-packages-id" hidden="@(!_packages)">
+        <PackagesView Engine="Packages" Unsupported="@(Engine.Folder == FolderStatus.Unsupported)" />
+    </div>
+    <div id="left-panel-explorer" class="panel-body" role="tabpanel" aria-labelledby="left-tab-explorer-id" data-testid="explorer" hidden="@_packages">
         @if (Engine.Folder == FolderStatus.Unsupported)
         {
             <div class="empty-state" role="alert" data-testid="unsupported">
@@ -81,6 +92,24 @@
 @code {
     [Parameter, EditorRequired]
     public SyncEngine Engine { get; set; } = null!;
+
+    [Parameter, EditorRequired]
+    public PackagesEngine Packages { get; set; } = null!;
+
+    private bool _packages;
+
+    private ElementReference _explorerTab;
+    private ElementReference _packagesTab;
+
+    private async Task OnTabKeyAsync(KeyboardEventArgs e)
+    {
+        if (e.Key is "ArrowLeft" or "ArrowRight" or "Home" or "End")
+        {
+            _packages = e.Key is "ArrowRight" or "End";
+            StateHasChanged();
+            await (_packages ? _packagesTab : _explorerTab).FocusAsync();
+        }
+    }
 
     /// <summary>Hidden by CSS but still rendered, so the tree keeps its state.</summary>
     [Parameter]
