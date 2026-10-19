@@ -9,12 +9,15 @@ namespace AiChromeProxy.Application.Packages;
 
 /// <summary>
 /// <c>packages.nuget.*</c>: which private packages the server lacks, and one upload per connection at a time, written to a temp folder and put in place
-/// only when every file arrived and the <c>.nupkg</c> matches its <c>contentHash</c>. A chunk that fails ends the upload: later chunks are dropped and the
+/// only when the files <c>begin</c> announced (count and total size) all arrived and the <c>.nupkg</c> matches its <c>contentHash</c>. Each file is checked
+/// at its first chunk, which carries its path and size. A chunk that fails ends the upload: later chunks are dropped and the
 /// last one gets that first error. Leftover temp folders (a restart) are deleted when the service is created.
 /// </summary>
 public sealed class PackageUploads
 {
 	public const string ChangedMessage = "Changed while uploading; retried on the next pass.";
+
+	private const string TooLargeMessage = "A package may have at most 2 000 files and 250 MB.";
 
 	private readonly IPackageStore _store;
 	private readonly ILogger<PackageUploads> _logger;
@@ -57,31 +60,19 @@ public sealed class PackageUploads
 	public NuGetBegunPayload Begin(string connectionId, NuGetBeginPayload payload)
 	{
 		var key = Key(payload.Id, payload.Version, payload.ContentHash);
-		var files = payload.Files ?? [];
-		if (files.Any(f => f is null))
+		if (payload.FileCount > PackageLimits.MaxPackageFiles || payload.TotalSize > PackageLimits.MaxPackageBytes)
 		{
-			throw new EnvelopeException(ErrorCodes.BadRequest, "packages.nuget.begin has an empty file entry.");
+			throw new EnvelopeException(ErrorCodes.TooLarge, TooLargeMessage);
 		}
 
-		if (files.Count > PackageLimits.MaxPackageFiles || files.Any(f => f.Size > PackageLimits.MaxPackageBytes) || files.Sum(f => Math.Max(0, f.Size)) > PackageLimits.MaxPackageBytes)
+		if (payload.FileCount < 1 || payload.TotalSize < 0)
 		{
-			throw new EnvelopeException(ErrorCodes.TooLarge, $"A package may have at most {PackageLimits.MaxPackageFiles} files and 250 MB.");
-		}
-
-		if (files.Any(f => f.Size < 0 || SyncPath.GetError(f.Path) is not null) || files.Select(f => f.Path).Distinct(StringComparer.OrdinalIgnoreCase).Count() != files.Count)
-		{
-			throw new EnvelopeException(ErrorCodes.BadRequest, "packages.nuget.begin has an invalid or repeated file path.");
-		}
-
-		var nupkg = $"{key.Id}.{key.Version}.nupkg";
-		if (!files.Any(f => string.Equals(f.Path, nupkg, StringComparison.Ordinal)))
-		{
-			throw new EnvelopeException(ErrorCodes.BadRequest, $"packages.nuget.begin must list {nupkg}.");
+			throw new EnvelopeException(ErrorCodes.BadRequest, "packages.nuget.begin needs at least one file and a size of 0 or more.");
 		}
 
 		Close(connectionId);
 		var id = Guid.NewGuid().ToString("N");
-		var upload = new Upload(id, key, payload.ContentHash, nupkg, files, _store.Begin(key.Id, key.Version, id[..8]));
+		var upload = new Upload(id, key, payload.ContentHash, payload.FileCount, payload.TotalSize, _store.Begin(key.Id, key.Version, id[..8]));
 		_uploads[connectionId] = upload;
 		return new NuGetBegunPayload(id);
 	}
@@ -148,19 +139,48 @@ public sealed class PackageUploads
 		return new NuGetPackageKey(id!.ToLowerInvariant(), version!.ToLowerInvariant());
 	}
 
-	private NuGetStoredPayload? Append(string connectionId, Upload upload, NuGetChunkPayload payload)
+	/// <summary>A file's first chunk: its path and size are checked against the rules and what <c>begin</c> announced.</summary>
+	private static void Start(Upload upload, NuGetChunkPayload payload)
 	{
-		if (upload.Index >= upload.Files.Count)
+		if (payload.Offset != 0 || payload.Size is not { } size)
 		{
-			throw new EnvelopeException(ErrorCodes.BadRequest, "More chunks than the package's files.");
+			throw new EnvelopeException(ErrorCodes.BadRequest, $"Chunk of '{payload.Path}' at {payload.Offset} is out of order (a file starts at 0 with its size).");
 		}
 
-		var file = upload.Files[upload.Index];
-		if (!string.Equals(payload.Path, file.Path, StringComparison.Ordinal) || payload.Offset != upload.Received)
+		if (upload.Paths.Count == upload.FileCount)
+		{
+			throw new EnvelopeException(ErrorCodes.BadRequest, $"More files than the {upload.FileCount} of packages.nuget.begin.");
+		}
+
+		if (size < 0 || SyncPath.GetError(payload.Path) is not null || !upload.Paths.Add(payload.Path))
+		{
+			throw new EnvelopeException(ErrorCodes.BadRequest, $"Invalid or repeated file '{payload.Path}'.");
+		}
+
+		if (size > upload.TotalSize - upload.Started)
+		{
+			throw new EnvelopeException(ErrorCodes.TooLarge, $"The files are larger than the {upload.TotalSize} bytes of packages.nuget.begin.");
+		}
+
+		upload.HasNupkg |= string.Equals(payload.Path, upload.Nupkg, StringComparison.Ordinal);
+		upload.Current = payload.Path;
+		upload.Size = size;
+		upload.Started += size;
+		upload.Received = 0;
+	}
+
+	private NuGetStoredPayload? Append(string connectionId, Upload upload, NuGetChunkPayload payload)
+	{
+		if (upload.Current is null)
+		{
+			Start(upload, payload);
+		}
+		else if (!string.Equals(payload.Path, upload.Current, StringComparison.Ordinal) || payload.Offset != upload.Received || payload.Size is not null)
 		{
 			throw new EnvelopeException(ErrorCodes.BadRequest, $"Chunk of '{payload.Path}' at {payload.Offset} is out of order.");
 		}
 
+		var path = upload.Current!;
 		byte[] data;
 		try
 		{
@@ -171,17 +191,17 @@ public sealed class PackageUploads
 			throw new EnvelopeException(ErrorCodes.BadRequest, "The chunk is not base64url.");
 		}
 
-		if (data.Length > PackageLimits.ChunkSize || upload.Received + data.Length > file.Size)
+		if (data.Length > PackageLimits.ChunkSize || upload.Received + data.Length > upload.Size)
 		{
-			throw new EnvelopeException(ErrorCodes.TooLarge, $"'{file.Path}' is longer than its size {file.Size}.");
+			throw new EnvelopeException(ErrorCodes.TooLarge, $"'{path}' is longer than its size {upload.Size}.");
 		}
 
-		_store.Append(upload.Temp, file.Path, data, create: upload.Received == 0);
+		_store.Append(upload.Temp, path, data, create: upload.Received == 0);
 		upload.Received += data.Length;
-		if (upload.Received == file.Size)
+		if (upload.Received == upload.Size)
 		{
-			upload.Index++;
-			upload.Received = 0;
+			upload.Complete++;
+			upload.Current = null;
 		}
 
 		if (!payload.Last)
@@ -189,9 +209,14 @@ public sealed class PackageUploads
 			return null;
 		}
 
-		if (upload.Index != upload.Files.Count)
+		if (upload.Current is not null || upload.Complete != upload.FileCount || upload.Started != upload.TotalSize)
 		{
 			throw new EnvelopeException(ErrorCodes.BadRequest, "The package arrived incomplete; it starts again on the next pass.");
+		}
+
+		if (!upload.HasNupkg)
+		{
+			throw new EnvelopeException(ErrorCodes.BadRequest, $"The package has no {upload.Nupkg}.");
 		}
 
 		if (_store.Sha512(upload.Temp, upload.Nupkg) != upload.ContentHash)
@@ -224,7 +249,7 @@ public sealed class PackageUploads
 		return error;
 	}
 
-	private sealed class Upload(string id, NuGetPackageKey key, string contentHash, string nupkg, IReadOnlyList<NuGetFileInfo> files, string temp)
+	private sealed class Upload(string id, NuGetPackageKey key, string contentHash, int fileCount, long totalSize, string temp)
 	{
 		public string Id { get; } = id;
 
@@ -232,15 +257,35 @@ public sealed class PackageUploads
 
 		public string ContentHash { get; } = contentHash;
 
-		public string Nupkg { get; } = files.First(f => string.Equals(f.Path, nupkg, StringComparison.OrdinalIgnoreCase)).Path;
+		/// <summary>Gets the lower-case <c>&lt;id&gt;.&lt;version&gt;.nupkg</c> that must be among the files.</summary>
+		public string Nupkg { get; } = $"{key.Id}.{key.Version}.nupkg";
 
-		public IReadOnlyList<NuGetFileInfo> Files { get; } = files;
+		public int FileCount { get; } = fileCount;
+
+		public long TotalSize { get; } = totalSize;
 
 		public string Temp { get; } = temp;
 
-		public int Index { get; set; }
+		/// <summary>Gets the paths of the files started so far (no two equal ignoring case: the store is on Windows).</summary>
+		public HashSet<string> Paths { get; } = new(StringComparer.OrdinalIgnoreCase);
 
+		/// <summary>Gets or sets the file being received, or null between files.</summary>
+		public string? Current { get; set; }
+
+		/// <summary>Gets or sets the size of <see cref="Current"/>.</summary>
+		public long Size { get; set; }
+
+		/// <summary>Gets or sets the bytes of <see cref="Current"/> received so far.</summary>
 		public long Received { get; set; }
+
+		/// <summary>Gets or sets the sum of the sizes of the files started so far.</summary>
+		public long Started { get; set; }
+
+		/// <summary>Gets or sets a value indicating whether <see cref="Nupkg"/> (exactly, lower case) is among the files.</summary>
+		public bool HasNupkg { get; set; }
+
+		/// <summary>Gets or sets how many files arrived whole.</summary>
+		public int Complete { get; set; }
 
 		public EnvelopeException? Error { get; set; }
 

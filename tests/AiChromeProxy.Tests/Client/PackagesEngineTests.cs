@@ -424,6 +424,27 @@ public sealed class PackagesEngineTests : IDisposable
 	}
 
 	[Fact]
+	public async Task ManyPrivatePackages_AreAskedAboutInPages_EachUnderTheSignalRLimit()
+	{
+		var packages = Enumerable.Range(0, 300).Select(i => ($"Corp.{i:D3}.{new string('x', 90)}", "1.0.0")).ToArray();
+		Assets("App.csproj", packages);
+		foreach (var (id, version) in packages)
+		{
+			_cache.Write($"{id.ToLowerInvariant()}/{version}/.nupkg.metadata", Metadata([1], Corp));
+		}
+
+		await ReadyAsync();
+		_server.Transport.Reply = e => Task.FromResult<Envelope?>(Envelope.Create(MessageTypes.PackagesNuGetMissing, new NuGetMissingPayload([]), e.CorrelationId));
+
+		await _engine.RefreshAsync(Ct);
+
+		var haves = _server.Transport.Sent.Where(e => e.Type == MessageTypes.PackagesNuGetHave).ToList();
+		Assert.True(haves.Count > 1);
+		Assert.All(haves, e => Assert.True(ManifestPlannerTests.WireSize(e) < ManifestPlannerTests.SignalRLimit));
+		Assert.Equal(300, _engine.Packages.Count(r => r.State == PackageState.OnServer));
+	}
+
+	[Fact]
 	public async Task NothingHappens_WithoutAnOpenRepo()
 	{
 		Assets("App.csproj", ("Corp.A", "1.2.3"));

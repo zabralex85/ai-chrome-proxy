@@ -11,9 +11,10 @@ public sealed class PackagesContractTests
 	{
 		Assert.Equal("""{"packages":[{"id":"corp.a","version":"1.2.3","contentHash":"h"}]}""", Json(new NuGetHavePayload([new NuGetPackageInfo("corp.a", "1.2.3", "h")])));
 		Assert.Equal("""{"missing":[{"id":"corp.a","version":"1.2.3"}]}""", Json(new NuGetMissingPayload([new NuGetPackageKey("corp.a", "1.2.3")])));
-		Assert.Equal("""{"id":"corp.a","version":"1.2.3","contentHash":"h","files":[{"path":"lib/a.dll","size":3}]}""", Json(new NuGetBeginPayload("corp.a", "1.2.3", "h", [new NuGetFileInfo("lib/a.dll", 3)])));
+		Assert.Equal("""{"id":"corp.a","version":"1.2.3","contentHash":"h","fileCount":2,"totalSize":3}""", Json(new NuGetBeginPayload("corp.a", "1.2.3", "h", 2, 3)));
 		Assert.Equal("""{"uploadId":"u"}""", Json(new NuGetBegunPayload("u")));
-		Assert.Equal("""{"uploadId":"u","path":"lib/a.dll","offset":0,"data":"AAEC","last":true}""", Json(new NuGetChunkPayload("u", "lib/a.dll", 0, "AAEC", true)));
+		Assert.Equal("""{"uploadId":"u","path":"lib/a.dll","offset":0,"data":"AAEC","last":true,"size":3}""", Json(new NuGetChunkPayload("u", "lib/a.dll", 0, "AAEC", true, 3)));
+		Assert.Equal("""{"uploadId":"u","path":"lib/a.dll","offset":3,"data":"AAEC","last":false}""", Json(new NuGetChunkPayload("u", "lib/a.dll", 3, "AAEC", false)));
 		Assert.Equal("""{"id":"corp.a","version":"1.2.3"}""", Json(new NuGetStoredPayload("corp.a", "1.2.3")));
 	}
 

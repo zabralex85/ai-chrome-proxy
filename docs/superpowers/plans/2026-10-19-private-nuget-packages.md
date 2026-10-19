@@ -70,9 +70,10 @@ public sealed class PackagesContractTests
 	{
 		Assert.Equal("""{"packages":[{"id":"corp.a","version":"1.2.3","contentHash":"h"}]}""", Json(new NuGetHavePayload([new NuGetPackageInfo("corp.a", "1.2.3", "h")])));
 		Assert.Equal("""{"missing":[{"id":"corp.a","version":"1.2.3"}]}""", Json(new NuGetMissingPayload([new NuGetPackageKey("corp.a", "1.2.3")])));
-		Assert.Equal("""{"id":"corp.a","version":"1.2.3","contentHash":"h","files":[{"path":"lib/a.dll","size":3}]}""", Json(new NuGetBeginPayload("corp.a", "1.2.3", "h", [new NuGetFileInfo("lib/a.dll", 3)])));
+		Assert.Equal("""{"id":"corp.a","version":"1.2.3","contentHash":"h","fileCount":2,"totalSize":3}""", Json(new NuGetBeginPayload("corp.a", "1.2.3", "h", 2, 3)));
 		Assert.Equal("""{"uploadId":"u"}""", Json(new NuGetBegunPayload("u")));
-		Assert.Equal("""{"uploadId":"u","path":"lib/a.dll","offset":0,"data":"AAEC","last":true}""", Json(new NuGetChunkPayload("u", "lib/a.dll", 0, "AAEC", true)));
+		Assert.Equal("""{"uploadId":"u","path":"lib/a.dll","offset":0,"data":"AAEC","last":true,"size":3}""", Json(new NuGetChunkPayload("u", "lib/a.dll", 0, "AAEC", true, 3)));
+		Assert.Equal("""{"uploadId":"u","path":"lib/a.dll","offset":3,"data":"AAEC","last":false}""", Json(new NuGetChunkPayload("u", "lib/a.dll", 3, "AAEC", false)));
 		Assert.Equal("""{"id":"corp.a","version":"1.2.3"}""", Json(new NuGetStoredPayload("corp.a", "1.2.3")));
 	}
 
@@ -150,27 +151,34 @@ public sealed record NuGetPackageInfo(string Id, string Version, string ContentH
 /// <summary>A package by lower-case id and version.</summary>
 public sealed record NuGetPackageKey(string Id, string Version);
 
-/// <summary>A file of a package folder: path relative to <c>&lt;id&gt;/&lt;version&gt;/</c> (forward slashes) and its size.</summary>
-public sealed record NuGetFileInfo(string Path, long Size);
-
 /// <summary><c>packages.nuget.have</c>: the private packages the open repo uses (at most <see cref="PackageLimits.MaxHavePackages"/>); reply <c>packages.nuget.missing</c>.</summary>
 public sealed record NuGetHavePayload(IReadOnlyList<NuGetPackageInfo> Packages);
 
 /// <summary><c>packages.nuget.missing</c>: those of <c>have</c> the server does not hold.</summary>
 public sealed record NuGetMissingPayload(IReadOnlyList<NuGetPackageKey> Missing);
 
-/// <summary><c>packages.nuget.begin</c>: starts uploading one package (its files in the order they will be sent); reply <c>packages.nuget.begun</c>.</summary>
-public sealed record NuGetBeginPayload(string Id, string Version, string ContentHash, IReadOnlyList<NuGetFileInfo> Files);
+/// <summary>
+/// <c>packages.nuget.begin</c>: starts uploading one package of <paramref name="FileCount"/> files, <paramref name="TotalSize"/> bytes in all (each file's path and
+/// size come with its first chunk, so this message stays small); reply <c>packages.nuget.begun</c>.
+/// </summary>
+public sealed record NuGetBeginPayload(string Id, string Version, string ContentHash, int FileCount, long TotalSize);
 
 /// <summary><c>packages.nuget.begun</c>: the upload's id for its chunks.</summary>
 public sealed record NuGetBegunPayload(string UploadId);
 
 /// <summary>
-/// <c>packages.nuget.chunk</c>: part of a file of the upload, in the order of <c>begin</c> (a file of size 0 is one empty chunk);
+/// <c>packages.nuget.chunk</c>: part of a file of the upload, files one after another (a file of size 0 is one empty chunk). A file's first chunk
+/// (<paramref name="Offset"/> 0) carries its <paramref name="Size"/>, later chunks none (left out of the JSON).
 /// <paramref name="Data"/> base64url without padding, ≤ <see cref="PackageLimits.ChunkSize"/> bytes raw. Only the package's <paramref name="Last"/>
 /// chunk is answered: <c>packages.nuget.stored</c>, or the upload's first error.
 /// </summary>
-public sealed record NuGetChunkPayload(string UploadId, string Path, long Offset, string Data, bool Last);
+public sealed record NuGetChunkPayload(
+	string UploadId,
+	string Path,
+	long Offset,
+	string Data,
+	bool Last,
+	[property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? Size = null);
 
 /// <summary><c>packages.nuget.stored</c>: the package is on the server.</summary>
 public sealed record NuGetStoredPayload(string Id, string Version);
@@ -181,7 +189,11 @@ public sealed record NuGetStoredPayload(string Id, string Version);
 ```csharp
 namespace AiChromeProxy.Domain.Packages;
 
-/// <summary>Limits of the <c>packages.nuget.*</c> messages.</summary>
+/// <summary>
+/// Limits of the <c>packages.nuget.*</c> messages. Every message, inside its envelope, must stay under SignalR's 32 KB receive limit (the server drops the
+/// connection otherwise): <c>have</c> is paged by serialized size like <c>sync.manifest</c> (<see cref="Sync.SyncPages"/>), <c>begin</c> carries counts only
+/// and each file's path and size travel with its first chunk.
+/// </summary>
 public static class PackageLimits
 {
 	/// <summary>Largest package (all its files), in bytes.</summary>
@@ -521,13 +533,15 @@ DI (`Infrastructure/DependencyInjection.cs`): `services.Configure<PackagesOption
 
 **Interfaces — Consumes:** Task 1 types, `IPackageStore`, `SyncPath.GetError`, `SyncData.Decode`, `EnvelopeException`, `ErrorCodes`. **Produces:** `PackageUploads(IPackageStore store, ILogger<PackageUploads> logger)` with `NuGetMissingPayload Have(NuGetHavePayload)`, `NuGetBegunPayload Begin(string connectionId, NuGetBeginPayload)`, `NuGetStoredPayload? Chunk(string connectionId, NuGetChunkPayload)`, `void Close(string connectionId)`, const `ChangedMessage = "Changed while uploading; retried on the next pass."`; `PackagesHandler(string type, PackageUploads uploads)` with `Types` = have/begin/chunk.
 
-- [ ] **Step 1: Failing tests** — `PackageUploadsTests` with a real `FileSystemPackageStore` in a temp root and `ListLogger<PackageUploads>`; helper `Pkg(byte[] nupkg, params (string Path, byte[] Data)[] others)` that returns the begin payload (id `corp.a`, version `1.2.3`, contentHash = base64 sha512 of `nupkg`, files: `corp.a.1.2.3.nupkg` first, then others) and a `SendAll(conn, begun, files)` that sends each file as 16 KB chunks (zero-size → one empty chunk) with `Last` on the final chunk of the final file and returns the last reply. Tests:
+- [ ] **Step 1: Failing tests** — `PackageUploadsTests` with a real `FileSystemPackageStore` in a temp root and `ListLogger<PackageUploads>`; helper `Begin(byte[] nupkg, (string Path, byte[] Data)[] files)` that returns the begin payload (id `corp.a`, version `1.2.3`, contentHash = base64 sha512 of `nupkg`, `fileCount` and `totalSize` of the files) and a `SendAll(conn, begun, files)` that sends each file as 16 KB chunks (the file's size on its first chunk; zero-size → one empty chunk carrying size 0) with `Last` on the final chunk of the final file and returns the replies. Tests:
   - `Have_ListsOnlyPackagesNotOnTheServer` (one committed, one not → missing has the second).
   - `Have_InvalidIdOrVersionOrHash_IsBadRequest`; `Have_MoreThan2000_IsTooLarge`.
   - `Upload_StoresThePackage_AndAnswersTheLastChunkOnly` (multi-chunk file > 16 KB, a zero-size file, a nested `lib/net10.0/a.dll`; non-last chunks return null; last returns `NuGetStoredPayload("corp.a","1.2.3")`; `store.HasNuGet` true).
   - `Upload_HashMismatch_FailsOnTheLastChunk_WithTheChangedMessage_AndLeavesNothing` (contentHash of other bytes; last chunk throws `bad_request` with `PackageUploads.ChangedMessage`; no package, no temp).
-  - `Begin_Limits` (2 001 files → too_large; total > 250 MB declared → too_large; a path failing `SyncPath.GetError` → bad_request; duplicate paths (case-insensitive) → bad_request; missing `<id>.<version>.nupkg` in the list → bad_request).
-  - `Chunk_OutOfOrder_DropsTheRest_AndTheLastGetsTheFirstError` (wrong path or offset → later non-last null, last throws that first error).
+  - `Begin_Limits` (`fileCount` 2 001 → too_large; `totalSize` > 250 MB → too_large; `fileCount` 0 or `totalSize` < 0 → bad_request; invalid id → bad_request); `Begin_AtTheLimits_IsAccepted`.
+  - `FirstChunk_OfAFile_IsChecked` (a path failing `SyncPath.GetError`, no size, offset ≠ 0, size < 0 → bad_request; size beyond `totalSize` → too_large); `FirstChunk_RepeatedPathIgnoringCase_IsBadRequest`; `FirstChunk_OfMoreFilesThanAnnounced_IsBadRequest`; `LaterChunk_WithASize_IsOutOfOrder`.
+  - `LastChunk_NeedsEveryAnnouncedFile_TheTotalSize_AndTheLowerCaseNupkg` (fewer files than `fileCount`, sizes short of `totalSize`, no `<id>.<version>.nupkg` or not lower case → bad_request, nothing stored).
+  - `Chunk_OutOfOrder_DropsTheRest_AndTheLastGetsTheFirstError` (wrong offset → later non-last null, last throws that first error).
   - `Chunk_UnknownUpload_LastIsNotFound`.
   - `Begin_Again_DiscardsTheConnectionsPreviousUpload` (only one temp folder remains).
   - `Close_DiscardsTheUpload` (temp folder gone; a later chunk's last → not_found).
@@ -551,12 +565,15 @@ namespace AiChromeProxy.Application.Packages;
 
 /// <summary>
 /// <c>packages.nuget.*</c>: which private packages the server lacks, and one upload per connection at a time, written to a temp folder and put in place
-/// only when every file arrived and the <c>.nupkg</c> matches its <c>contentHash</c>. A chunk that fails ends the upload: later chunks are dropped and the
+/// only when the files <c>begin</c> announced (count and total size) all arrived and the <c>.nupkg</c> matches its <c>contentHash</c>. Each file is checked
+/// at its first chunk, which carries its path and size. A chunk that fails ends the upload: later chunks are dropped and the
 /// last one gets that first error. Leftover temp folders (a restart) are deleted when the service is created.
 /// </summary>
 public sealed class PackageUploads
 {
 	public const string ChangedMessage = "Changed while uploading; retried on the next pass.";
+
+	private const string TooLargeMessage = "A package may have at most 2 000 files and 250 MB.";
 
 	private readonly IPackageStore _store;
 	private readonly ILogger<PackageUploads> _logger;
@@ -588,32 +605,30 @@ public sealed class PackageUploads
 			throw new EnvelopeException(ErrorCodes.TooLarge, $"At most {PackageLimits.MaxHavePackages} packages at once.");
 		}
 
+		if (packages.Any(p => p is null))
+		{
+			throw new EnvelopeException(ErrorCodes.BadRequest, "packages.nuget.have has an empty entry.");
+		}
+
 		return new NuGetMissingPayload([.. packages.Select(p => Key(p.Id, p.Version, p.ContentHash)).Distinct().Where(k => !_store.HasNuGet(k.Id, k.Version))]);
 	}
 
 	public NuGetBegunPayload Begin(string connectionId, NuGetBeginPayload payload)
 	{
 		var key = Key(payload.Id, payload.Version, payload.ContentHash);
-		var files = payload.Files ?? [];
-		if (files.Count > PackageLimits.MaxPackageFiles || files.Sum(f => Math.Max(0, f.Size)) > PackageLimits.MaxPackageBytes)
+		if (payload.FileCount > PackageLimits.MaxPackageFiles || payload.TotalSize > PackageLimits.MaxPackageBytes)
 		{
-			throw new EnvelopeException(ErrorCodes.TooLarge, $"A package may have at most {PackageLimits.MaxPackageFiles} files and 250 MB.");
+			throw new EnvelopeException(ErrorCodes.TooLarge, TooLargeMessage);
 		}
 
-		if (files.Any(f => f.Size < 0 || SyncPath.GetError(f.Path) is not null) || files.Select(f => f.Path).Distinct(StringComparer.OrdinalIgnoreCase).Count() != files.Count)
+		if (payload.FileCount < 1 || payload.TotalSize < 0)
 		{
-			throw new EnvelopeException(ErrorCodes.BadRequest, "packages.nuget.begin has an invalid or repeated file path.");
-		}
-
-		var nupkg = $"{key.Id}.{key.Version}.nupkg";
-		if (!files.Any(f => string.Equals(f.Path, nupkg, StringComparison.OrdinalIgnoreCase)))
-		{
-			throw new EnvelopeException(ErrorCodes.BadRequest, $"packages.nuget.begin must list {nupkg}.");
+			throw new EnvelopeException(ErrorCodes.BadRequest, "packages.nuget.begin needs at least one file and a size of 0 or more.");
 		}
 
 		Close(connectionId);
 		var id = Guid.NewGuid().ToString("N");
-		var upload = new Upload(id, key, payload.ContentHash, nupkg, files, _store.Begin(key.Id, key.Version, id[..8]));
+		var upload = new Upload(id, key, payload.ContentHash, payload.FileCount, payload.TotalSize, _store.Begin(key.Id, key.Version, id[..8]));
 		_uploads[connectionId] = upload;
 		return new NuGetBegunPayload(id);
 	}
@@ -622,11 +637,16 @@ public sealed class PackageUploads
 	{
 		if (!_uploads.TryGetValue(connectionId, out var upload) || upload.Id != payload.UploadId)
 		{
-			return payload.Last ? throw new EnvelopeException(ErrorCodes.NotFound, "Unknown package upload; it starts again on the next pass.") : null;
+			return Unknown(payload);
 		}
 
 		lock (upload)
 		{
+			if (upload.Closed)
+			{
+				return Unknown(payload);
+			}
+
 			if (upload.Error is { } error)
 			{
 				return payload.Last ? throw Finish(connectionId, upload, error) : null;
@@ -656,10 +676,14 @@ public sealed class PackageUploads
 		{
 			lock (upload)
 			{
-				_store.Discard(upload.Temp);
+				upload.Closed = true;
+				Discard(upload);
 			}
 		}
 	}
+
+	private static NuGetStoredPayload? Unknown(NuGetChunkPayload payload) =>
+		payload.Last ? throw new EnvelopeException(ErrorCodes.NotFound, "Unknown package upload; it starts again on the next pass.") : null;
 
 	private static NuGetPackageKey Key(string? id, string? version, string? hash)
 	{
@@ -671,19 +695,48 @@ public sealed class PackageUploads
 		return new NuGetPackageKey(id!.ToLowerInvariant(), version!.ToLowerInvariant());
 	}
 
-	private NuGetStoredPayload? Append(string connectionId, Upload upload, NuGetChunkPayload payload)
+	/// <summary>A file's first chunk: its path and size are checked against the rules and what <c>begin</c> announced.</summary>
+	private static void Start(Upload upload, NuGetChunkPayload payload)
 	{
-		if (upload.Index >= upload.Files.Count)
+		if (payload.Offset != 0 || payload.Size is not { } size)
 		{
-			throw new EnvelopeException(ErrorCodes.BadRequest, "More chunks than the package's files.");
+			throw new EnvelopeException(ErrorCodes.BadRequest, $"Chunk of '{payload.Path}' at {payload.Offset} is out of order (a file starts at 0 with its size).");
 		}
 
-		var file = upload.Files[upload.Index];
-		if (!string.Equals(payload.Path, file.Path, StringComparison.Ordinal) || payload.Offset != upload.Received)
+		if (upload.Paths.Count == upload.FileCount)
+		{
+			throw new EnvelopeException(ErrorCodes.BadRequest, $"More files than the {upload.FileCount} of packages.nuget.begin.");
+		}
+
+		if (size < 0 || SyncPath.GetError(payload.Path) is not null || !upload.Paths.Add(payload.Path))
+		{
+			throw new EnvelopeException(ErrorCodes.BadRequest, $"Invalid or repeated file '{payload.Path}'.");
+		}
+
+		if (size > upload.TotalSize - upload.Started)
+		{
+			throw new EnvelopeException(ErrorCodes.TooLarge, $"The files are larger than the {upload.TotalSize} bytes of packages.nuget.begin.");
+		}
+
+		upload.HasNupkg |= string.Equals(payload.Path, upload.Nupkg, StringComparison.Ordinal);
+		upload.Current = payload.Path;
+		upload.Size = size;
+		upload.Started += size;
+		upload.Received = 0;
+	}
+
+	private NuGetStoredPayload? Append(string connectionId, Upload upload, NuGetChunkPayload payload)
+	{
+		if (upload.Current is null)
+		{
+			Start(upload, payload);
+		}
+		else if (!string.Equals(payload.Path, upload.Current, StringComparison.Ordinal) || payload.Offset != upload.Received || payload.Size is not null)
 		{
 			throw new EnvelopeException(ErrorCodes.BadRequest, $"Chunk of '{payload.Path}' at {payload.Offset} is out of order.");
 		}
 
+		var path = upload.Current!;
 		byte[] data;
 		try
 		{
@@ -694,17 +747,17 @@ public sealed class PackageUploads
 			throw new EnvelopeException(ErrorCodes.BadRequest, "The chunk is not base64url.");
 		}
 
-		if (data.Length > PackageLimits.ChunkSize || upload.Received + data.Length > file.Size)
+		if (data.Length > PackageLimits.ChunkSize || upload.Received + data.Length > upload.Size)
 		{
-			throw new EnvelopeException(ErrorCodes.TooLarge, $"'{file.Path}' is longer than its size {file.Size}.");
+			throw new EnvelopeException(ErrorCodes.TooLarge, $"'{path}' is longer than its size {upload.Size}.");
 		}
 
-		_store.Append(upload.Temp, file.Path, data, create: upload.Received == 0);
+		_store.Append(upload.Temp, path, data, create: upload.Received == 0);
 		upload.Received += data.Length;
-		if (upload.Received == file.Size)
+		if (upload.Received == upload.Size)
 		{
-			upload.Index++;
-			upload.Received = 0;
+			upload.Complete++;
+			upload.Current = null;
 		}
 
 		if (!payload.Last)
@@ -712,9 +765,14 @@ public sealed class PackageUploads
 			return null;
 		}
 
-		if (upload.Index != upload.Files.Count)
+		if (upload.Current is not null || upload.Complete != upload.FileCount || upload.Started != upload.TotalSize)
 		{
 			throw new EnvelopeException(ErrorCodes.BadRequest, "The package arrived incomplete; it starts again on the next pass.");
+		}
+
+		if (!upload.HasNupkg)
+		{
+			throw new EnvelopeException(ErrorCodes.BadRequest, $"The package has no {upload.Nupkg}.");
 		}
 
 		if (_store.Sha512(upload.Temp, upload.Nupkg) != upload.ContentHash)
@@ -727,14 +785,27 @@ public sealed class PackageUploads
 		return new NuGetStoredPayload(upload.Key.Id, upload.Key.Version);
 	}
 
+	/// <summary>A folder that cannot be deleted now is left for <see cref="IPackageStore.DeleteTemps"/> at the next start.</summary>
+	private void Discard(Upload upload)
+	{
+		try
+		{
+			_store.Discard(upload.Temp);
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			_logger.LogWarning(ex, "Could not delete the unfinished upload of {Id} {Version}", upload.Key.Id, upload.Key.Version);
+		}
+	}
+
 	private EnvelopeException Finish(string connectionId, Upload upload, EnvelopeException error)
 	{
 		_uploads.TryRemove(new KeyValuePair<string, Upload>(connectionId, upload));
-		_store.Discard(upload.Temp);
+		Discard(upload);
 		return error;
 	}
 
-	private sealed class Upload(string id, NuGetPackageKey key, string contentHash, string nupkg, IReadOnlyList<NuGetFileInfo> files, string temp)
+	private sealed class Upload(string id, NuGetPackageKey key, string contentHash, int fileCount, long totalSize, string temp)
 	{
 		public string Id { get; } = id;
 
@@ -742,22 +813,44 @@ public sealed class PackageUploads
 
 		public string ContentHash { get; } = contentHash;
 
-		public string Nupkg { get; } = files.First(f => string.Equals(f.Path, nupkg, StringComparison.OrdinalIgnoreCase)).Path;
+		/// <summary>Gets the lower-case <c>&lt;id&gt;.&lt;version&gt;.nupkg</c> that must be among the files.</summary>
+		public string Nupkg { get; } = $"{key.Id}.{key.Version}.nupkg";
 
-		public IReadOnlyList<NuGetFileInfo> Files { get; } = files;
+		public int FileCount { get; } = fileCount;
+
+		public long TotalSize { get; } = totalSize;
 
 		public string Temp { get; } = temp;
 
-		public int Index { get; set; }
+		/// <summary>Gets the paths of the files started so far (no two equal ignoring case: the store is on Windows).</summary>
+		public HashSet<string> Paths { get; } = new(StringComparer.OrdinalIgnoreCase);
 
+		/// <summary>Gets or sets the file being received, or null between files.</summary>
+		public string? Current { get; set; }
+
+		/// <summary>Gets or sets the size of <see cref="Current"/>.</summary>
+		public long Size { get; set; }
+
+		/// <summary>Gets or sets the bytes of <see cref="Current"/> received so far.</summary>
 		public long Received { get; set; }
 
+		/// <summary>Gets or sets the sum of the sizes of the files started so far.</summary>
+		public long Started { get; set; }
+
+		/// <summary>Gets or sets a value indicating whether <see cref="Nupkg"/> (exactly, lower case) is among the files.</summary>
+		public bool HasNupkg { get; set; }
+
+		/// <summary>Gets or sets how many files arrived whole.</summary>
+		public int Complete { get; set; }
+
 		public EnvelopeException? Error { get; set; }
+
+		public bool Closed { get; set; }
 	}
 }
 ```
 
-Note for the implementer: a file of size 0 is complete before any data arrives; handle it so that its single empty chunk is accepted (when `file.Size == 0` and `upload.Received == 0`, `Append` with an empty array creates the file and then advances). The loop above does that because `Received + 0 == Size` holds after the empty append — make sure the test covers it.
+Note for the implementer: a file of size 0 is one empty chunk carrying size 0: its first chunk starts it, the empty append creates the file and `Received == Size` completes it — the upload test covers it. `begin` carries no file list (2 000 paths would exceed SignalR's 32 KB receive limit); each file is checked at its first chunk.
 
 `PackagesHandler` (pattern of `ChatHandler`, types have/begin/chunk; deserialization errors → `bad_request` "Invalid {type} payload."; replies `packages.nuget.missing` / `packages.nuget.begun` / `packages.nuget.stored` with the request's correlation id; a non-last chunk returns null). DI (`AddApplication`): `services.AddSingleton<PackageUploads>(); foreach (var type in PackagesHandler.Types) { services.AddSingleton<IEnvelopeHandler>(sp => new PackagesHandler(type, sp.GetRequiredService<PackageUploads>())); }`. TransportHub: ctor param + `packages.Close(Context.ConnectionId);` in `OnDisconnectedAsync`.
 

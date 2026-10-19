@@ -13,7 +13,8 @@ namespace AiChromeProxy.Client.Packages;
 /// <summary>
 /// The Packages tab's logic: after each sync pass it reads <c>obj/project.assets.json</c> next to every <c>*.csproj</c> of the repo, classifies each package
 /// by its <c>.nupkg.metadata</c> in the NuGet cache folder of this browser, asks the server which private ones it lacks (<c>packages.nuget.have</c>) and
-/// uploads those one at a time (<c>packages.nuget.begin</c>, then 16 KB chunks; only the last one waits for its reply). Nothing is ever written anywhere
+/// uploads those one at a time (<c>packages.nuget.begin</c> with the file count and total size, then 16 KB chunks, each file's first one with its path
+/// and size; only the last one waits for its reply). Nothing is ever written anywhere
 /// on this computer. UI-free: the view reads the properties on <see cref="Changed"/>.
 /// </summary>
 public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolderAccess repo, IPackageFolder cache)
@@ -86,6 +87,15 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 			return ready + missing == 0 ? string.Empty : $"{ready} private packages ready on the server · {missing} missing";
 		}
 	}
+
+	/// <summary>
+	/// <c>packages.nuget.have</c> payloads like <c>sync.manifest</c> pages (<see cref="SyncPages"/>: at most 500 packages, fewer than
+	/// <see cref="PackageLimits.MaxHavePackages"/>, and 24 000 serialized bytes), so each message stays under SignalR's 32 KB limit.
+	/// </summary>
+	/// <param name="packages">The private packages to ask about.</param>
+	/// <returns>The pages in order.</returns>
+	public static IEnumerable<NuGetHavePayload> HavePages(IEnumerable<NuGetPackageInfo> packages) =>
+		SyncPages.Split(packages, p => JsonSerializer.SerializeToUtf8Bytes(p, JsonSerializerOptions.Web).Length + 1).Select(p => new NuGetHavePayload(p));
 
 	/// <summary>Restores the remembered source and refreshes after each finished sync pass from now on.</summary>
 	/// <returns>A task that completes when the source is restored.</returns>
@@ -326,32 +336,32 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 		SetSource(grant is null ? SourceState.None : grant.Granted ? SourceState.NotFound : SourceState.NeedsPermission, grant?.Name, newEpoch: false);
 	}
 
-	/// <summary>Step 5: <c>packages.nuget.have</c> in batches; the rest are on the server.</summary>
+	/// <summary>Step 5: <c>packages.nuget.have</c> in pages (<see cref="HavePages"/>); the rest are on the server.</summary>
 	private async Task<List<(PackageRef Package, string Hash)>> MissingAsync(List<(PackageRef Package, string Hash)> candidates, CancellationToken ct)
 	{
 		var missing = new List<(PackageRef, string)>();
-		foreach (var batch in candidates.Chunk(PackageLimits.MaxHavePackages))
+		foreach (var page in HavePages(candidates.Select(c => new NuGetPackageInfo(c.Package.Id, c.Package.Version, c.Hash))))
 		{
 			try
 			{
-				var have = new NuGetHavePayload([.. batch.Select(c => new NuGetPackageInfo(c.Package.Id, c.Package.Version, c.Hash))]);
-				var reply = Read<NuGetMissingPayload>(await transport.RequestAsync(Envelope.Create(MessageTypes.PackagesNuGetHave, have), ChatEngine.RequestTimeout, ct));
+				var reply = Read<NuGetMissingPayload>(await transport.RequestAsync(Envelope.Create(MessageTypes.PackagesNuGetHave, page), ChatEngine.RequestTimeout, ct));
 				var lacking = reply.Missing.Select(k => new PackageRef(k.Id, k.Version)).ToHashSet();
-				foreach (var candidate in batch)
+				foreach (var info in page.Packages)
 				{
-					var absent = lacking.Contains(candidate.Package);
-					SetRow(Row(candidate.Package, absent ? PackageState.Uploading : PackageState.OnServer, absent ? "Uploading 0%" : "On the server"));
+					var package = new PackageRef(info.Id, info.Version);
+					var absent = lacking.Contains(package);
+					SetRow(Row(package, absent ? PackageState.Uploading : PackageState.OnServer, absent ? "Uploading 0%" : "On the server"));
 					if (absent)
 					{
-						missing.Add(candidate);
+						missing.Add((package, info.ContentHash));
 					}
 				}
 			}
 			catch (Exception ex) when (!ct.IsCancellationRequested)
 			{
-				foreach (var candidate in batch)
+				foreach (var info in page.Packages)
 				{
-					SetRow(Row(candidate.Package, PackageState.Failed, $"Failed: {Describe(ex)}"));
+					SetRow(Row(new PackageRef(info.Id, info.Version), PackageState.Failed, $"Failed: {Describe(ex)}"));
 				}
 			}
 		}
@@ -394,8 +404,8 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 				return;
 			}
 
-			List<NuGetFileInfo> files = [.. listed.OrderBy(f => f.Path == nupkg ? 0 : 1).ThenBy(f => f.Path, StringComparer.Ordinal).Select(f => new NuGetFileInfo(f.Path, f.Size))];
-			var begin = Envelope.Create(MessageTypes.PackagesNuGetBegin, new NuGetBeginPayload(package.Id, package.Version, hash, files));
+			List<FileMeta> files = [.. listed.OrderBy(f => f.Path == nupkg ? 0 : 1).ThenBy(f => f.Path, StringComparer.Ordinal)];
+			var begin = Envelope.Create(MessageTypes.PackagesNuGetBegin, new NuGetBeginPayload(package.Id, package.Version, hash, files.Count, size));
 			var uploadId = Read<NuGetBegunPayload>(await transport.RequestAsync(begin, ChatEngine.RequestTimeout, ct)).UploadId;
 			long sent = 0;
 			var chunks = 0;
@@ -418,7 +428,7 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 
 					var fileDone = offset + length == file.Size;
 					var last = fileDone && i == files.Count - 1;
-					var chunk = Envelope.Create(MessageTypes.PackagesNuGetChunk, new NuGetChunkPayload(uploadId, file.Path, offset, SyncData.Encode(data), last));
+					var chunk = Envelope.Create(MessageTypes.PackagesNuGetChunk, new NuGetChunkPayload(uploadId, file.Path, offset, SyncData.Encode(data), last, offset == 0 ? file.Size : null));
 					if (last)
 					{
 						await transport.RequestAsync(chunk, ChatEngine.RequestTimeout, ct);
