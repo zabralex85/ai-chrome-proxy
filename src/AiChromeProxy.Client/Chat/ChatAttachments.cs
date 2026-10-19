@@ -103,17 +103,15 @@ public sealed class ChatAttachments(ITransport transport, IAttachmentSource sour
 	/// <returns>A task that completes when the browser was told.</returns>
 	public async Task RemoveAsync(string handle)
 	{
+		CancellationTokenSource? cancel;
 		lock (_gate)
 		{
 			_items.RemoveAll(i => i.File.Handle == handle);
-			if (_cancels.Remove(handle, out var cancel))
-			{
-				cancel.Cancel();
-			}
-
+			_cancels.Remove(handle, out cancel);
 			_note = null;
 		}
 
+		cancel?.Cancel();
 		await source.ForgetAsync(handle);
 		Changed?.Invoke();
 	}
@@ -131,6 +129,9 @@ public sealed class ChatAttachments(ITransport transport, IAttachmentSource sour
 	private async Task UploadAsync(string repo, AttachmentFile file)
 	{
 		await _uploading.WaitAsync();
+		var id = Guid.NewGuid().ToString("N");
+		long sent = 0; // bytes the server may hold in its .part
+		var finished = false; // the last chunk went out: the server is done with the upload either way
 		try
 		{
 			CancellationToken ct;
@@ -144,7 +145,6 @@ public sealed class ChatAttachments(ITransport transport, IAttachmentSource sour
 				ct = cancel.Token;
 			}
 
-			var id = Guid.NewGuid().ToString("N");
 			for (long offset = 0, chunk = 0; ; offset += ChatLimits.AttachmentChunkSize, chunk++)
 			{
 				var length = (int)Math.Min(ChatLimits.AttachmentChunkSize, file.Size - offset);
@@ -159,6 +159,7 @@ public sealed class ChatAttachments(ITransport transport, IAttachmentSource sour
 				var envelope = Envelope.Create(MessageTypes.ChatAttach, new ChatAttachPayload(repo, id, file.Name, file.Size, offset, SyncData.Encode(data), last));
 				if (last)
 				{
+					finished = true;
 					await transport.RequestAsync(envelope, ChatEngine.RequestTimeout, ct);
 					Update(file.Handle, p => p with { State = AttachmentState.Ready, Sent = file.Size, Id = id }, raise: true);
 					return;
@@ -166,20 +167,41 @@ public sealed class ChatAttachments(ITransport transport, IAttachmentSource sour
 
 				// Not awaited for a reply: the server answers only the last chunk (or the upload's first error, which the last chunk then gets).
 				await transport.SendAsync(envelope, ct);
-				Update(file.Handle, p => p with { Sent = offset + length }, raise: chunk % ProgressEvery == 0);
+				sent = offset + length;
+				Update(file.Handle, p => p with { Sent = sent }, raise: chunk % ProgressEvery == 0);
 			}
 		}
 		catch (OperationCanceledException) when (!Items.Any(i => i.File.Handle == file.Handle))
 		{
 			// Removed while uploading.
+			await CloseAsync(repo, id, file, sent, finished);
 		}
 		catch (Exception ex)
 		{
 			Update(file.Handle, p => p with { State = AttachmentState.Failed, Error = Describe(ex) }, raise: true);
+			await CloseAsync(repo, id, file, sent, finished);
 		}
 		finally
 		{
 			_uploading.Release();
+		}
+	}
+
+	/// <summary>Best effort: a closing chunk that is short of the declared size makes the server delete the .part and free the upload slot.</summary>
+	private async Task CloseAsync(string repo, string id, AttachmentFile file, long sent, bool finished)
+	{
+		if (sent == 0 || finished)
+		{
+			return;
+		}
+
+		try
+		{
+			await transport.SendAsync(Envelope.Create(MessageTypes.ChatAttach, new ChatAttachPayload(repo, id, file.Name, file.Size, sent, string.Empty, true)), CancellationToken.None);
+		}
+		catch (Exception)
+		{
+			// The daily sweep frees it.
 		}
 	}
 

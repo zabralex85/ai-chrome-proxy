@@ -197,6 +197,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 			return false;
 		}
 
+		var ok = false;
 		try
 		{
 			var started = Read<ChatStartedPayload>(await transport.RequestAsync(send, RequestTimeout, token));
@@ -211,8 +212,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 				_awaitingText = null;
 			}
 
-			Raise();
-			return true;
+			ok = true;
 		}
 		catch (Exception ex)
 		{
@@ -225,7 +225,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 		}
 
 		Raise();
-		return false;
+		return ok;
 	}
 
 	/// <summary><b>Stop</b>: cancels the run in progress.</summary>

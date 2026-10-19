@@ -1,7 +1,9 @@
+using System.Text.Json;
 using AiChromeProxy.Client.Chat;
 using AiChromeProxy.Client.Transport;
 using AiChromeProxy.Domain;
 using AiChromeProxy.Domain.Chat;
+using AiChromeProxy.Domain.Sync;
 
 namespace AiChromeProxy.Tests.Client;
 
@@ -128,6 +130,46 @@ public sealed class ChatAttachmentsTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Remove_AfterAChunkWasSent_ClosesTheUploadSoTheServerFreesTheSlot()
+	{
+		_source.Files["h1"] = new byte[40_000];
+		_source.Gate = new TaskCompletionSource();
+		_source.GateFrom = ChatLimits.AttachmentChunkSize;
+		var adding = _attachments.AddAsync("repo", [File("h1", "a.bin", 40_000)]);
+		while (!_server.Transport.Sent.Any(e => e.Type == MessageTypes.ChatAttach))
+		{
+			await Task.Delay(5, TestContext.Current.CancellationToken);
+		}
+
+		await _attachments.RemoveAsync("h1");
+		_source.Gate.SetResult();
+		await adding;
+
+		var attach = _server.Transport.Sent.Where(e => e.Type == MessageTypes.ChatAttach).Select(e => e.Payload.Deserialize<ChatAttachPayload>(JsonSerializerOptions.Web)!).ToList();
+		Assert.Equal(2, attach.Count);
+		Assert.Equal(attach[0].Id, attach[1].Id);
+		Assert.True(attach[1].Last);
+		Assert.Equal(string.Empty, attach[1].Data);
+		Assert.Equal(ChatLimits.AttachmentChunkSize, attach[1].Offset);
+	}
+
+	[Fact]
+	public async Task AMidUploadRefusal_ShowsTheServersText_OnTheChip()
+	{
+		_source.Files["h1"] = new byte[40_000];
+		foreach (var i in Enumerable.Range(0, global::AiChromeProxy.Application.Chat.ChatAttachments.MaxUploadsPerRepo))
+		{
+			_server.Attachments.Append(new ChatAttachPayload("repo", $"{i:x32}", "x.bin", 10, 0, SyncData.Encode([1]), false));
+		}
+
+		await _attachments.AddAsync("repo", [File("h1", "a.bin", 40_000)]);
+
+		var item = Assert.Single(_attachments.Items);
+		Assert.Equal(AttachmentState.Failed, item.State);
+		Assert.Equal("Too many uploads in progress.", item.Error);
+	}
+
+	[Fact]
 	public async Task Clear_ForgetsEverything()
 	{
 		_source.Files["h1"] = [1];
@@ -164,9 +206,12 @@ public sealed class ChatAttachmentsTests : IDisposable
 		/// <summary>When set, reads wait for it.</summary>
 		public TaskCompletionSource? Gate { get; set; }
 
+		/// <summary>Reads at or after this offset wait for the gate.</summary>
+		public long GateFrom { get; set; }
+
 		public async Task<byte[]> ReadChunkAsync(string handle, long offset, int length)
 		{
-			if (Gate is not null)
+			if (Gate is not null && offset >= GateFrom)
 			{
 				await Gate.Task;
 			}
