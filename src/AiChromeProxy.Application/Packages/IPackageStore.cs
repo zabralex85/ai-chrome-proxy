@@ -2,7 +2,7 @@ namespace AiChromeProxy.Application.Packages;
 
 /// <summary>
 /// The server's NuGet packages: <c>&lt;root&gt;\nuget\&lt;id&gt;\&lt;version&gt;\</c> (lower case, checked by the caller), filled through a temp folder
-/// <c>~&lt;version&gt;.&lt;tag&gt;</c> (<c>~</c> cannot occur in a version) that is renamed into place only when complete. Paths leaving their folder throw <see cref="ArgumentException"/>.
+/// <c>~&lt;version&gt;~&lt;tag&gt;</c> (<c>~</c> cannot occur in a version) that is renamed into place only when complete. Paths leaving their folder throw <see cref="ArgumentException"/>.
 /// </summary>
 public interface IPackageStore
 {

@@ -91,6 +91,16 @@ public sealed class FileSystemPackageStoreTests : IDisposable
 	}
 
 	[Fact]
+	public void Commit_WithAVersionThatIsAPrefixOfTheHandlesVersion_Throws()
+	{
+		var upload = _store.Begin("corp.a", "1.0.0", "t");
+
+		Assert.Throws<ArgumentException>(() => _store.Commit(upload, "corp.a", "1.0"));
+		Assert.Throws<ArgumentException>(() => _store.Commit(upload, "corp.a", "1"));
+		Assert.True(Directory.Exists(upload));
+	}
+
+	[Fact]
 	public void Commit_WhenThePackageAppearsMeanwhile_DiscardsTheUpload()
 	{
 		var upload = _store.Begin("corp.a", "1.0.0", "t1");

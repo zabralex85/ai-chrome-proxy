@@ -20,7 +20,7 @@ public sealed class FileSystemPackageStore(IOptions<PackagesOptions> options) : 
 	{
 		var folder = Child(_nuget, id);
 		Child(folder, version);
-		var temp = Child(folder, TempMark + version + "." + tag);
+		var temp = Child(folder, TempMark + version + TempMark + tag);
 		if (Directory.Exists(temp))
 		{
 			Directory.Delete(temp, recursive: true);
@@ -53,7 +53,7 @@ public sealed class FileSystemPackageStore(IOptions<PackagesOptions> options) : 
 		var temp = Temp(upload);
 		var target = Package(id, version);
 		if (!string.Equals(Path.GetFileName(Path.GetDirectoryName(temp)), Path.GetFileName(Path.GetDirectoryName(target)), StringComparison.OrdinalIgnoreCase)
-			|| !Path.GetFileName(temp).StartsWith(TempMark + version + ".", StringComparison.OrdinalIgnoreCase))
+			|| !Path.GetFileName(temp).StartsWith(TempMark + version + TempMark, StringComparison.OrdinalIgnoreCase))
 		{
 			throw new ArgumentException("The upload belongs to another package.", nameof(upload));
 		}
