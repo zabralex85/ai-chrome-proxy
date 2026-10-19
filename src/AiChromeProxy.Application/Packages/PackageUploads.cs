@@ -46,6 +46,11 @@ public sealed class PackageUploads
 			throw new EnvelopeException(ErrorCodes.TooLarge, $"At most {PackageLimits.MaxHavePackages} packages at once.");
 		}
 
+		if (packages.Any(p => p is null))
+		{
+			throw new EnvelopeException(ErrorCodes.BadRequest, "packages.nuget.have has an empty entry.");
+		}
+
 		return new NuGetMissingPayload([.. packages.Select(p => Key(p.Id, p.Version, p.ContentHash)).Distinct().Where(k => !_store.HasNuGet(k.Id, k.Version))]);
 	}
 
@@ -53,7 +58,12 @@ public sealed class PackageUploads
 	{
 		var key = Key(payload.Id, payload.Version, payload.ContentHash);
 		var files = payload.Files ?? [];
-		if (files.Count > PackageLimits.MaxPackageFiles || files.Sum(f => Math.Max(0, f.Size)) > PackageLimits.MaxPackageBytes)
+		if (files.Any(f => f is null))
+		{
+			throw new EnvelopeException(ErrorCodes.BadRequest, "packages.nuget.begin has an empty file entry.");
+		}
+
+		if (files.Count > PackageLimits.MaxPackageFiles || files.Any(f => f.Size > PackageLimits.MaxPackageBytes) || files.Sum(f => Math.Max(0, f.Size)) > PackageLimits.MaxPackageBytes)
 		{
 			throw new EnvelopeException(ErrorCodes.TooLarge, $"A package may have at most {PackageLimits.MaxPackageFiles} files and 250 MB.");
 		}
@@ -64,7 +74,7 @@ public sealed class PackageUploads
 		}
 
 		var nupkg = $"{key.Id}.{key.Version}.nupkg";
-		if (!files.Any(f => string.Equals(f.Path, nupkg, StringComparison.OrdinalIgnoreCase)))
+		if (!files.Any(f => string.Equals(f.Path, nupkg, StringComparison.Ordinal)))
 		{
 			throw new EnvelopeException(ErrorCodes.BadRequest, $"packages.nuget.begin must list {nupkg}.");
 		}
@@ -80,11 +90,16 @@ public sealed class PackageUploads
 	{
 		if (!_uploads.TryGetValue(connectionId, out var upload) || upload.Id != payload.UploadId)
 		{
-			return payload.Last ? throw new EnvelopeException(ErrorCodes.NotFound, "Unknown package upload; it starts again on the next pass.") : null;
+			return Unknown(payload);
 		}
 
 		lock (upload)
 		{
+			if (upload.Closed)
+			{
+				return Unknown(payload);
+			}
+
 			if (upload.Error is { } error)
 			{
 				return payload.Last ? throw Finish(connectionId, upload, error) : null;
@@ -114,10 +129,14 @@ public sealed class PackageUploads
 		{
 			lock (upload)
 			{
-				_store.Discard(upload.Temp);
+				upload.Closed = true;
+				Discard(upload);
 			}
 		}
 	}
+
+	private static NuGetStoredPayload? Unknown(NuGetChunkPayload payload) =>
+		payload.Last ? throw new EnvelopeException(ErrorCodes.NotFound, "Unknown package upload; it starts again on the next pass.") : null;
 
 	private static NuGetPackageKey Key(string? id, string? version, string? hash)
 	{
@@ -185,10 +204,23 @@ public sealed class PackageUploads
 		return new NuGetStoredPayload(upload.Key.Id, upload.Key.Version);
 	}
 
+	/// <summary>A folder that cannot be deleted now is left for <see cref="IPackageStore.DeleteTemps"/> at the next start.</summary>
+	private void Discard(Upload upload)
+	{
+		try
+		{
+			_store.Discard(upload.Temp);
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			_logger.LogWarning(ex, "Could not delete the unfinished upload of {Id} {Version}", upload.Key.Id, upload.Key.Version);
+		}
+	}
+
 	private EnvelopeException Finish(string connectionId, Upload upload, EnvelopeException error)
 	{
 		_uploads.TryRemove(new KeyValuePair<string, Upload>(connectionId, upload));
-		_store.Discard(upload.Temp);
+		Discard(upload);
 		return error;
 	}
 
@@ -211,5 +243,7 @@ public sealed class PackageUploads
 		public long Received { get; set; }
 
 		public EnvelopeException? Error { get; set; }
+
+		public bool Closed { get; set; }
 	}
 }

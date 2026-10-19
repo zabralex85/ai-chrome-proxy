@@ -122,10 +122,10 @@ public sealed class PackageUploadsTests : IDisposable
 		var begun = _uploads.Begin(Conn, begin);
 		var path = begin.Files[0].Path;
 
-		Assert.Null(_uploads.Chunk(Conn, new NuGetChunkPayload(begun.UploadId, path, 1, SyncData.Encode([2]), false)));
-		Assert.Null(_uploads.Chunk(Conn, new NuGetChunkPayload(begun.UploadId, path, 0, SyncData.Encode([1]), false)));
-		var error = Assert.Throws<EnvelopeException>(() => _uploads.Chunk(Conn, new NuGetChunkPayload(begun.UploadId, path, 1, SyncData.Encode([2]), true)));
+		Assert.Null(_uploads.Chunk(Conn, new NuGetChunkPayload(begun.UploadId, "x", 0, SyncData.Encode([1, 2]), false)));
+		var error = Assert.Throws<EnvelopeException>(() => _uploads.Chunk(Conn, new NuGetChunkPayload(begun.UploadId, path, 0, SyncData.Encode([1, 2]), true)));
 
+		Assert.Contains("'x'", error.Message);
 		Assert.Contains("out of order", error.Message);
 		Assert.Empty(Temps());
 	}
@@ -226,7 +226,7 @@ public sealed class PackageUploadsTests : IDisposable
 		_ = new PackageUploads(_store, logger);
 
 		Assert.Empty(Temps());
-		Assert.Contains(logger.Entries, e => e.Level == LogLevel.Information);
+		Assert.Contains(logger.Messages, m => m.Contains("Deleted 1 "));
 	}
 
 	[Fact]
@@ -261,6 +261,61 @@ public sealed class PackageUploadsTests : IDisposable
 		Assert.Null(first);
 		Assert.Equal((MessageTypes.PackagesNuGetStored, "c2"), (last!.Type, last.CorrelationId));
 		Assert.Equal(MessageTypes.Error, bad!.Type);
+	}
+
+	[Fact]
+	public void Close_And_FailedUpload_SurviveADiscardThatFails()
+	{
+		var uploads = new PackageUploads(new DiscardFailingStore(_store), _logger);
+		var begin = Pkg(new byte[] { 1, 2 });
+		var begun = uploads.Begin(Conn, begin);
+		uploads.Chunk(Conn, new NuGetChunkPayload(begun.UploadId, "x", 0, "", false));
+
+		var error = Assert.Throws<EnvelopeException>(() => uploads.Chunk(Conn, new NuGetChunkPayload(begun.UploadId, begin.Files[0].Path, 0, SyncData.Encode([1, 2]), true)));
+		Assert.Contains("'x'", error.Message);
+
+		uploads.Begin(Conn, begin);
+		uploads.Close(Conn);
+		Assert.Contains(_logger.Entries, e => e.Level == LogLevel.Warning);
+	}
+
+	[Fact]
+	public void Begin_FileSizesThatWouldOverflowTheSum_AreTooLarge()
+	{
+		var ok = Pkg(new byte[] { 1 });
+
+		var error = Assert.Throws<EnvelopeException>(() => _uploads.Begin(Conn, ok with { Files = [.. ok.Files, new NuGetFileInfo("a", long.MaxValue / 2), new NuGetFileInfo("b", long.MaxValue / 2)] }));
+
+		Assert.Equal(ErrorCodes.TooLarge, error.Code);
+	}
+
+	[Fact]
+	public void NullEntries_AreBadRequests()
+	{
+		var ok = Pkg(new byte[] { 1 });
+
+		Assert.Equal(ErrorCodes.BadRequest, Assert.Throws<EnvelopeException>(() => _uploads.Have(new NuGetHavePayload([null!]))).Code);
+		Assert.Equal(ErrorCodes.BadRequest, Assert.Throws<EnvelopeException>(() => _uploads.Begin(Conn, ok with { Files = [null!] })).Code);
+	}
+
+	[Fact]
+	public void Chunk_AfterClose_IsUnknown_AndDoesNotRecreateTheTemp()
+	{
+		var begin = Pkg(new byte[] { 1 });
+		var begun = _uploads.Begin(Conn, begin);
+		_uploads.Close(Conn);
+
+		Assert.Null(_uploads.Chunk(Conn, new NuGetChunkPayload(begun.UploadId, begin.Files[0].Path, 0, SyncData.Encode([1]), false)));
+		Assert.Equal(ErrorCodes.NotFound, Assert.Throws<EnvelopeException>(() => _uploads.Chunk(Conn, new NuGetChunkPayload(begun.UploadId, begin.Files[0].Path, 0, SyncData.Encode([1]), true))).Code);
+		Assert.Empty(Temps());
+	}
+
+	[Fact]
+	public void Begin_NupkgNameMustBeLowerCase()
+	{
+		var ok = Pkg(new byte[] { 1 });
+
+		Assert.Equal(ErrorCodes.BadRequest, Assert.Throws<EnvelopeException>(() => _uploads.Begin(Conn, ok with { Files = [new NuGetFileInfo("Corp.A.1.2.3.nupkg", 1)] })).Code);
 	}
 
 	private static string Hash(byte[] data) => Convert.ToBase64String(SHA512.HashData(data));
@@ -322,5 +377,24 @@ public sealed class PackageUploadsTests : IDisposable
 		}
 
 		public int DeleteTemps() => throw new IOException("locked");
+	}
+
+	private sealed class DiscardFailingStore(IPackageStore inner) : IPackageStore
+	{
+		public string NuGetFolder => inner.NuGetFolder;
+
+		public bool HasNuGet(string id, string version) => inner.HasNuGet(id, version);
+
+		public string Begin(string id, string version, string tag) => inner.Begin(id, version, tag);
+
+		public void Append(string upload, string path, byte[] data, bool create) => inner.Append(upload, path, data, create);
+
+		public string Sha512(string upload, string path) => inner.Sha512(upload, path);
+
+		public bool Commit(string upload, string id, string version) => inner.Commit(upload, id, version);
+
+		public void Discard(string upload) => throw new IOException("locked");
+
+		public int DeleteTemps() => 0;
 	}
 }
