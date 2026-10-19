@@ -974,6 +974,137 @@ dd .state-error {
     cursor: not-allowed;
 }
 
+.chat-compose {
+    flex: none;
+    margin: 0 16px 12px;
+    border-radius: 8px;
+}
+
+.chat-compose .chat {
+    margin: 0;
+}
+
+.chat-compose.dragging .chat {
+    border-color: var(--button-bg);
+    box-shadow: 0 0 0 2px var(--button-bg);
+}
+
+.attachments,
+.msg-attachments {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0 0 6px;
+    padding: 0;
+    list-style: none;
+}
+
+.msg-attachments {
+    justify-content: flex-end;
+    margin-top: -4px;
+}
+
+.attachment,
+.attachment-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 260px;
+    padding: 4px 6px;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    background: var(--bg-input);
+    font-size: 12px;
+}
+
+.attachment img {
+    width: 32px;
+    height: 32px;
+    border-radius: 4px;
+    object-fit: cover;
+}
+
+.attachment-name,
+.attachment-chip span:first-of-type {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.attachment-size {
+    flex: none;
+    color: var(--fg-muted);
+}
+
+.attachment.failed {
+    border-color: var(--error);
+}
+
+.attachment.failed .attachment-size {
+    color: var(--error);
+}
+
+.attachment-remove {
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: none;
+    color: var(--fg-muted);
+    cursor: pointer;
+}
+
+.attachment-remove:hover,
+.attachment-remove:focus-visible {
+    background: var(--bg-active);
+    color: var(--fg);
+}
+
+.attach-note {
+    margin: 0 0 6px;
+    color: var(--fg-muted);
+    font-size: 12px;
+}
+
+.attach {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 6px;
+    color: var(--fg-muted);
+    cursor: pointer;
+}
+
+.attach:hover {
+    background: var(--bg-active);
+    color: var(--fg);
+}
+
+.attach input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+}
+
+.attach:has(input:focus-visible) {
+    outline: 2px solid var(--focus);
+}
+
+.attach:has(input:disabled) {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.msg-user:empty {
+    display: none;
+}
+
 /* Actions history */
 .history {
     flex: 1;

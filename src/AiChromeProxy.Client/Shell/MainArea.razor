@@ -312,18 +312,19 @@
     }
 
     /// <summary>Sends into the chat on screen; its tab opens (the draft's tab becomes the new session's tab).</summary>
-    private async Task SendAsync(string text)
+    private async Task<bool> SendAsync(string text, IReadOnlyList<string> attachments)
     {
         var tab = TabSet.ChatTab(Chat.Current.Id);
         Tabs.Show(tab);
         await OnChanged.InvokeAsync();
-        await Chat.SendAsync(text);
+        var sent = await Chat.SendAsync(text, attachments);
         if (Chat.Current.Id is { } id && TabSet.ChatTab(id) != tab)
         {
             Tabs.Rename(tab, TabSet.ChatTab(id));
         }
 
         await OnChanged.InvokeAsync();
+        return sent;
     }
 
     private Task OnKeyDown(KeyboardEventArgs e) => ChangeAsync(() =>

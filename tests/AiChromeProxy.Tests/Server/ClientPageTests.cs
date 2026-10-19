@@ -71,6 +71,9 @@ public sealed class ClientPageTests
 		Assert.Equal("worker-src 'self' blob:", directives["worker-src"]);
 		Assert.Equal("font-src 'self' data:", directives["font-src"]);
 		Assert.Equal("style-src 'self' 'unsafe-inline'", directives["style-src"]);
+
+		// Previews of pictures pasted into the chat box are object URLs.
+		Assert.Equal("img-src 'self' data: blob:", directives["img-src"]);
 	}
 
 	private static string Hash(string script) => $"'sha256-{Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(script)))}'";

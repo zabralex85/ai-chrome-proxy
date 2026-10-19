@@ -29,6 +29,19 @@
                 {
                     case ChatItemKind.User:
                         <div class="msg msg-user" data-testid="chat-user">@item.Text</div>
+                        @if (item.Attachments is { Count: > 0 } files)
+                        {
+                            <ul class="msg-attachments" aria-label="Attached files">
+                                @foreach (var file in files)
+                                {
+                                    <li class="attachment-chip" data-testid="chat-user-attachment">
+                                        <Icon Name="@("file-" + Format.FileKind(file.Name))" Size="14" Class="@("kind-" + Format.FileKind(file.Name))" />
+                                        <span>@file.Name</span>
+                                        <span class="attachment-size">@Format.Bytes(file.Size)</span>
+                                    </li>
+                                }
+                            </ul>
+                        }
                         break;
                     case ChatItemKind.Assistant:
                         <div class="msg msg-assistant markdown @(item.Streaming ? "streaming" : null)" data-testid="chat-assistant">@Html(item)</div>

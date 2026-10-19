@@ -1,26 +1,70 @@
 @using AiChromeProxy.Client.Chat
+@using AiChromeProxy.Client.Transport
 @using AiChromeProxy.Domain.Chat
 @inject JsChatView View
+@inject ITransport Transport
+@inject IAttachmentSource Source
 @implements IDisposable
 
-@* Enter sends and Shift+Enter adds a line (the keydown handler is in Scripts/chat.ts: Blazor cannot cancel a key conditionally). While Claude works, the send button is Stop. *@
-<div class="chat">
-    <textarea data-testid="chat-input" rows="2" disabled="@(!Enabled)" aria-label="Message to Claude" maxlength="@ChatLimits.MaxTextChars" @ref="_box"
-              placeholder="@Placeholder"
-              @bind="_text" @bind:event="oninput"></textarea>
-    @if (Chat.Running)
+@* Enter sends and Shift+Enter adds a line (the keydown handler is in Scripts/chat.ts: Blazor cannot cancel a key conditionally). While Claude works, the send button is Stop.
+   Files pasted into the box, dropped on it or picked with the paperclip upload at once (ChatAttachments) and show as chips above it. *@
+<div class="chat-compose" data-testid="chat-compose" @ref="_zone">
+    @if (_attachments.Items.Count > 0)
     {
-        <button type="button" class="send stop" data-testid="chat-stop" title="Stop" aria-label="Stop" disabled="@(!Enabled)" @onclick="Chat.StopAsync"><Icon Name="stop" /></button>
+        <ul class="attachments" aria-label="Attached files">
+            @foreach (var item in _attachments.Items)
+            {
+                <li class="attachment @item.State.ToString().ToLowerInvariant()" data-testid="chat-attachment" title="@(item.Error ?? item.File.Name)">
+                    @if (item.File.Preview is { } preview)
+                    {
+                        <img src="@preview" alt="" />
+                    }
+                    else
+                    {
+                        <Icon Name="@("file-" + Format.FileKind(item.File.Name))" Size="16" Class="@("kind-" + Format.FileKind(item.File.Name))" />
+                    }
+                    <span class="attachment-name">@item.File.Name</span>
+                    <span class="attachment-size">@(item.State switch
+                    {
+                        AttachmentState.Uploading => $"{(item.File.Size == 0 ? 0 : item.Sent * 100 / item.File.Size)}%",
+                        AttachmentState.Failed => item.Error,
+                        _ => Format.Bytes(item.File.Size),
+                    })</span>
+                    <button type="button" class="attachment-remove" data-testid="chat-attachment-remove" aria-label="@($"Remove {item.File.Name}")" title="Remove" @onclick="() => _attachments.RemoveAsync(item.File.Handle)"><Icon Name="close" Size="12" /></button>
+                </li>
+            }
+        </ul>
     }
-    else
+    @if (_attachments.Note is { } note)
     {
-        <button type="button" class="send" data-testid="chat-send" title="Send" aria-label="Send" disabled="@(!Enabled || string.IsNullOrWhiteSpace(_text))" @onclick="() => SubmitAsync(_text)"><Icon Name="send" /></button>
+        <div class="attach-note" data-testid="chat-attach-note" role="status">@note</div>
     }
+    <div class="chat">
+        <textarea data-testid="chat-input" rows="2" disabled="@(!Enabled)" aria-label="Message to Claude" maxlength="@ChatLimits.MaxTextChars" @ref="_box"
+                  placeholder="@Placeholder"
+                  @bind="_text" @bind:event="oninput"></textarea>
+        <label class="attach" title="Attach files">
+            <input type="file" multiple data-testid="chat-file" aria-label="Attach files" disabled="@(!Enabled)" @ref="_picker" />
+            <Icon Name="paperclip" />
+        </label>
+        @if (Chat.Running)
+        {
+            <button type="button" class="send stop" data-testid="chat-stop" title="Stop" aria-label="Stop" disabled="@(!Enabled)" @onclick="Chat.StopAsync"><Icon Name="stop" /></button>
+        }
+        else
+        {
+            <button type="button" class="send" data-testid="chat-send" title="Send" aria-label="Send" disabled="@(!CanSend(_text))" @onclick="() => SubmitAsync(_text)"><Icon Name="send" /></button>
+        }
+    </div>
 </div>
 
 @code {
     private ElementReference _box;
+    private ElementReference _zone;
+    private ElementReference _picker;
     private IDisposable? _callback;
+    private IDisposable? _filesCallback;
+    private ChatAttachments _attachments = null!;
     private string _text = string.Empty;
 
     [Parameter, EditorRequired]
@@ -34,15 +78,27 @@
     [Parameter]
     public string Placeholder { get; set; } = string.Empty;
 
-    /// <summary>Sends the message; the page shows the chat tab and keeps the tabs in step with the session.</summary>
+    /// <summary>Sends the message with the ids of its uploaded files; true when the run started. The page shows the chat tab and keeps the tabs in step with the session.</summary>
     [Parameter, EditorRequired]
-    public Func<string, Task> OnSend { get; set; } = null!;
+    public Func<string, IReadOnlyList<string>, Task<bool>> OnSend { get; set; } = null!;
 
-    public void Dispose() => _callback?.Dispose();
+    public void Dispose()
+    {
+        _callback?.Dispose();
+        _filesCallback?.Dispose();
+        _attachments.Changed -= OnAttachmentsChanged;
+        _ = _attachments.ClearAsync();
+    }
 
     /// <summary>Puts the text cursor in the message box.</summary>
     /// <returns>A task that completes when the box has the focus.</returns>
     public ValueTask FocusAsync() => _box.FocusAsync();
+
+    protected override void OnInitialized()
+    {
+        _attachments = new ChatAttachments(Transport, Source);
+        _attachments.Changed += OnAttachmentsChanged;
+    }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -51,24 +107,37 @@
             try
             {
                 _callback = await View.SendOnEnterAsync(_box, text => InvokeAsync(() => SubmitAsync(text)));
+                _filesCallback = await View.AcceptFilesAsync(_zone, _picker, files =>
+                {
+                    _ = InvokeAsync(() => _attachments.AddAsync(Chat.Repo, files));
+                    return Task.CompletedTask;
+                });
             }
             catch (JSException)
             {
-                // Without the script Enter adds a line; the send button still works.
+                // Without the script Enter adds a line and files cannot be attached; the send button still works.
             }
         }
     }
 
+    private void OnAttachmentsChanged() => _ = InvokeAsync(StateHasChanged);
+
+    private bool CanSend(string text) => Enabled && _attachments.CanSend && (!string.IsNullOrWhiteSpace(text) || _attachments.Items.Count > 0);
+
     private async Task SubmitAsync(string text)
     {
-        // Enter while Claude works or with an empty box does nothing (the server would answer "busy").
-        if (!Enabled || Chat.Running || string.IsNullOrWhiteSpace(text))
+        // Enter while Claude works, while a file uploads or with nothing to send does nothing (the server would answer "busy").
+        if (Chat.Running || !CanSend(text))
         {
             return;
         }
 
+        var ids = _attachments.ReadyIds;
         _text = string.Empty;
         StateHasChanged();
-        await OnSend(text.Trim());
+        if (await OnSend(text.Trim(), ids))
+        {
+            await _attachments.ClearAsync();
+        }
     }
 }
