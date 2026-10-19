@@ -78,6 +78,12 @@ The approval tool is an MCP endpoint, `/mcp/approve`, reachable only from `127.0
 
 Paste (Ctrl+V of a screenshot or of files copied in Explorer), drop files on the message box, or use the paperclip. Each file shows as a chip above the box — pictures with a preview — and uploads at once; **Send** waits until every chip is uploaded, and a message may consist of files alone. Pasted screenshots are named `pasted-<yyyyMMdd-HHmmss>.png`.
 
+| Message | Direction | Payload |
+|---|---|---|
+| `chat.attach` → `chat.attached` | client → server → client | `{repo, id, name, size, offset, data, last}` → `{repo, id}`. `data` is base64url without padding, at most 16 KB raw per chunk. Only the last chunk is answered; a failed upload's last chunk gets its first error; offset 0 restarts the upload; an empty last chunk at the sent offset aborts it and frees the slot |
+| `chat.send` | client → server | gains optional `attachments: [id]` (ids of finished uploads; the text may then be empty) |
+| `prompt` event | server → client | gains optional `attachments: [{name, size}]` |
+
 - Up to 10 files per message, 20 MB each ("'name' is larger than 20 MB.", "At most 10 files per message."). A failed upload turns its chip red with the reason: remove it and attach the file again.
 - Files are stored on the home computer in `<DataDir>\attachments\<repo>\<id>\<name>` (`Attachments:Root`; in development `data\attachments`), outside the mirror: they never reach your folder or git. Claude gets their absolute paths after your text ("Attached files (read them with the Read tool): ...") and may read that folder without a card (`--add-dir`); pictures and PDFs are read with its Read tool.
 - Sent messages list their files (name and size) in the history. Attachments are deleted after 30 days, unfinished uploads after a day (checked when an upload starts, at most once a day); a resumed session keeps what Claude read. Sending a file deleted meanwhile says "An attachment has expired; attach it again." and keeps the chips.

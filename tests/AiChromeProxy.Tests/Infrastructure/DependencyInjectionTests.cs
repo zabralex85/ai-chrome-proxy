@@ -1,8 +1,12 @@
 using System.Globalization;
+using System.Text.Json;
 using AiChromeProxy.Application;
 using AiChromeProxy.Application.Chat;
 using AiChromeProxy.Application.Sync;
 using AiChromeProxy.Application.Transport;
+using AiChromeProxy.Domain;
+using AiChromeProxy.Domain.Chat;
+using AiChromeProxy.Domain.Sync;
 using AiChromeProxy.Infrastructure;
 using AiChromeProxy.Infrastructure.Chat;
 using AiChromeProxy.Infrastructure.Projects;
@@ -36,6 +40,26 @@ public sealed class DependencyInjectionTests
 		{
 			Assert.NotNull(provider.GetRequiredService<CloudflareAccessTokenValidator>());
 			Assert.NotNull(provider.GetRequiredService<EnvelopeRouter>());
+		}
+	}
+
+	[Fact]
+	public async Task ChatService_HasAttachmentsWired_AFinishedUploadIsNotRefusedAsExpired()
+	{
+		var mirror = Path.Combine(TempRootCleanup.Root, "di-mirror");
+		Directory.CreateDirectory(Path.Combine(mirror, "repo"));
+		using (var provider = new ServiceCollection().AddLogging().AddApplication().AddInfrastructure(Config(("Agent:Command", Path.Combine(TempRootCleanup.Root, "no-such-agent")))).BuildServiceProvider(Strict))
+		{
+			var id = Guid.NewGuid().ToString("N");
+			provider.GetRequiredService<ChatAttachments>().Append(new ChatAttachPayload("repo", id, "a.txt", 1, 0, SyncData.Encode([1]), true));
+			var context = new EnvelopeContext("c1", null, (_, _) => Task.CompletedTask);
+
+			var reply = await provider.GetRequiredService<EnvelopeRouter>().RouteAsync(
+				Envelope.Create(MessageTypes.ChatSend, new ChatSendPayload("repo", null, "hi", [id])), context, TestContext.Current.CancellationToken);
+
+			// A run may not start without a real agent; only the "expired" refusal would mean the attachments are not wired.
+			var message = reply!.Type == MessageTypes.Error ? reply.Payload.Deserialize<ErrorPayload>(JsonSerializerOptions.Web)!.Message : null;
+			Assert.NotEqual(ChatAttachments.Expired, message);
 		}
 	}
 

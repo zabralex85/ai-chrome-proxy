@@ -523,7 +523,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 			session = GetOrCreate(e.SessionId);
 
 			// The prompt of the message this page just sent: its session is the draft on screen.
-			if (live && e.Kind == ChatEventKinds.Prompt && _current.IsDraft && _awaitingText is { } sent && e.Text is { } prompt && sent.StartsWith(prompt, StringComparison.Ordinal))
+			if (live && e.Kind == ChatEventKinds.Prompt && _current.IsDraft && _awaitingText is { } sent && e.Text is { } prompt && (prompt.Length == 0 ? sent.Length == 0 : sent.StartsWith(prompt, StringComparison.Ordinal)))
 			{
 				_current = session;
 				session.Loaded = true;

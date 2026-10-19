@@ -66,7 +66,25 @@ public sealed class FileSystemAttachmentStore(IOptions<AttachmentsOptions> optio
 		}
 
 		var deleted = 0;
-		foreach (var folder in Directory.EnumerateDirectories(_root).SelectMany(Directory.EnumerateDirectories).ToList())
+		foreach (var repoFolder in Directory.EnumerateDirectories(_root).ToList())
+		{
+			try
+			{
+				deleted += SweepRepo(repoFolder, olderThan, partsOlderThan);
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+			{
+				// A repo folder that cannot be listed is skipped; the next sweep tries again.
+			}
+		}
+
+		return deleted;
+	}
+
+	private static int SweepRepo(string repoFolder, DateTimeOffset olderThan, DateTimeOffset partsOlderThan)
+	{
+		var deleted = 0;
+		foreach (var folder in Directory.EnumerateDirectories(repoFolder).ToList())
 		{
 			try
 			{

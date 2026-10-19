@@ -151,6 +151,7 @@ public sealed class ChatAttachmentsTests : IDisposable
 		Assert.True(attach[1].Last);
 		Assert.Equal(string.Empty, attach[1].Data);
 		Assert.Equal(ChatLimits.AttachmentChunkSize, attach[1].Offset);
+		Assert.False(Directory.Exists(Path.Combine(_server.AttachmentsRoot, "repo", attach[0].Id)));
 	}
 
 	[Fact]

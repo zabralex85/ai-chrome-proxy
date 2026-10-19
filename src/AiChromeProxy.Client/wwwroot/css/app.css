@@ -1001,7 +1001,7 @@ dd .state-error {
 
 .msg-attachments {
     justify-content: flex-end;
-    margin-top: -4px;
+    margin-top: 4px;
 }
 
 .attachment,
