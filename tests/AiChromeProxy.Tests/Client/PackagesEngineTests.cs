@@ -3,6 +3,7 @@ using AiChromeProxy.Client.Packages;
 using AiChromeProxy.Client.Sync;
 using AiChromeProxy.Client.Transport;
 using AiChromeProxy.Domain;
+using AiChromeProxy.Domain.Packages;
 using Microsoft.JSInterop;
 
 namespace AiChromeProxy.Tests.Client;
@@ -92,6 +93,18 @@ public sealed class PackagesEngineTests : IDisposable
 
 		Assert.Equal([new ProjectRow("App.csproj", "Could not read obj/project.assets.json")], _engine.Projects);
 		Assert.Empty(_engine.Packages);
+	}
+
+	[Fact]
+	public async Task AnAssetsFileWithATimeButNoText_CouldNotBeRead()
+	{
+		_repo.Write("App.csproj", "<Project />");
+		_repo.Modified["obj/project.assets.json"] = 5;
+		await ReadyAsync();
+
+		await _engine.RefreshAsync(Ct);
+
+		Assert.Equal([new ProjectRow("App.csproj", "Could not read obj/project.assets.json")], _engine.Projects);
 	}
 
 	[Fact]
@@ -186,7 +199,87 @@ public sealed class PackagesEngineTests : IDisposable
 
 		await _engine.RefreshAsync(Ct);
 
-		Assert.Equal(new PackageRow("corp.a", "1.2.3", PackageState.TooLarge, "Too large to upload (300 MB > 250 MB)"), Assert.Single(_engine.Packages));
+		Assert.Equal(new PackageRow("corp.a", "1.2.3", PackageState.TooLarge, "Too large to upload (300.1 MB > 250 MB)"), Assert.Single(_engine.Packages));
+	}
+
+	[Fact]
+	public async Task JustOverTwoHundredFiftyMegabytes_ShowsTheSizeRoundedUp()
+	{
+		Assets("App.csproj", ("Corp.A", "1.2.3"));
+		var files = Private("corp.a", "1.2.3", nupkgSize: 10);
+		_cache.Sizes["corp.a/1.2.3/corp.a.1.2.3.nupkg"] = PackageLimits.MaxPackageBytes + 1 - files.Where(f => !f.Key.EndsWith(".nupkg", StringComparison.Ordinal)).Sum(f => f.Value.Length);
+		await ReadyAsync();
+
+		await _engine.RefreshAsync(Ct);
+
+		Assert.Equal("Too large to upload (250.1 MB > 250 MB)", Assert.Single(_engine.Packages).Text);
+	}
+
+	[Fact]
+	public async Task APackageOfEmptyFiles_IsUploaded()
+	{
+		Assets("App.csproj", ("Corp.E", "1.0.0"));
+		_cache.Files["corp.e/1.0.0/corp.e.1.0.0.nupkg"] = [];
+		_cache.Write("corp.e/1.0.0/.nupkg.metadata", Metadata([], Corp));
+		_cache.Sizes["corp.e/1.0.0/.nupkg.metadata"] = 0;
+		foreach (var i in Enumerable.Range(0, 20))
+		{
+			_cache.Files[$"corp.e/1.0.0/content/f{i:00}.txt"] = [];
+		}
+
+		await ReadyAsync();
+
+		await _engine.RefreshAsync(Ct);
+
+		Assert.Equal("On the server", Assert.Single(_engine.Packages).Text);
+	}
+
+	[Fact]
+	public async Task Changed_IsRaisedAsEachPackageFinishes()
+	{
+		Assets("App.csproj", ("Corp.A", "1.2.3"), ("Corp.B", "1.0.0"));
+		Private("corp.a", "1.2.3", nupkgSize: 10);
+		Private("corp.b", "1.0.0", nupkgSize: 10);
+		await ReadyAsync();
+		var seen = new List<IReadOnlyList<PackageRow>>();
+		_engine.Changed += () => seen.Add(_engine.Packages);
+
+		await _engine.RefreshAsync(Ct);
+
+		Assert.Contains(seen, rows => rows is [{ State: PackageState.OnServer }, { State: PackageState.Uploading }]);
+		Assert.Contains(seen, rows => rows is [{ State: PackageState.Uploading }, { State: PackageState.Uploading }]);
+	}
+
+	[Fact]
+	public async Task RemovingTheSource_MidPass_StopsUploading()
+	{
+		Assets("App.csproj", ("Corp.A", "1.2.3"), ("Corp.B", "1.0.0"));
+		Private("corp.a", "1.2.3", nupkgSize: 10);
+		Private("corp.b", "1.0.0", nupkgSize: 10);
+		await ReadyAsync();
+		_cache.OnList = () => _engine.RemoveSourceAsync();
+
+		await _engine.RefreshAsync(Ct);
+
+		Assert.All(_engine.Packages, r => Assert.Equal("Not on this computer", r.Text));
+		Assert.DoesNotContain(_server.Transport.Sent, e => e.Type == MessageTypes.PackagesNuGetBegin);
+	}
+
+	[Fact]
+	public async Task NotFound_IsTriedAgain_AndReadyOnceTheCacheReads()
+	{
+		Assets("App.csproj", ("Corp.A", "1.2.3"));
+		Private("corp.a", "1.2.3", nupkgSize: 10);
+		await ReadyAsync();
+		_cache.ReadFailure = new JSException("NotFoundError: gone.");
+		await _engine.RefreshAsync(Ct);
+		Assert.Equal(SourceState.NotFound, _engine.Source);
+
+		_cache.ReadFailure = null;
+		await _engine.RefreshAsync(Ct);
+
+		Assert.Equal(SourceState.Ready, _engine.Source);
+		Assert.Equal(PackageState.OnServer, Assert.Single(_engine.Packages).State);
 	}
 
 	[Fact]
@@ -247,6 +340,7 @@ public sealed class PackagesEngineTests : IDisposable
 		await _engine.RefreshAsync(Ct);
 		Assert.Equal(SourceState.None, _engine.Source);
 		Assert.Equal("Not on this computer", Assert.Single(_engine.Packages).Text);
+		Assert.Equal(string.Empty, _engine.Summary);
 
 		var changes = 0;
 		_engine.Changed += () => changes++;

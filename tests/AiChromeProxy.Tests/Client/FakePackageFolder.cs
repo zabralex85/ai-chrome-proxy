@@ -28,6 +28,9 @@ public sealed class FakePackageFolder : IPackageFolder
 
 	public bool Forgotten { get; private set; }
 
+	/// <summary>Runs at the start of every <see cref="ListAsync"/> (e.g. the user removing the source mid-pass).</summary>
+	public Func<Task>? OnList { get; set; }
+
 	public void Write(string path, string text) => Files[path] = Encoding.UTF8.GetBytes(text);
 
 	public Task<string?> PickAsync()
@@ -63,13 +66,18 @@ public sealed class FakePackageFolder : IPackageFolder
 		return Task.FromResult(Files.TryGetValue(path, out var b) ? Encoding.UTF8.GetString(b) : null);
 	}
 
-	public Task<IReadOnlyList<FileMeta>?> ListAsync(string folder)
+	public async Task<IReadOnlyList<FileMeta>?> ListAsync(string folder)
 	{
+		if (OnList is not null)
+		{
+			await OnList();
+		}
+
 		Check();
 		var prefix = folder + "/";
 		IReadOnlyList<FileMeta> files = [.. Files.Where(f => f.Key.StartsWith(prefix, StringComparison.Ordinal))
 			.Select(f => new FileMeta(f.Key[prefix.Length..], Sizes.TryGetValue(f.Key, out var size) ? size : f.Value.Length, 0))];
-		return Task.FromResult(files.Count == 0 ? null : files);
+		return files.Count == 0 ? null : files;
 	}
 
 	public Task<byte[]> ReadChunkAsync(string path, long offset, int length)

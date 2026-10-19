@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using AiChromeProxy.Client.Chat;
 using AiChromeProxy.Client.Shell;
@@ -69,11 +70,16 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 		}
 	}
 
-	/// <summary>Gets "{n} private packages ready on the server · {m} missing" (missing: neither on the server nor public), or "" without such packages.</summary>
+	/// <summary>Gets "{n} private packages ready on the server · {m} missing" (missing: neither on the server nor public), or "" without such packages or a ready source.</summary>
 	public string Summary
 	{
 		get
 		{
+			if (Source != SourceState.Ready)
+			{
+				return string.Empty;
+			}
+
 			var rows = Packages;
 			var ready = rows.Count(r => r.State == PackageState.OnServer);
 			var missing = rows.Count(r => r.State is not (PackageState.OnServer or PackageState.Public));
@@ -87,6 +93,7 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 	{
 		var grant = await cache.RestoreAsync();
 		SetSource(grant is null ? SourceState.None : grant.Granted ? SourceState.Ready : SourceState.NeedsPermission, grant?.Name);
+		sync.Changed -= OnSyncChanged;
 		sync.Changed += OnSyncChanged;
 		Changed?.Invoke();
 	}
@@ -175,11 +182,14 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 
 		// 2.-4. The repo's packages, classified by the cache.
 		var refs = await ReadProjectsAsync(repoName);
-		var candidates = Source == SourceState.Ready ? await ClassifyAsync(refs) : [];
+		// A source not found is tried again: the folder may be back.
+		var candidates = Source is SourceState.Ready or SourceState.NotFound ? await ClassifyAsync(refs) : [];
 		if (Source != SourceState.Ready)
 		{
 			SetRows(NotOnComputer(refs));
 		}
+
+		Changed?.Invoke();
 
 		// 5.-6. Which private ones the server lacks; those are uploaded one at a time.
 		foreach (var (package, hash) in await MissingAsync(candidates, ct))
@@ -190,6 +200,7 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 			}
 
 			await UploadAsync(package, hash, ct);
+			Changed?.Invoke();
 		}
 
 		// 7.
@@ -240,7 +251,7 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 
 			if (await repo.ReadTextAsync(path) is not { } text)
 			{
-				return ([], NoRestore);
+				return ([], AssetsUnreadable);
 			}
 
 			var refs = ProjectAssets.Parse(text);
@@ -277,6 +288,11 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 				await SourceLostAsync();
 				SetRows(NotOnComputer(refs));
 				return [];
+			}
+
+			if (Source == SourceState.NotFound)
+			{
+				SetSource(SourceState.Ready, SourceName, newEpoch: false);
 			}
 
 			if (text is null)
@@ -340,6 +356,7 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 			}
 		}
 
+		Changed?.Invoke();
 		return missing;
 	}
 
@@ -351,6 +368,11 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 		try
 		{
 			var listed = await cache.ListAsync(folder);
+			if (!IsCurrentPass())
+			{
+				return;
+			}
+
 			if (listed is null || !listed.Any(f => f.Path == nupkg))
 			{
 				SetRow(Row(package, PackageState.NotOnComputer, "Not on this computer"));
@@ -366,7 +388,9 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 
 			if (size > PackageLimits.MaxPackageBytes)
 			{
-				SetRow(Row(package, PackageState.TooLarge, $"Too large to upload ({Format.Bytes(size)} > 250 MB)"));
+				// Rounded up, so it never reads "250 MB > 250 MB".
+				var megabytes = Math.Ceiling(size * 10.0 / (1024 * 1024)) / 10;
+				SetRow(Row(package, PackageState.TooLarge, string.Create(CultureInfo.InvariantCulture, $"Too large to upload ({megabytes:0.#} MB > 250 MB)")));
 				return;
 			}
 
@@ -380,6 +404,11 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 				var file = files[i];
 				for (long offset = 0; ; offset += PackageLimits.ChunkSize)
 				{
+					if (!IsCurrentPass())
+					{
+						return; // the server drops the unfinished upload on the next begin or when the connection closes
+					}
+
 					var length = (int)Math.Min(PackageLimits.ChunkSize, file.Size - offset);
 					var data = length == 0 ? [] : await cache.ReadChunkAsync($"{folder}/{file.Path}", offset, length);
 					if (data.Length != length)
@@ -402,7 +431,7 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 					sent += length;
 					if (++chunks % ProgressEvery == 0)
 					{
-						SetRow(Row(package, PackageState.Uploading, $"Uploading {sent * 100 / size}%"));
+						SetRow(Row(package, PackageState.Uploading, $"Uploading {sent * 100 / Math.Max(size, 1)}%"));
 						Changed?.Invoke();
 					}
 
