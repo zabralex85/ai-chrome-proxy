@@ -16,6 +16,9 @@ public sealed record DataDirectory(string Root)
 	/// <summary>Default <c>Mirror:Root</c> when the Server runs with a data directory.</summary>
 	public string Mirror => Path.Combine(Root, "mirror");
 
+	/// <summary>Default <c>Attachments:Root</c> when the Server runs with a data directory.</summary>
+	public string Attachments => Path.Combine(Root, "attachments");
+
 	/// <summary>The service's copy of the Server (synced from the tray's <c>current\server</c>), outside the app folder so <c>Setup.exe</c> can replace it.</summary>
 	public string Server => Path.Combine(Root, "server");
 
