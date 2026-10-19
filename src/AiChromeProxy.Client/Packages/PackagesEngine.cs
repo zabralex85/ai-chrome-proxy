@@ -15,12 +15,16 @@ namespace AiChromeProxy.Client.Packages;
 /// by its <c>.nupkg.metadata</c> in the NuGet cache folder of this browser, asks the server which private ones it lacks (<c>packages.nuget.have</c>) and
 /// uploads those one at a time (<c>packages.nuget.begin</c> with the file count and total size, then 16 KB chunks, each file's first one with its path
 /// and size; only the last one waits for its reply). Nothing is ever written anywhere
-/// on this computer. UI-free: the view reads the properties on <see cref="Changed"/>.
+/// on this computer. A package whose upload failed waits <see cref="RetryAfter"/> before it is tried again, unless its <c>contentHash</c> changed or the
+/// source was added, allowed or removed. UI-free: the view reads the properties on <see cref="Changed"/>.
 /// </summary>
-public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolderAccess repo, IPackageFolder cache)
+public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolderAccess repo, IPackageFolder cache, TimeProvider time)
 {
 	public const string NoRestore = "No restore yet";
 	public const string AssetsUnreadable = "Could not read obj/project.assets.json";
+
+	/// <summary>How long a package whose upload failed is left alone (its row keeps the failure).</summary>
+	public static readonly TimeSpan RetryAfter = TimeSpan.FromMinutes(5);
 
 	/// <summary>Progress is shown every this many chunks (256 KB), not on every chunk.</summary>
 	private const int ProgressEvery = 16;
@@ -34,6 +38,9 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 	private IReadOnlyList<ProjectRow> _projects = [];
 	private Dictionary<PackageRef, PackageRow> _rows = [];
 	private DateTimeOffset? _lastSync;
+
+	/// <summary>Packages whose upload failed: when, for which <c>contentHash</c>, and the row shown meanwhile (cleared on a source change).</summary>
+	private Dictionary<PackageRef, (DateTimeOffset At, string Hash, PackageRow Row)> _failures = [];
 
 	/// <summary>Changes with every source change: a pass started before it no longer writes rows.</summary>
 	private int _sourceEpoch;
@@ -150,7 +157,10 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 		Changed?.Invoke();
 	}
 
-	/// <summary>One pass over the repo's packages; returns at once when a pass is already running.</summary>
+	/// <summary>
+	/// One pass over the repo's packages; returns at once when a pass is already running. A source change during the pass stops it and runs one more
+	/// right after, so the rows do not wait for the next sync pass.
+	/// </summary>
 	/// <param name="ct">Stops the pass.</param>
 	/// <returns>A task that completes when the pass is done.</returns>
 	public async Task RefreshAsync(CancellationToken ct = default)
@@ -162,7 +172,16 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 
 		try
 		{
-			await PassAsync(ct);
+			do
+			{
+				lock (_gate)
+				{
+					_passEpoch = _sourceEpoch;
+				}
+
+				await PassAsync(ct);
+			}
+			while (!IsCurrentPass() && !ct.IsCancellationRequested);
 		}
 		finally
 		{
@@ -183,11 +202,6 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 		if (sync.Repo is not { } repoName || transport.State != TransportState.Connected)
 		{
 			return;
-		}
-
-		lock (_gate)
-		{
-			_passEpoch = _sourceEpoch;
 		}
 
 		// 2.-4. The repo's packages, classified by the cache.
@@ -317,6 +331,10 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 			{
 				rows[package] = Row(package, PackageState.Public, "Public");
 			}
+			else if (Failure(package, metadata.ContentHash) is { } failed)
+			{
+				rows[package] = failed;
+			}
 			else
 			{
 				// Shown as before until the server answers.
@@ -392,7 +410,8 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 			var size = listed.Sum(f => f.Size);
 			if (listed.Count > PackageLimits.MaxPackageFiles)
 			{
-				SetRow(Row(package, PackageState.TooLarge, $"Too large to upload ({Format.Count(listed.Count)} files > {Format.Count(PackageLimits.MaxPackageFiles)})"));
+				// The browser stops listing after one file too many, so the real count is unknown.
+				SetRow(Row(package, PackageState.TooLarge, $"Too large to upload (more than {Format.Count(PackageLimits.MaxPackageFiles)} files)"));
 				return;
 			}
 
@@ -433,6 +452,11 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 					{
 						await transport.RequestAsync(chunk, ChatEngine.RequestTimeout, ct);
 						SetRow(Row(package, PackageState.OnServer, "On the server"));
+						lock (_gate)
+						{
+							_failures.Remove(package);
+						}
+
 						return;
 					}
 
@@ -454,7 +478,25 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 		}
 		catch (Exception ex) when (!ct.IsCancellationRequested)
 		{
-			SetRow(Row(package, PackageState.Failed, $"Failed: {Describe(ex)}"));
+			var row = Row(package, PackageState.Failed, $"Failed: {Describe(ex)}");
+			SetRow(row);
+			lock (_gate)
+			{
+				// A lost connection is not the package's fault: the pass after the reconnect tries it again.
+				if (transport.State == TransportState.Connected && _passEpoch == _sourceEpoch)
+				{
+					_failures[package] = (time.GetUtcNow(), hash, row);
+				}
+			}
+		}
+	}
+
+	/// <summary>The failure row of a package still waiting out <see cref="RetryAfter"/> with the same <c>contentHash</c>, or null to try it now.</summary>
+	private PackageRow? Failure(PackageRef package, string hash)
+	{
+		lock (_gate)
+		{
+			return _failures.TryGetValue(package, out var failure) && failure.Hash == hash && time.GetUtcNow() - failure.At < RetryAfter ? failure.Row : null;
 		}
 	}
 
@@ -501,6 +543,7 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 			if (newEpoch)
 			{
 				_sourceEpoch++;
+				_failures = [];
 			}
 		}
 	}

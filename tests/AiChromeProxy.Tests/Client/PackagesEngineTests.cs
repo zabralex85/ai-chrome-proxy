@@ -4,6 +4,7 @@ using AiChromeProxy.Client.Sync;
 using AiChromeProxy.Client.Transport;
 using AiChromeProxy.Domain;
 using AiChromeProxy.Domain.Packages;
+using Microsoft.Extensions.Time.Testing;
 using Microsoft.JSInterop;
 
 namespace AiChromeProxy.Tests.Client;
@@ -17,13 +18,14 @@ public sealed class PackagesEngineTests : IDisposable
 	private readonly LoopbackServer _server = new();
 	private readonly FakeFolder _repo = new();
 	private readonly FakePackageFolder _cache = new() { Remembered = true };
+	private readonly FakeTimeProvider _time = new(new DateTimeOffset(2026, 10, 19, 12, 0, 0, TimeSpan.Zero));
 	private readonly SyncEngine _sync;
 	private readonly PackagesEngine _engine;
 
 	public PackagesEngineTests()
 	{
 		_sync = new SyncEngine(_server.Transport, _repo, TimeProvider.System);
-		_engine = new PackagesEngine(_server.Transport, _sync, _repo, _cache);
+		_engine = new PackagesEngine(_server.Transport, _sync, _repo, _cache, _time);
 	}
 
 	private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -185,8 +187,109 @@ public sealed class PackagesEngineTests : IDisposable
 
 		var row = Assert.Single(_engine.Packages);
 		Assert.Equal(PackageState.TooLarge, row.State);
-		Assert.Equal("Too large to upload (2 004 files > 2 000)", row.Text);
+		Assert.Equal("Too large to upload (more than 2 000 files)", row.Text);
 		Assert.DoesNotContain(_server.Transport.Sent, e => e.Type == MessageTypes.PackagesNuGetBegin);
+	}
+
+	[Fact]
+	public async Task AFailedUpload_WaitsFiveMinutes_KeepingItsRow_ThenIsTriedAgain()
+	{
+		Assets("App.csproj", ("Corp.A", "1.2.3"));
+		Private("corp.a", "1.2.3", nupkgSize: 10);
+		_cache.Sizes["corp.a/1.2.3/lib/net10.0/a.dll"] = 50_000;
+		await ReadyAsync();
+		await _engine.RefreshAsync(Ct);
+		_cache.Sizes.Clear();
+
+		_time.Advance(PackagesEngine.RetryAfter - TimeSpan.FromSeconds(1));
+		await _engine.RefreshAsync(Ct);
+		Assert.Equal("Failed: The package changed while it was uploaded.", Assert.Single(_engine.Packages).Text);
+		Assert.Equal(1, Begins());
+
+		_time.Advance(TimeSpan.FromSeconds(1));
+		await _engine.RefreshAsync(Ct);
+		Assert.Equal(PackageState.OnServer, Assert.Single(_engine.Packages).State);
+		Assert.Equal(2, Begins());
+	}
+
+	[Fact]
+	public async Task AFailedUpload_IsTriedAgainAtOnce_AfterTheSourceIsAddedAgain()
+	{
+		Assets("App.csproj", ("Corp.A", "1.2.3"));
+		Private("corp.a", "1.2.3", nupkgSize: 10);
+		_cache.Sizes["corp.a/1.2.3/lib/net10.0/a.dll"] = 50_000;
+		await ReadyAsync();
+		await _engine.RefreshAsync(Ct);
+		_cache.Sizes.Clear();
+
+		await _engine.AddSourceAsync();
+
+		Assert.Equal(PackageState.OnServer, Assert.Single(_engine.Packages).State);
+	}
+
+	[Fact]
+	public async Task AFailedUpload_IsTriedAgainAtOnce_AfterAllow()
+	{
+		Assets("App.csproj", ("Corp.A", "1.2.3"));
+		Private("corp.a", "1.2.3", nupkgSize: 10);
+		_cache.Sizes["corp.a/1.2.3/lib/net10.0/a.dll"] = 50_000;
+		await ReadyAsync();
+		await _engine.RefreshAsync(Ct);
+		_cache.Sizes.Clear();
+
+		await _engine.AllowAsync();
+
+		Assert.Equal(PackageState.OnServer, Assert.Single(_engine.Packages).State);
+	}
+
+	[Fact]
+	public async Task AnUploadLostWithTheConnection_IsTriedAgainOnTheNextPass()
+	{
+		Assets("App.csproj", ("Corp.A", "1.2.3"));
+		Private("corp.a", "1.2.3", nupkgSize: 10);
+		await ReadyAsync();
+		var reply = _server.Transport.Reply!;
+		_server.Transport.Reply = e =>
+		{
+			if (e.Type == MessageTypes.PackagesNuGetChunk)
+			{
+				_server.Transport.SetState(TransportState.Reconnecting);
+				throw new InvalidOperationException("gone");
+			}
+
+			return reply(e);
+		};
+		await _engine.RefreshAsync(Ct);
+		Assert.Equal($"Failed: {SyncEngine.ConnectionLost}", Assert.Single(_engine.Packages).Text);
+		_server.Transport.Reply = reply;
+		_server.Reconnect();
+
+		// The sync pass after the reconnect starts the next packages pass.
+		await _sync.SyncOnceAsync(Ct);
+
+		await UntilAsync(() => _engine.Packages is [{ State: PackageState.OnServer }]);
+	}
+
+	[Fact]
+	public async Task ASourceChange_DuringAPass_RunsOneMorePass()
+	{
+		Assets("App.csproj", ("Corp.A", "1.2.3"));
+		Private("corp.a", "1.2.3", nupkgSize: 10);
+		await ReadyAsync();
+		var picked = false;
+		_cache.OnList = async () =>
+		{
+			if (!picked)
+			{
+				picked = true;
+				await _engine.AddSourceAsync();
+			}
+		};
+
+		await _engine.RefreshAsync(Ct);
+
+		Assert.True(picked);
+		Assert.Equal(PackageState.OnServer, Assert.Single(_engine.Packages).State);
 	}
 
 	[Fact]
@@ -468,6 +571,8 @@ public sealed class PackagesEngineTests : IDisposable
 			await Task.Delay(10, Ct);
 		}
 	}
+
+	private int Begins() => _server.Transport.Sent.Count(e => e.Type == MessageTypes.PackagesNuGetBegin);
 
 	/// <summary>A project at <paramref name="project"/> whose <c>obj/project.assets.json</c> lists the packages and a project reference.</summary>
 	private void Assets(string project, params (string Id, string Version)[] packages)
