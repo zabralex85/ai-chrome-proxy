@@ -8,14 +8,14 @@ public sealed class FileSystemAttachmentStore(IOptions<AttachmentsOptions> optio
 {
 	private const string PartSuffix = ".part";
 
-	private readonly string _root = Path.GetFullPath(options.Value.Root);
+	private readonly string _root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(options.Value.Root));
 
-	public string RepoFolder(string repo) => Under(Path.Combine(_root, repo));
+	public string RepoFolder(string repo) => Child(_root, repo);
 
 	public void Begin(string repo, string id, string name)
 	{
 		var folder = Folder(repo, id);
-		var part = Under(Path.Combine(folder, name + PartSuffix));
+		var part = Child(folder, name + PartSuffix);
 		if (Directory.Exists(folder))
 		{
 			Directory.Delete(folder, recursive: true);
@@ -27,7 +27,7 @@ public sealed class FileSystemAttachmentStore(IOptions<AttachmentsOptions> optio
 
 	public long Append(string repo, string id, string name, byte[] data)
 	{
-		using (var stream = new FileStream(Under(Path.Combine(Folder(repo, id), name + PartSuffix)), FileMode.Append, FileAccess.Write, FileShare.None))
+		using (var stream = new FileStream(Child(Folder(repo, id), name + PartSuffix), FileMode.Append, FileAccess.Write, FileShare.None))
 		{
 			stream.Write(data);
 			return stream.Length;
@@ -37,7 +37,7 @@ public sealed class FileSystemAttachmentStore(IOptions<AttachmentsOptions> optio
 	public void Commit(string repo, string id, string name)
 	{
 		var folder = Folder(repo, id);
-		File.Move(Under(Path.Combine(folder, name + PartSuffix)), Under(Path.Combine(folder, name)));
+		File.Move(Child(folder, name + PartSuffix), Child(folder, name));
 	}
 
 	public StoredAttachment? Find(string repo, string id)
@@ -88,14 +88,15 @@ public sealed class FileSystemAttachmentStore(IOptions<AttachmentsOptions> optio
 		return deleted;
 	}
 
-	private string Folder(string repo, string id) => Under(Path.Combine(_root, repo, id));
+	private string Folder(string repo, string id) => Child(Child(_root, repo), id);
 
-	private string Under(string path)
+	// One path segment directly inside parent: rejects "", ".", "..", and anything with separators.
+	private string Child(string parent, string segment)
 	{
-		var full = Path.GetFullPath(path);
-		if (!full.StartsWith(_root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+		var full = Path.GetFullPath(Path.Combine(parent, segment));
+		if (!string.Equals(Path.GetDirectoryName(full), parent, StringComparison.OrdinalIgnoreCase))
 		{
-			throw new ArgumentException("The path leaves the attachments root.", nameof(path));
+			throw new ArgumentException("The path is not directly inside its parent folder.", nameof(segment));
 		}
 
 		return full;

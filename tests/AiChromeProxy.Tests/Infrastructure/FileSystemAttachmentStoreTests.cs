@@ -89,6 +89,58 @@ public sealed class FileSystemAttachmentStoreTests : IDisposable
 		Assert.True(Directory.Exists(freshPart));
 	}
 
+	[Theory]
+	[InlineData("")]
+	[InlineData(".")]
+	[InlineData("a\\b")]
+	public void BadIds_Throw(string id)
+	{
+		Assert.Throws<ArgumentException>(() => _store.Begin("repo", id, "a.txt"));
+		Assert.Throws<ArgumentException>(() => _store.Find("repo", id));
+		Assert.Throws<ArgumentException>(() => _store.RepoFolder("a\\b"));
+	}
+
+	[Fact]
+	public void Name_CannotReachASiblingAttachmentFolder()
+	{
+		const string Other = "ffffffffffffffffffffffffffffffff";
+		_store.Begin("repo", Other, "keep.txt");
+		_store.Begin("repo", Id, "a.txt");
+
+		Assert.Throws<ArgumentException>(() => _store.Begin("repo", Id, "..\\" + Other + "\\x"));
+		Assert.Throws<ArgumentException>(() => _store.Append("repo", Id, "..\\" + Other + "\\x", [1]));
+		Assert.Throws<ArgumentException>(() => _store.Commit("repo", Id, "sub\\x"));
+		Assert.Equal(["keep.txt.part"], Directory.GetFiles(Path.Combine(_root, "repo", Other)).Select(Path.GetFileName));
+	}
+
+	[Fact]
+	public void RootWithTrailingSeparator_RoundTrips()
+	{
+		var store = new FileSystemAttachmentStore(Options.Create(new AttachmentsOptions { Root = _root + Path.DirectorySeparatorChar }));
+
+		store.Begin("repo", Id, "a.txt");
+		Assert.Equal(1, store.Append("repo", Id, "a.txt", [7]));
+		store.Commit("repo", Id, "a.txt");
+
+		Assert.Equal(Path.Combine(_root, "repo", Id, "a.txt"), store.Find("repo", Id)!.Path);
+	}
+
+	[Fact]
+	public void Sweep_SkipsAFolderHeldOpen_AndDeletesTheRest()
+	{
+		var now = new DateTimeOffset(2026, 10, 19, 12, 0, 0, TimeSpan.Zero);
+		var held = Finished("11111111111111111111111111111111", now.AddDays(-31));
+		var gone = Finished("22222222222222222222222222222222", now.AddDays(-31));
+
+		using (new FileStream(Path.Combine(held, "a.txt"), FileMode.Open, FileAccess.Read, FileShare.None))
+		{
+			Assert.Equal(1, _store.Sweep(now.AddDays(-30), now.AddDays(-1)));
+		}
+
+		Assert.True(Directory.Exists(held));
+		Assert.False(Directory.Exists(gone));
+	}
+
 	[Fact]
 	public void Sweep_WithoutARoot_DeletesNothing() => Assert.Equal(0, _store.Sweep(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow));
 
