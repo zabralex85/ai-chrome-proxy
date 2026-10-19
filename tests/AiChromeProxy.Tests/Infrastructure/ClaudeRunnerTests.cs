@@ -203,8 +203,9 @@ public sealed class ClaudeRunnerTests : IAsyncDisposable
 			Assert.Equal(0, await process.Exited);
 		}
 
-		var env = await File.ReadAllLinesAsync(envFile, TestContext.Current.CancellationToken);
-		Assert.Equal(["RestoreIgnoreFailedSources=", "NuGetAudit=", "WarningsNotAsErrors="], env[1..]);
+		// Exactly what this test process has (inherited unchanged), whatever the host sets.
+		string[] names = [PackageEnvironment.FallbackVariable, "RestoreIgnoreFailedSources", "NuGetAudit", "WarningsNotAsErrors"];
+		Assert.Equal(names.Select(n => $"{n}={Environment.GetEnvironmentVariable(n)}"), await File.ReadAllLinesAsync(envFile, TestContext.Current.CancellationToken));
 		var args = await File.ReadAllLinesAsync(argsFile, TestContext.Current.CancellationToken);
 		Assert.DoesNotContain(ClaudeArguments.PackagesHint, args[Array.IndexOf(args, "--append-system-prompt") + 1]);
 	}

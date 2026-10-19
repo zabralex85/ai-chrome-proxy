@@ -423,6 +423,12 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 				return;
 			}
 
+			// A path the server refuses fails here, before begin: nothing is sent (and no chunk can outgrow the 32 KB message limit).
+			if (listed.Select(f => SyncPath.GetError(f.Path)).FirstOrDefault(e => e is not null) is { } pathError)
+			{
+				throw new InvalidDataException(pathError);
+			}
+
 			List<FileMeta> files = [.. listed.OrderBy(f => f.Path == nupkg ? 0 : 1).ThenBy(f => f.Path, StringComparer.Ordinal)];
 			var begin = Envelope.Create(MessageTypes.PackagesNuGetBegin, new NuGetBeginPayload(package.Id, package.Version, hash, files.Count, size));
 			var uploadId = Read<NuGetBegunPayload>(await transport.RequestAsync(begin, ChatEngine.RequestTimeout, ct)).UploadId;

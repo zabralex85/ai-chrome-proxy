@@ -88,13 +88,17 @@ function isNotFound(e: unknown): boolean {
  * "Not on this computer". Reading one entry is what fails then; a lookup below the folder only says NotFoundError either way.
  */
 async function ensureRoot(): Promise<void> {
+    const entries = pickedRoot().entries();
     try {
-        await pickedRoot().entries().next();
+        await entries.next();
     } catch (e) {
         if (isNotFound(e)) {
             throw new Error('NotFoundError: the NuGet cache folder is gone.');
         }
         throw e;
+    } finally {
+        // Not left open: one is started for every package missing from the cache.
+        await entries.return?.(undefined);
     }
 }
 

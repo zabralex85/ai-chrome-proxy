@@ -4,6 +4,7 @@ using AiChromeProxy.Client.Sync;
 using AiChromeProxy.Client.Transport;
 using AiChromeProxy.Domain;
 using AiChromeProxy.Domain.Packages;
+using AiChromeProxy.Domain.Sync;
 using Microsoft.Extensions.Time.Testing;
 using Microsoft.JSInterop;
 
@@ -290,6 +291,25 @@ public sealed class PackagesEngineTests : IDisposable
 
 		Assert.True(picked);
 		Assert.Equal(PackageState.OnServer, Assert.Single(_engine.Packages).State);
+	}
+
+	[Fact]
+	public async Task AListedPathTheProtocolRefuses_Fails_AndNothingIsSent()
+	{
+		Assets("App.csproj", ("Corp.A", "1.2.3"));
+		Private("corp.a", "1.2.3", nupkgSize: 10);
+		var path = "content/" + new string('a', 300) + ".txt";
+		_cache.Files[$"corp.a/1.2.3/{path}"] = [1];
+		await ReadyAsync();
+
+		await _engine.RefreshAsync(Ct);
+
+		Assert.Equal(new PackageRow("corp.a", "1.2.3", PackageState.Failed, $"Failed: {SyncPath.GetError(path)}"), Assert.Single(_engine.Packages));
+		Assert.Equal(0, Begins());
+
+		// The usual back-off: not tried again on the next pass.
+		await _engine.RefreshAsync(Ct);
+		Assert.Equal(0, Begins());
 	}
 
 	[Fact]

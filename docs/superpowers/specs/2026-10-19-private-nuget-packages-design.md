@@ -34,7 +34,8 @@ A **Packages** tab next to **Explorer** in the left panel. The user adds a sourc
 | Case | Result |
 |---|---|
 | Package over 250 MB or 2 000 files | Row "Too large to upload (… MB > 250 MB)" or "Too large to upload (more than 2 000 files)"; not sent. |
-| `contentHash` mismatch on the server | Upload discarded; row "Changed while uploading; retried on the next pass". |
+| `contentHash` mismatch on the server | Upload discarded; row "Changed while uploading; retried on the next pass" (on the next pass if the package changed, otherwise after 5 minutes, like any failed upload). |
+| A listed file path the sync path rules refuse (e.g. over 260 characters) | Row "Failed: <the rule>" before `begin`; nothing is sent; back-off as below. |
 | Any failed upload (not too large) | Row "Failed: …" kept; the package is tried again after 5 minutes, or at once when its `.nupkg.metadata` `contentHash` changes or the source is added, allowed or removed (a lost connection is retried on the next pass). |
 | Source folder deleted or moved | Source row "Not found"; tried again on every pass, "Ready" once it reads again. |
 | Source added, allowed or removed during a pass | The pass stops writing rows and one more pass runs right after it. |

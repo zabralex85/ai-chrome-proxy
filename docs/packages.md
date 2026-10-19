@@ -12,7 +12,7 @@ Your project may use packages from a private feed that only your computer can re
 
 - Only **private** packages that the repo restored, at the exact versions. A package whose `.nupkg.metadata` names `https://api.nuget.org/v3/index.json` is public: the server downloads it from nuget.org like any restore, nothing is uploaded.
 - When your company feed proxies nuget.org (Artifactory, Azure Artifacts upstreams, ...), the metadata of every package names that feed, so every package counts as private and is uploaded, public ones included.
-- The `.nupkg` goes first, then the other files of the package folder. The server checks the SHA-512 of the `.nupkg` against `contentHash` of the metadata; a mismatch is reported as `Changed while uploading; retried on the next pass.`
+- The `.nupkg` goes first, then the other files of the package folder. The server checks the SHA-512 of the `.nupkg` against `contentHash` of the metadata; a mismatch is reported as `Changed while uploading; retried on the next pass.`: it is tried again on the next pass if the package changed (a new `contentHash`), otherwise after 5 minutes.
 - Packages the server already holds are not sent again.
 - A failed upload keeps its `Failed: ...` row and is tried again after 5 minutes, or at once when its `.nupkg.metadata` changes or you add, allow or remove the source.
 
@@ -55,3 +55,4 @@ Private packages of your client are copied to your home server. Check that your 
 - [ ] Pick the real `.nuget\packages`: the source row shows `Ready` and the rows match your restore.
 - [ ] A repo with a private package restores and builds in a Claude run.
 - [ ] `git status` on the mirror and in your folder shows no changed config.
+- [ ] Pick a real cache folder, delete or rename it, reload the page: the tab still works and the source shows `Not found`.
