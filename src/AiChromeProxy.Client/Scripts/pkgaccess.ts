@@ -19,6 +19,7 @@ const DB_NAME = 'aicp-packages';
 const HANDLES = 'handles';
 const KEY = 'nuget';
 const MAX_DEPTH = 64;
+const MAX_FILES = 2000; // PackageLimits.MaxPackageFiles
 
 let root: FileSystemDirectoryHandle | null = null;
 
@@ -116,6 +117,11 @@ async function fileAt(path: string): Promise<File | null> {
     }
 }
 
+/** Whether this browser can open folders: a secure context with the File System Access API (desktop Chrome, Edge). */
+export function supported(): boolean {
+    return isSecureContext && 'showDirectoryPicker' in window;
+}
+
 /** Shows the folder picker; returns the folder name, or null when the user cancelled. */
 export async function pick(): Promise<string | null> {
     let handle: FileSystemDirectoryHandle;
@@ -166,11 +172,16 @@ export async function list(folder: string): Promise<FileMeta[] | null> {
         return null;
     }
     const found: FileMeta[] = [];
+    // A listing is never silently partial: too deep throws (the engine shows "Failed: ..."). More than MAX_FILES files stops the walk with
+    // MAX_FILES + 1 entries, which the engine already reports as "Too large to upload (N files > 2 000)"; walking a huge package on is pointless.
     async function walk(dir: FileSystemDirectoryHandle, prefix: string, depth: number): Promise<void> {
         if (depth > MAX_DEPTH) {
-            return;
+            throw new Error(`'${folder}' is nested deeper than ${MAX_DEPTH} folders.`);
         }
         for await (const [name, handle] of dir.entries()) {
+            if (found.length > MAX_FILES) {
+                return;
+            }
             if (handle.kind === 'directory') {
                 await walk(handle as FileSystemDirectoryHandle, `${prefix}${name}/`, depth + 1);
             } else {

@@ -2,7 +2,14 @@
 @implements IDisposable
 
 <div class="packages" data-testid="packages-view">
-    @if (Engine.Source == SourceState.None)
+    @if (Engine.Source == SourceState.None && Unsupported)
+    {
+        <div class="empty-state" role="alert" data-testid="packages-unsupported">
+            <Icon Name="warning" Size="32" Class="empty-icon" />
+            <p>This browser cannot open folders; use Chrome or Edge.</p>
+        </div>
+    }
+    else if (Engine.Source == SourceState.None)
     {
         <div class="empty-state">
             <Icon Name="folder-open" Size="32" Class="empty-icon" />
@@ -46,6 +53,10 @@
 @code {
     [Parameter, EditorRequired]
     public PackagesEngine Engine { get; set; } = null!;
+
+    /// <summary>This browser lacks the File System Access API (the sync engine found out), so no folder can be added.</summary>
+    [Parameter]
+    public bool Unsupported { get; set; }
 
     public void Dispose() => Engine.Changed -= OnChanged;
 

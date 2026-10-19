@@ -1,8 +1,8 @@
-@using AiChromeProxy.Client.Packages
 @page "/"
 @using System.Diagnostics
 @using AiChromeProxy.Client.Chat
 @using AiChromeProxy.Client.Navigator
+@using AiChromeProxy.Client.Packages
 @using AiChromeProxy.Client.Sync
 @using AiChromeProxy.Client.Transport
 @using AiChromeProxy.Domain
@@ -108,9 +108,16 @@
         _ = LoadUserAsync();
         await Engine.InitializeAsync();
         await Chat.InitializeAsync();
-        await Packages.InitializeAsync();
         _ = Engine.RunAsync(_stop.Token);
         _ = PingEveryAsync(TimeSpan.FromSeconds(15));
+        try
+        {
+            await Packages.InitializeAsync();
+        }
+        catch (Exception e) when (e is JSException or InvalidOperationException)
+        {
+            // The Packages tab is optional: without its folder the tab shows no source, sync and chat carry on.
+        }
     }
 
     private async Task StartDragAsync(Side side, PointerEventArgs e)
