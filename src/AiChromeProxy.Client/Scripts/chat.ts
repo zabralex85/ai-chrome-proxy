@@ -66,7 +66,11 @@ interface AttachedFile {
     preview: string | null;
 }
 
+/** Image types Chrome renders in an img (heic, tiff and the like get the file icon). */
+const PREVIEWABLE = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp', 'image/svg+xml', 'image/avif']);
+
 const attached = new Map<string, { file: File; preview: string | null }>();
+let strayGuarded = false;
 let lastHandle = 0;
 
 /** Pasted screenshots arrive as "image.png": name them by the local time instead, so that several stay apart. */
@@ -88,18 +92,37 @@ function report(list: FileList | null | undefined, pasted: boolean, callback: Do
     const added: AttachedFile[] = [];
     for (const file of Array.from(list)) {
         const handle = `f${++lastHandle}`;
-        const preview = file.type.startsWith('image/') ? URL.createObjectURL(file) : null;
+        const preview = PREVIEWABLE.has(file.type) ? URL.createObjectURL(file) : null;
         attached.set(handle, { file, preview });
         added.push({ handle, name: nameOf(file, pasted), size: file.size, type: file.type, preview });
     }
-    void callback.invokeMethodAsync('Add', added);
+    callback.invokeMethodAsync('Add', added).catch(() => {
+        for (const f of added) {
+            forgetAttachment(f.handle);
+        }
+    });
     return true;
 }
 
 /** Files pasted into, dropped on or picked in the chat box go to callback.Add(files); pasting text and dragging text stay as they are. */
 export function acceptFiles(zone: HTMLElement, picker: HTMLInputElement, callback: DotNetObject): void {
     const hasFiles = (e: DragEvent): boolean => e.dataTransfer?.types.includes('Files') === true;
+    if (!strayGuarded) {
+        strayGuarded = true;
+        // A file dropped just outside the box would otherwise open in the tab and leave the app.
+        const guard = (e: DragEvent): void => {
+            if (hasFiles(e) && !(e.target instanceof Node && zone.contains(e.target))) {
+                e.preventDefault();
+            }
+        };
+        window.addEventListener('dragover', guard);
+        window.addEventListener('drop', guard);
+    }
     zone.addEventListener('paste', (e: ClipboardEvent) => {
+        // Excel, Word and OneNote put text and a bitmap on the clipboard: the text wins.
+        if (e.clipboardData?.getData('text/plain').trim()) {
+            return;
+        }
         if (report(e.clipboardData?.files, true, callback)) {
             e.preventDefault();
         }

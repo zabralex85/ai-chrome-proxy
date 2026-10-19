@@ -184,6 +184,19 @@ public sealed class ChatAttachmentsTests : IDisposable
 	}
 
 	[Fact]
+	public async Task RemoveByHandles_KeepsTheOthers()
+	{
+		_source.Files["h1"] = [1];
+		_source.Files["h2"] = [2];
+		await _attachments.AddAsync("repo", [File("h1", "a.txt", 1), File("h2", "b.txt", 1)]);
+
+		await _attachments.RemoveAsync(["h1"]);
+
+		Assert.Equal("h2", Assert.Single(_attachments.Items).File.Handle);
+		Assert.Equal(["h1"], _source.Forgotten);
+	}
+
+	[Fact]
 	public async Task Changed_IsRaised()
 	{
 		var raised = 0;

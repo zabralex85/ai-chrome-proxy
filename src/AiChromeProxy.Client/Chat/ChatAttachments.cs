@@ -116,6 +116,17 @@ public sealed class ChatAttachments(ITransport transport, IAttachmentSource sour
 		Changed?.Invoke();
 	}
 
+	/// <summary>Removes the given files only (those sent with a message), leaving ones added since.</summary>
+	/// <param name="handles">The browser's keys of the files.</param>
+	/// <returns>A task that completes when every file is forgotten.</returns>
+	public async Task RemoveAsync(IEnumerable<string> handles)
+	{
+		foreach (var handle in handles)
+		{
+			await RemoveAsync(handle);
+		}
+	}
+
 	/// <summary>Empties the box after the message went out.</summary>
 	/// <returns>A task that completes when every file is forgotten.</returns>
 	public async Task ClearAsync()

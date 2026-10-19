@@ -132,12 +132,13 @@
             return;
         }
 
-        var ids = _attachments.ReadyIds;
+        var sent = _attachments.Items.Where(i => i.State == AttachmentState.Ready).ToList();
         _text = string.Empty;
         StateHasChanged();
-        if (await OnSend(text.Trim(), ids))
+        if (await OnSend(text.Trim(), [.. sent.Select(i => i.Id!)]))
         {
-            await _attachments.ClearAsync();
+            // Only what went out: a file added while the send was in flight stays.
+            await _attachments.RemoveAsync(sent.Select(i => i.File.Handle));
         }
     }
 }

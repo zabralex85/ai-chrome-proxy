@@ -1026,6 +1026,7 @@ dd .state-error {
 
 .attachment-name,
 .attachment-chip span:first-of-type {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1041,6 +1042,11 @@ dd .state-error {
 }
 
 .attachment.failed .attachment-size {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: var(--error);
 }
 
