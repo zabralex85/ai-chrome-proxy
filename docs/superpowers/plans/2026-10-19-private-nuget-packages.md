@@ -10,6 +10,8 @@
 
 **Spec:** [2026-10-19-private-nuget-packages-design.md](../specs/2026-10-19-private-nuget-packages-design.md) (its "Verified" paragraph is step 0, already done).
 
+**Revised after the final review:** every hub message stays under SignalR's 32 KB receive limit — `packages.nuget.have` is paged like `sync.manifest` (`PackagesEngine.HavePages`), `packages.nuget.begin` is `{id, version, contentHash, fileCount, totalSize}` and each file's first chunk carries its `size` (the server checks each file there and the totals at the last chunk); a failed upload waits 5 minutes (sooner on a new `contentHash` or a source change); a source change mid-pass runs one more pass; a deleted cache folder shows "Not found"; ids and versions ending in `.` are invalid; `ClaudeRunner` takes the folder from `IPackageStore.NuGetFolder`. The code blocks below show the final sources where they changed.
+
 ## Global Constraints
 
 - Everything in English; no personal paths, domains or secrets in committed files.
@@ -23,7 +25,7 @@
 - Limits: 250 MB (`250L * 1024 * 1024`) and 2 000 files per package; at most 2 000 packages per `packages.nuget.have`; chunks ≤ 16 KB raw (`16 * 1024`); id ≤ 100 chars `[A-Za-z0-9._-]`; version ≤ 64 chars `[A-Za-z0-9.+-]`; both stored lower case.
 - Agent environment (only when `<Packages:Root>\nuget` exists): `NUGET_FALLBACK_PACKAGES` = configured/inherited value + `;` + that folder; `RestoreIgnoreFailedSources=true`, `NuGetAudit=false`, `WarningsNotAsErrors=NU1801`, each unless `Agent:Env` sets it.
 - System prompt line (exact): "Private NuGet packages are provided through a fallback packages folder. Do not edit nuget.config, project files or Directory.*.props to fix a restore; if a private package is missing, tell the user to restore the project on their computer (the Packages tab lists it)."
-- Row texts (exact): "On the server", "Uploading {n}%", "Public", "Not on this computer", "Too large to upload ({size} > 250 MB)" (size in MB rounded up to one decimal) or "Too large to upload ({n} files > 2 000)", "Failed: {reason}"; project texts "No restore yet", "Could not read obj/project.assets.json"; summary "{n} private packages ready on the server · {m} missing"; server hash mismatch "Changed while uploading; retried on the next pass."
+- Row texts (exact): "On the server", "Uploading {n}%", "Public", "Not on this computer", "Too large to upload ({size} > 250 MB)" (size in MB rounded up to one decimal) or "Too large to upload (more than 2 000 files)", "Failed: {reason}"; project texts "No restore yet", "Could not read obj/project.assets.json"; summary "{n} private packages ready on the server · {m} missing"; server hash mismatch "Changed while uploading; retried on the next pass."
 - Gate: `dotnet build -c Release` clean; `dotnet test --project tests/AiChromeProxy.Tests -c Release --no-build --coverlet --coverlet-threshold 85 --coverlet-threshold-type line --coverlet-threshold-stat Total` green.
 
 ## File structure
@@ -284,7 +286,7 @@ namespace AiChromeProxy.Application.Packages;
 
 /// <summary>
 /// The server's NuGet packages: <c>&lt;root&gt;\nuget\&lt;id&gt;\&lt;version&gt;\</c> (lower case, checked by the caller), filled through a temp folder
-/// <c>&lt;version&gt;.&lt;tag&gt;.tmp</c> that is renamed into place only when complete. Paths leaving their folder throw <see cref="ArgumentException"/>.
+/// <c>~&lt;version&gt;~&lt;tag&gt;</c> (<c>~</c> cannot occur in a version) that is renamed into place only when complete. Paths leaving their folder throw <see cref="ArgumentException"/>.
 /// </summary>
 public interface IPackageStore
 {
@@ -406,7 +408,8 @@ namespace AiChromeProxy.Infrastructure.Packages;
 /// <summary><see cref="IPackageStore"/> on the file system under <see cref="PackagesOptions.Root"/>.</summary>
 public sealed class FileSystemPackageStore(IOptions<PackagesOptions> options) : IPackageStore
 {
-	private const string TempSuffix = ".tmp";
+	/// <summary>Temp folders start with this; a NuGet version (<c>[A-Za-z0-9.+-]</c>) cannot.</summary>
+	private const string TempMark = "~";
 
 	private readonly string _nuget = Path.Combine(Path.TrimEndingDirectorySeparator(Path.GetFullPath(options.Value.Root)), "nuget");
 
@@ -416,7 +419,9 @@ public sealed class FileSystemPackageStore(IOptions<PackagesOptions> options) : 
 
 	public string Begin(string id, string version, string tag)
 	{
-		var temp = Child(Child(_nuget, id), version + "." + tag + TempSuffix);
+		var folder = Child(_nuget, id);
+		Child(folder, version);
+		var temp = Child(folder, TempMark + version + TempMark + tag);
 		if (Directory.Exists(temp))
 		{
 			Directory.Delete(temp, recursive: true);
@@ -448,14 +453,27 @@ public sealed class FileSystemPackageStore(IOptions<PackagesOptions> options) : 
 	{
 		var temp = Temp(upload);
 		var target = Package(id, version);
-		if (Directory.Exists(target))
+		if (!string.Equals(Path.GetFileName(Path.GetDirectoryName(temp)), Path.GetFileName(Path.GetDirectoryName(target)), StringComparison.OrdinalIgnoreCase)
+			|| !Path.GetFileName(temp).StartsWith(TempMark + version + TempMark, StringComparison.OrdinalIgnoreCase))
 		{
-			Directory.Delete(temp, recursive: true);
-			return false;
+			throw new ArgumentException("The upload belongs to another package.", nameof(upload));
 		}
 
-		Directory.Move(temp, target);
-		return true;
+		try
+		{
+			if (!Directory.Exists(target))
+			{
+				Directory.Move(temp, target);
+				return true;
+			}
+		}
+		catch (IOException) when (Directory.Exists(target))
+		{
+			// Another upload committed the same package between the check and the move: ours is the loser.
+		}
+
+		Directory.Delete(temp, recursive: true);
+		return false;
 	}
 
 	public void Discard(string upload)
@@ -474,15 +492,16 @@ public sealed class FileSystemPackageStore(IOptions<PackagesOptions> options) : 
 			return 0;
 		}
 
-		var temps = Directory.EnumerateDirectories(_nuget).SelectMany(Directory.EnumerateDirectories).Where(d => d.EndsWith(TempSuffix, StringComparison.OrdinalIgnoreCase)).ToList();
+		var temps = Directory.EnumerateDirectories(_nuget).SelectMany(Directory.EnumerateDirectories).Where(d => Path.GetFileName(d).StartsWith(TempMark, StringComparison.Ordinal)).ToList();
 		temps.ForEach(d => Directory.Delete(d, recursive: true));
 		return temps.Count;
 	}
 
+	/// <summary>The folder <paramref name="segment"/> right under <paramref name="parent"/>; a name Windows would change (trailing dots or spaces) throws.</summary>
 	private static string Child(string parent, string segment)
 	{
 		var full = Path.GetFullPath(Path.Combine(parent, segment));
-		if (!string.Equals(Path.GetDirectoryName(full), parent, StringComparison.OrdinalIgnoreCase))
+		if (!string.Equals(Path.GetDirectoryName(full), parent, StringComparison.OrdinalIgnoreCase) || !string.Equals(Path.GetFileName(full), segment, StringComparison.Ordinal))
 		{
 			throw new ArgumentException("The path leaves its folder.", nameof(segment));
 		}
@@ -507,7 +526,7 @@ public sealed class FileSystemPackageStore(IOptions<PackagesOptions> options) : 
 	private string Temp(string upload)
 	{
 		var full = Path.GetFullPath(upload);
-		if (!full.EndsWith(TempSuffix, StringComparison.OrdinalIgnoreCase) || !string.Equals(Path.GetDirectoryName(Path.GetDirectoryName(full)), _nuget, StringComparison.OrdinalIgnoreCase))
+		if (!Path.GetFileName(full).StartsWith(TempMark, StringComparison.Ordinal) || !string.Equals(Path.GetDirectoryName(Path.GetDirectoryName(full)), _nuget, StringComparison.OrdinalIgnoreCase))
 		{
 			throw new ArgumentException("Not an upload of this store.", nameof(upload));
 		}
@@ -863,7 +882,7 @@ Note for the implementer: a file of size 0 is one empty chunk carrying size 0: i
 
 **Files:**
 - Create: `src/AiChromeProxy.Infrastructure/Chat/PackageEnvironment.cs`
-- Modify: `src/AiChromeProxy.Infrastructure/Chat/ClaudeRunner.cs` (ctor gets `IOptions<PackagesOptions> packages`; in `StartAsync`: `var nuget = Path.Combine(_packagesRoot, "nuget"); var has = Directory.Exists(nuget);` then `Start(file, ClaudeArguments.Build(run, _options, has), run.RepoFolder, PackageEnvironment.With(_options.Env, Environment.GetEnvironmentVariable(PackageEnvironment.FallbackVariable), has ? nuget : null), ...)`), `src/AiChromeProxy.Infrastructure/Chat/ClaudeArguments.cs` (`Build(AgentRun run, AgentOptions options, bool privatePackages = false)`, `public const string PackagesHint = "<exact text from Global Constraints>";`, `--append-system-prompt` value = `privatePackages ? Convention + " " + PackagesHint : Convention`), `tests/AiChromeProxy.Tests/Infrastructure/ClaudeRunnerTests.cs` (the factory at line ~183 passes `Options.Create(new PackagesOptions { Root = <temp> })`)
+- Modify: `src/AiChromeProxy.Infrastructure/Chat/ClaudeRunner.cs` (ctor gets `IPackageStore packages` and keeps `packages.NuGetFolder` as `_nuget`; in `StartAsync`: `var has = Directory.Exists(_nuget);` then `Start(file, ClaudeArguments.Build(run, _options, has), run.RepoFolder, PackageEnvironment.With(_options.Env, Environment.GetEnvironmentVariable(PackageEnvironment.FallbackVariable), has ? nuget : null), ...)`), `src/AiChromeProxy.Infrastructure/Chat/ClaudeArguments.cs` (`Build(AgentRun run, AgentOptions options, bool privatePackages = false)`, `public const string PackagesHint = "<exact text from Global Constraints>";`, `--append-system-prompt` value = `privatePackages ? Convention + " " + PackagesHint : Convention`), `tests/AiChromeProxy.Tests/Infrastructure/ClaudeRunnerTests.cs` (the factory at line ~183 passes `Options.Create(new PackagesOptions { Root = <temp> })`)
 - Test: `tests/AiChromeProxy.Tests/Infrastructure/PackageEnvironmentTests.cs`, `ClaudeArgumentsTests.cs`
 
 ```csharp
@@ -971,11 +990,11 @@ public sealed class PackagesEngine(ITransport transport, SyncEngine sync, IFolde
 2. Projects: every `sync.Files` path ending in `.csproj` (ignore case); assets path = `<dir>/obj/project.assets.json` (`obj/project.assets.json` at the root). `repo.ModifiedAsync` null → `ProjectRow(path, "No restore yet")`; same modified as cached → cached refs; else `ReadTextAsync` + `ProjectAssets.Parse` (`FormatException`/null → `"Could not read obj/project.assets.json"`).
 3. Union of refs. Without a ready source every ref → `NotOnComputer` row with text "Not on this computer" (the view also says to add a source).
 4. Per ref: `cache.ReadTextAsync($"{id}/{version}/.nupkg.metadata")` → null → `NotOnComputer`; `NuGetMetadata.Parse` null → `Failed: unreadable .nupkg.metadata`; public source → `Public`; else private candidate with its hash.
-5. Candidates (first 2 000) → `packages.nuget.have` → missing set; the others → `OnServer`.
-6. Each missing package in turn: `cache.ListAsync($"{id}/{version}")` → over 2 000 files or 250 MB → `TooLarge` ("Too large to upload ({size} > 250 MB)", size in MB rounded up to one decimal, e.g. "300.1 MB"; over 2 000 files: "Too large to upload ({n} files > 2 000)"); `.nupkg` first then the rest by path; `packages.nuget.begin` → `uploadId`; for each file, chunks of `PackageLimits.ChunkSize` read with `cache.ReadChunkAsync($"{id}/{version}/{path}", ...)` (a size-0 file → one empty chunk; a short read → `IOException("The package changed while it was uploaded.")`), non-last with `transport.SendAsync`, the very last with `transport.RequestAsync(..., ChatEngine.RequestTimeout, ct)`; row `Uploading {n}%` (raise `Changed` at most every 16 chunks); stored → `OnServer`; `RequestFailedException` → `Failed: {message}`; other exceptions → `Failed: {message}` (connection lost uses `SyncEngine.ConnectionLost`). Failed packages are tried again on the next pass.
+5. Candidates → `packages.nuget.have` in pages (`HavePages`: `SyncPages.Split` by serialized size, ≤ 24 000 bytes and ≤ 500 packages per message) → missing set; the others → `OnServer`. A package whose upload failed less than 5 minutes ago with the same `contentHash` keeps its failure row and is not a candidate.
+6. Each missing package in turn: `cache.ListAsync($"{id}/{version}")` → over 2 000 files or 250 MB → `TooLarge` ("Too large to upload ({size} > 250 MB)", size in MB rounded up to one decimal, e.g. "300.1 MB"; over 2 000 files: "Too large to upload (more than 2 000 files)"); `.nupkg` first then the rest by path; `packages.nuget.begin` with `fileCount` and `totalSize` → `uploadId`; for each file, chunks (the first with the file's `size`) of `PackageLimits.ChunkSize` read with `cache.ReadChunkAsync($"{id}/{version}/{path}", ...)` (a size-0 file → one empty chunk; a short read → `IOException("The package changed while it was uploaded.")`), non-last with `transport.SendAsync`, the very last with `transport.RequestAsync(..., ChatEngine.RequestTimeout, ct)`; row `Uploading {n}%` (raise `Changed` at most every 16 chunks); stored → `OnServer`; `RequestFailedException` → `Failed: {message}`; other exceptions → `Failed: {message}` (connection lost uses `SyncEngine.ConnectionLost`). Failed packages are tried again after `PackagesEngine.RetryAfter` (5 minutes; `TimeProvider`), at once when their `contentHash` changed or the source was added, allowed or removed; a lost connection is not remembered as a failure.
 7. Raise `Changed` at the end.
 
-Hook: in `InitializeAsync`, subscribe `sync.Changed` and start `RefreshAsync` (fire and forget) when `sync.LastSync` differs from the last value seen; also after a source change. `RefreshAsync` uses a `SemaphoreSlim(1,1)` with `WaitAsync(0)` to skip overlapping passes.
+Hook: in `InitializeAsync`, subscribe `sync.Changed` and start `RefreshAsync` (fire and forget) when `sync.LastSync` differs from the last value seen; also after a source change. `RefreshAsync` uses a `SemaphoreSlim(1,1)` with `WaitAsync(0)` to skip overlapping passes, and runs one more pass when the source changed during the one it ran.
 
 - [ ] **Step 1: Failing tests.**
   - `ProjectAssetsTests`: packages from a realistic snippet (two packages, one project reference) → two lower-cased refs; duplicate keys across casing → one; missing `libraries` → empty; invalid JSON → `FormatException`; `NuGetMetadata.Parse` on the real format (`{"version":2,"contentHash":"...","source":"..."}`) and on garbage → null.
@@ -985,7 +1004,10 @@ Hook: in `InitializeAsync`, subscribe `sync.Changed` and start `RefreshAsync` (f
     - package not in the cache → `NotOnComputer`; no assets file → project row "No restore yet"; bad assets → "Could not read obj/project.assets.json";
     - second refresh with the package on the server → no `begin` sent;
     - `.nupkg` bytes not matching the hash → `Failed: Changed while uploading; retried on the next pass.`;
-    - package over 2 000 files → `TooLarge` and nothing sent;
+    - package over 2 000 files → `TooLarge` ("more than 2 000 files") and nothing sent;
+    - many private packages → several `have` messages, each under the SignalR limit;
+    - a failed upload waits 5 minutes keeping its row, then is tried again; at once after Add source or Allow; a lost connection is retried on the next pass;
+    - a source change during a pass runs one more pass;
     - no source → rows "Not on this computer", `Source == None`; `AddSourceAsync` with a picked folder → `Ready` and uploads; `RemoveSourceAsync` → `None`; restored-but-not-granted → `NeedsPermission`, `AllowAsync` → `Ready`;
     - summary text for 1 on the server and 1 missing.
 - [ ] **Step 2: Run to see them fail.** **Step 3: Implement.** **Step 4: Run** focused classes + full suite. **Step 5: Commit** — "Packages: client finds the repo's packages and uploads the private ones".
@@ -998,7 +1020,7 @@ Hook: in `InitializeAsync`, subscribe `sync.Changed` and start `RefreshAsync` (f
 - Create: `src/AiChromeProxy.Client/Scripts/pkgaccess.ts`, `src/AiChromeProxy.Client/Packages/JsPackageFolder.cs` (`[ExcludeFromCodeCoverage]`, imports `./js/pkgaccess.js` lazily like `JsChatView`), `src/AiChromeProxy.Client/Shell/PackagesView.razor`
 - Modify: `src/AiChromeProxy.Client/Shell/Explorer.razor` (header becomes a tablist "Explorer" / "Packages"; body shows today's content or `<PackagesView Engine="Packages" />`; new parameter `PackagesEngine Packages`), `src/AiChromeProxy.Client/Pages/Home.razor` (inject `PackagesEngine`, `await Packages.InitializeAsync()` after `Chat.InitializeAsync()`, pass it to `Explorer`), `src/AiChromeProxy.Client/Program.cs` (`AddSingleton<JsPackageFolder>()`, `AddSingleton<IPackageFolder>(s => s.GetRequiredService<JsPackageFolder>())`, `AddSingleton<PackagesEngine>()`), `wwwroot/css/app.css`
 
-`pkgaccess.ts` (strict, no `any`): its own IndexedDB database `aicp-packages`, store `handles`, key `nuget`; `pick()` → `showDirectoryPicker({ id: 'aicp-pkg', mode: 'read' })` (null on `AbortError`), stores the handle, returns its name; `restore()` → `{ name, granted }` or null; `requestAccess()`; `forget()`; `readText(path)`; `list(folder)` → `{ path, size, modified }[]` of every file under `folder` (recursive, paths relative to `folder` with `/`) or null when missing; `readChunk(path, offset, length)` → `Uint8Array` (walk the handles from the root each time). Path segments `''`, `.`, `..` or containing `\` throw.
+`pkgaccess.ts` (strict, no `any`): its own IndexedDB database `aicp-packages`, store `handles`, key `nuget`; `pick()` → `showDirectoryPicker({ id: 'aicp-pkg', mode: 'read' })` (null on `AbortError`), stores the handle, returns its name; `restore()` → `{ name, granted }` or null (the in-memory handle when there is one, else IndexedDB); `requestAccess()`; `forget()`; `readText(path)`; `list(folder)` → `{ path, size, modified }[]` of every file under `folder` (recursive, paths relative to `folder` with `/`) or null when missing; `readChunk(path, offset, length)` → `Uint8Array` (walk the handles from the root each time). Path segments `''`, `.`, `..` or containing `\` throw. A lookup that finds nothing first checks that the picked folder itself still reads (`entries().next()`) and throws when it is gone, so the engine shows "Not found".
 
 `PackagesView.razor` (test ids: `packages-view`, `packages-add-source`, `packages-source`, `packages-allow`, `packages-remove-source`, `packages-summary`, `packages-row`, `packages-project-problem`):
 - **Sources**: without a source a short text ("Add your NuGet cache folder, usually `%USERPROFILE%\.nuget\packages`, so that private packages reach the home server.") and **Add source** (`packages-add-source`; the only type for now is **NuGet cache folder**, shown as the button's label "Add NuGet cache folder"); with one: a row (`packages-source`) "NuGet cache · {name} · {Ready|Needs permission|Not found}" with **Allow** (needs permission) and **Remove**.

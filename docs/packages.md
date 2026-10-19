@@ -6,13 +6,15 @@ Your project may use packages from a private feed that only your computer can re
 
 1. Open the folder as usual, and restore the project on your computer (`dotnet restore` or a build).
 2. Open the **Packages** tab in the left panel and choose **Add NuGet cache folder**. Pick the NuGet cache, usually `%USERPROFILE%\.nuget\packages` (Chrome or Edge ask once; the browser remembers the folder, and **Allow** asks again after a restart).
-3. After each sync pass the tab reads `obj/project.assets.json` next to every `*.csproj` of the repo and lists each package with its state: `On the server`, `Uploading n%`, `Public`, `Not on this computer`, `Too large to upload (...)` or `Failed: ...`. The summary reads `n private packages ready on the server · m missing`.
+3. Under **Packages this folder needs**, after each sync pass the tab reads `obj/project.assets.json` next to every `*.csproj` of the repo and lists each package with its state: `On the server`, `Uploading n%`, `Public`, `Not on this computer`, `Too large to upload (... MB > 250 MB)` or `Too large to upload (more than 2 000 files)`, or `Failed: ...`. The **Sources** row says `Ready`, `Needs permission` (with **Allow**) or `Not found` (the folder was deleted or moved). The summary reads `n private packages ready on the server · m missing`.
 
 ## What is uploaded
 
 - Only **private** packages that the repo restored, at the exact versions. A package whose `.nupkg.metadata` names `https://api.nuget.org/v3/index.json` is public: the server downloads it from nuget.org like any restore, nothing is uploaded.
+- When your company feed proxies nuget.org (Artifactory, Azure Artifacts upstreams, ...), the metadata of every package names that feed, so every package counts as private and is uploaded, public ones included.
 - The `.nupkg` goes first, then the other files of the package folder. The server checks the SHA-512 of the `.nupkg` against `contentHash` of the metadata; a mismatch is reported as `Changed while uploading; retried on the next pass.`
 - Packages the server already holds are not sent again.
+- A failed upload keeps its `Failed: ...` row and is tried again after 5 minutes, or at once when its `.nupkg.metadata` changes or you add, allow or remove the source.
 
 ## Nothing in the project changes
 
@@ -31,7 +33,7 @@ The run's system prompt gets this line: "Private NuGet packages are provided thr
 
 ## Limits
 
-250 MB and 2 000 files per package; at most 2 000 packages per check; chunks of 16 KB; id up to 100 characters (`A-Z a-z 0-9 . _ -`), version up to 64 (`A-Z a-z 0-9 . + -`); both stored in lower case.
+250 MB and 2 000 files per package; at most 2 000 packages per check (sent in pages under SignalR's 32 KB message limit); chunks of 16 KB; id up to 100 characters (`A-Z a-z 0-9 . _ -`), version up to 64 (`A-Z a-z 0-9 . + -`); both stored in lower case.
 
 ## Where packages live
 
@@ -46,7 +48,7 @@ The run's system prompt gets this line: "Private NuGet packages are provided thr
 
 ## Policy note
 
-Private packages of your client are copied to your home server. Check that your company allows it before you add the cache folder.
+Private packages of your client are copied to your home server. Check that your company allows it before you add the cache folder. If your company feed proxies nuget.org, every package you restored through it is copied, public ones included.
 
 ## Manual checklist
 
