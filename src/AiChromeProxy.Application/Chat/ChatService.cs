@@ -27,6 +27,9 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 	/// <summary>Pushes a connection may have pending; beyond that it is dropped (and aborted) so that it reconnects and catches up.</summary>
 	public const int MaxPendingPushes = 1_000;
 
+	/// <summary>Starts the list of attached files' paths in the text given to Claude.</summary>
+	public const string AttachedFilesHeader = "Attached files (read them with the Read tool):";
+
 	/// <summary>Room kept in a <c>chat.events</c> page for its own fields and the separators between events.</summary>
 	private const int PageReserveBytes = 1_024;
 
@@ -50,6 +53,7 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 	private readonly ILogger<StreamJsonParser>? _parserLogger;
 	private readonly PermissionBroker _broker;
 	private readonly IApprovalEndpoint? _approval;
+	private readonly ChatAttachments? _attachments;
 	private readonly ConcurrentDictionary<string, Subscriber> _subscribers = new(StringComparer.Ordinal);
 	private readonly ConcurrentDictionary<string, Run> _runs = new(StringComparer.OrdinalIgnoreCase);
 
@@ -65,7 +69,8 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 		ILogger<ChatService> logger,
 		PermissionBroker? broker = null,
 		IApprovalEndpoint? approval = null,
-		ILogger<StreamJsonParser>? parserLogger = null)
+		ILogger<StreamJsonParser>? parserLogger = null,
+		ChatAttachments? attachments = null)
 	{
 		_store = store;
 		_mirror = mirror;
@@ -76,6 +81,7 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 		_parserLogger = parserLogger;
 		_broker = broker ?? new PermissionBroker(projects, time, NullLogger<PermissionBroker>.Instance);
 		_approval = approval;
+		_attachments = attachments;
 	}
 
 	/// <summary><c>chat.open</c>: subscribes the connection to the repo's chat (instead of any other repo) and lists its sessions.</summary>
@@ -103,15 +109,17 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 
 	/// <summary>
 	/// <c>chat.send</c>: stores and pushes the <c>prompt</c>, starts a run (a new session without <c>sessionId</c>) and returns at once;
-	/// the sender is subscribed to the repo. The first events may reach a client before this reply does.
+	/// the sender is subscribed to the repo. With attachments (ids of finished <c>chat.attach</c> uploads) Claude gets their paths after the text and may read the repo's attachments folder;
+	/// the stored <c>prompt</c> lists their names and sizes. The first events may reach a client before this reply does.
 	/// </summary>
 	public ChatStartedPayload Send(ChatSendPayload payload, EnvelopeContext sender)
 	{
 		var repo = RepoOf(payload.Repo, MessageTypes.ChatSend);
-		var text = payload.Text;
-		if (string.IsNullOrWhiteSpace(text))
+		var text = payload.Text ?? string.Empty;
+		var ids = payload.Attachments ?? [];
+		if (string.IsNullOrWhiteSpace(text) && ids.Count == 0)
 		{
-			throw new EnvelopeException(ErrorCodes.BadRequest, "chat.send needs the message in 'text'.");
+			throw new EnvelopeException(ErrorCodes.BadRequest, "chat.send needs the message in 'text' or at least one attachment.");
 		}
 
 		// Characters, then bytes once escaped: what the client checks before sending (the hub could not receive more anyway).
@@ -128,6 +136,7 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 		}
 
 		var folder = _mirror.RepoFolder(repo) ?? throw new EnvelopeException(ErrorCodes.BadRequest, "Open the folder and let it sync first.");
+		IReadOnlyList<StoredAttachment> files = ids.Count == 0 ? [] : (_attachments ?? throw new EnvelopeException(ErrorCodes.BadRequest, ChatAttachments.Expired)).Resolve(repo, ids);
 		Subscribe(repo, sender);
 		var run = new Run(repo, Guid.NewGuid().ToString("N"), _stopping.Token);
 		if (!_runs.TryAdd(repo, run))
@@ -141,12 +150,12 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 			// Everything that can fail is read before a new session is created, so that a failure leaves no empty session.
 			var settings = _projects.GetSettings(repo);
 			run.ClaudeId = sessionId is null ? null : _store.GetClaudeSession(sessionId);
-			run.SessionId = sessionId ?? _store.CreateSession(repo, Title(text)).Id;
+			run.SessionId = sessionId ?? _store.CreateSession(repo, Title(string.IsNullOrWhiteSpace(text) ? files[0].Name : text)).Id;
 
 			var (url, token) = Approval(run, folder, settings.AgentPermissionsOrDefault);
 			var agentRun = new AgentRun(
 				folder,
-				text,
+				AgentPrompt(text, files),
 				run.ClaudeId,
 				settings.AgentPermissionsOrDefault,
 				string.IsNullOrWhiteSpace(settings.AgentModel) ? null : settings.AgentModel,
@@ -155,10 +164,11 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 				token,
 				settings.AgentDisabledMcpServers,
 				settings.AgentDisabledPlugins,
-				settings.AgentApprovedMcpServers);
+				settings.AgentApprovedMcpServers,
+				files.Count == 0 ? null : [_attachments!.Folder(repo)]);
 
 			// Stored before the run starts: its seq precedes the run's events.
-			Store(run, [.. Parts(run, new ChatEvent(run.SessionId, run.Id, 0, ChatEventKinds.Prompt, Text: text))]);
+			Store(run, [.. Parts(run, new ChatEvent(run.SessionId, run.Id, 0, ChatEventKinds.Prompt, Text: text, Attachments: files.Count == 0 ? null : [.. files.Select(f => new ChatAttachment(f.Name, f.Size))]))]);
 			run.Task = Task.Run(() => ExecuteAsync(run, agentRun));
 		}
 		catch
@@ -219,6 +229,18 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 		}
 
 		return line[..(char.IsHighSurrogate(line[TitleChars - 1]) ? TitleChars - 1 : TitleChars)];
+	}
+
+	/// <summary>The text given to Claude: the message, then a line per attached file with its absolute path.</summary>
+	private static string AgentPrompt(string text, IReadOnlyList<StoredAttachment> files)
+	{
+		if (files.Count == 0)
+		{
+			return text;
+		}
+
+		var list = AttachedFilesHeader + string.Concat(files.Select(f => "\n- " + f.Path));
+		return string.IsNullOrWhiteSpace(text) ? list : text + "\n\n" + list;
 	}
 
 	/// <summary>A failed <c>result</c> whose error is capped like a summary.</summary>

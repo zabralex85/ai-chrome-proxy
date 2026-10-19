@@ -171,6 +171,20 @@ public sealed class ClaudeArgumentsTests
 		Assert.Equal("\"\"C:\\Program Files\\npm\\claude.cmd\" \"-p\" \"say \\\"hi\\\"\" \"dir\\\\\"\"", line);
 	}
 
+	[Fact]
+	public void AddDirs_ComeAfterTheAllowedToolsAndBeforeTheSystemPrompt()
+	{
+		var run = Run("all", null, null) with { AllowedTools = ["Bash(ls)"], AddDirs = ["C:\\data\\attachments\\repo", " ", "-x"] };
+
+		var args = ClaudeArguments.Build(run, new AgentOptions());
+
+		var at = args.ToList().IndexOf("--add-dir");
+		Assert.Equal(["--allowedTools", "Bash(ls)", "--add-dir", "C:\\data\\attachments\\repo", "--append-system-prompt"], args.Skip(at - 2).Take(5));
+	}
+
+	[Fact]
+	public void NoAddDirs_NoFlag() => Assert.DoesNotContain("--add-dir", ClaudeArguments.Build(Run("all", null, null), new AgentOptions()));
+
 	private static AgentRun Run(string permissions = "ask", string? url = null, string? token = null, string? resume = null, string? model = null, string[]? tools = null)
 		=> new(@"C:\mirror\repo", "hello", resume, permissions, model, tools, url, token);
 
