@@ -1,6 +1,8 @@
 using AiChromeProxy.Application.Chat;
+using AiChromeProxy.Application.Packages;
 using AiChromeProxy.Application.Sync;
 using AiChromeProxy.Infrastructure.Chat;
+using AiChromeProxy.Infrastructure.Packages;
 using AiChromeProxy.Infrastructure.Projects;
 using AiChromeProxy.Infrastructure.Security;
 using AiChromeProxy.Infrastructure.Sync;
@@ -30,6 +32,8 @@ public static class DependencyInjection
 		services.AddSingleton<IChatStore, SqliteChatStore>();
 		services.Configure<AttachmentsOptions>(configuration.GetSection(AttachmentsOptions.Section));
 		services.AddSingleton<IAttachmentStore, FileSystemAttachmentStore>();
+		services.Configure<PackagesOptions>(configuration.GetSection(PackagesOptions.Section));
+		services.AddSingleton<IPackageStore, FileSystemPackageStore>();
 		services.AddOptions<AgentOptions>()
 			.Bind(configuration.GetSection(AgentOptions.Section))
 			.Validate(o => o.HasValidIdleTimeout, "Agent:IdleTimeout must be positive and at most 49 days, or -00:00:00.001 for no limit.")
