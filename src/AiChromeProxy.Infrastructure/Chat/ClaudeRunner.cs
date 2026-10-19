@@ -1,5 +1,5 @@
 using AiChromeProxy.Application.Chat;
-using AiChromeProxy.Infrastructure.Packages;
+using AiChromeProxy.Application.Packages;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -9,13 +9,13 @@ namespace AiChromeProxy.Infrastructure.Chat;
 public sealed class ClaudeRunner : IAgentRunner
 {
 	private readonly AgentOptions _options;
-	private readonly string _packagesRoot;
+	private readonly string _nuget;
 	private readonly ILogger<ClaudeRunner> _logger;
 
-	public ClaudeRunner(IOptions<AgentOptions> options, IOptions<PackagesOptions> packages, ILogger<ClaudeRunner> logger)
+	public ClaudeRunner(IOptions<AgentOptions> options, IPackageStore packages, ILogger<ClaudeRunner> logger)
 	{
 		_options = options.Value;
-		_packagesRoot = packages.Value.Root;
+		_nuget = packages.NuGetFolder;
 		_logger = logger;
 	}
 
@@ -39,9 +39,8 @@ public sealed class ClaudeRunner : IAgentRunner
 		}
 
 		_logger.LogInformation("Starting the agent {Command} in {Folder}", file, run.RepoFolder);
-		var nuget = Path.Combine(_packagesRoot, "nuget");
-		var has = Directory.Exists(nuget);
-		var env = PackageEnvironment.With(_options.Env, Environment.GetEnvironmentVariable(PackageEnvironment.FallbackVariable), has ? nuget : null);
+		var has = Directory.Exists(_nuget);
+		var env = PackageEnvironment.With(_options.Env, Environment.GetEnvironmentVariable(PackageEnvironment.FallbackVariable), has ? _nuget : null);
 		return Task.FromResult<IAgentProcess>(Start(file, ClaudeArguments.Build(run, _options, has), run.RepoFolder, env, run.Prompt, line => _logger.LogWarning("agent stderr: {Line}", line)));
 	}
 
