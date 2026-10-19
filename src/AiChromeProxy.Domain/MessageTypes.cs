@@ -89,4 +89,22 @@ public static class MessageTypes
 
 	/// <summary>Server → client: the repo's MCP servers and plugins (<c>Chat.ClaudeToolsPayload</c>).</summary>
 	public const string AgentTools = "agent.tools";
+
+	/// <summary>Client → server: the private NuGet packages the open repo uses (<c>Packages.NuGetHavePayload</c>); reply <see cref="PackagesNuGetMissing"/>.</summary>
+	public const string PackagesNuGetHave = "packages.nuget.have";
+
+	/// <summary>Server → client: those of <see cref="PackagesNuGetHave"/> the server lacks (<c>Packages.NuGetMissingPayload</c>).</summary>
+	public const string PackagesNuGetMissing = "packages.nuget.missing";
+
+	/// <summary>Client → server: starts uploading one package (<c>Packages.NuGetBeginPayload</c>); reply <see cref="PackagesNuGetBegun"/>.</summary>
+	public const string PackagesNuGetBegin = "packages.nuget.begin";
+
+	/// <summary>Server → client: the upload's id (<c>Packages.NuGetBegunPayload</c>).</summary>
+	public const string PackagesNuGetBegun = "packages.nuget.begun";
+
+	/// <summary>Client → server: part of a package file (<c>Packages.NuGetChunkPayload</c>); the last one is answered with <see cref="PackagesNuGetStored"/>.</summary>
+	public const string PackagesNuGetChunk = "packages.nuget.chunk";
+
+	/// <summary>Server → client: the package is stored (<c>Packages.NuGetStoredPayload</c>).</summary>
+	public const string PackagesNuGetStored = "packages.nuget.stored";
 }
