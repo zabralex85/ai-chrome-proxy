@@ -433,6 +433,51 @@ public sealed class ChatEngineTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Stop_InOneFolder_DoesNotLeaveTheNextFoldersRunStopping()
+	{
+		var process = await StartAsync("long job");
+		process.Write(Init);
+		var release = new TaskCompletionSource();
+		var reply = _server.Transport.Reply!;
+		_server.Transport.Reply = async e =>
+		{
+			if (e.Type == MessageTypes.ChatCancel)
+			{
+				await release.Task;
+			}
+
+			return await reply(e);
+		};
+		var stopping = _chat.StopAsync();
+		Assert.True(_chat.Stopping);
+		var repoA = _chat.Repo;
+
+		// Another page already runs a job in the other folder, so opening it lists a running session.
+		var otherFolder = new FakeFolder { Name = "Other Repo", PickResult = "Other Repo" };
+		otherFolder.Write("b.txt", "v1");
+		var otherSync = new SyncEngine(_server.Transport, otherFolder, TimeProvider.System);
+		await otherSync.InitializeAsync();
+		await otherSync.OpenFolderAsync();
+		await otherSync.SyncOnceAsync(Ct);
+		var otherChat = new ChatEngine(_server.Transport, otherSync, _time);
+		await otherChat.InitializeAsync();
+		await otherChat.SendAsync("other job");
+		await _server.Agent.NextAsync();
+
+		_folder.Name = "Other Repo";
+		_folder.PickResult = "Other Repo";
+		_folder.Files.Clear();
+		_folder.Write("b.txt", "v1");
+		await _sync.OpenFolderAsync();
+		await _sync.SyncOnceAsync(Ct);
+		await UntilAsync(() => _chat.Repo != repoA && _chat.Running);
+
+		Assert.False(_chat.Stopping);
+		release.SetResult();
+		await stopping;
+	}
+
+	[Fact]
 	public async Task Stop_WithoutAKnownRunId_StopsTheFoldersRun()
 	{
 		var process = await StartAsync("long job");

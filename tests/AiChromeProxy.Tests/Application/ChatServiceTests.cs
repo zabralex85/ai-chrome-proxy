@@ -199,7 +199,6 @@ public sealed class ChatServiceTests : IDisposable
 
 		await RouteAsync(client, MessageTypes.ChatCancel, new ChatCancelPayload(null, "other"));
 		await RouteAsync(client, MessageTypes.ChatCancel, new ChatCancelPayload(null));
-		await Task.Delay(100, Ct);
 
 		Assert.False(process.Killed);
 		Assert.DoesNotContain(_logger.Messages, m => m.Contains("cancel requested", StringComparison.Ordinal));

@@ -437,6 +437,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 					_awaitingText = null;
 					_since = null;
 					_liveCost = null;
+					_stopping = false;
 					_repo = repo;
 				}
 
