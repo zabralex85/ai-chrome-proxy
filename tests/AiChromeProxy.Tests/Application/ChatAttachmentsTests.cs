@@ -134,6 +134,45 @@ public sealed class ChatAttachmentsTests : IDisposable
 	}
 
 	[Fact]
+	public void AbandonedUploads_AreSweptBeforeTheLimit_SoTheyDoNotBlockTheRepo()
+	{
+		for (var i = 0; i < ChatAttachments.MaxUploadsPerRepo; i++)
+		{
+			_attachments.Append(Chunk(0, [1], 2, false) with { Id = i.ToString("x32") });
+		}
+
+		_time.Advance(TimeSpan.FromHours(25));
+
+		Assert.Null(_attachments.Append(Chunk(0, [1], 2, false)));
+		Assert.NotNull(_attachments.Append(Chunk(1, [2], 2, true)));
+	}
+
+	[Fact]
+	public void AStrayChunk_ForAFinishedUpload_KeepsTheFile()
+	{
+		_attachments.Append(Chunk(0, [1, 2], size: 2, last: true));
+
+		var error = Assert.Throws<EnvelopeException>(() => _attachments.Append(Chunk(1, [2], size: 2, last: true)));
+
+		Assert.Equal(ErrorCodes.BadRequest, error.Code);
+		Assert.Single(_attachments.Resolve("repo", [Id]));
+	}
+
+	[Fact]
+	public void AnIoError_IsInternal_AndAnInvalidName_IsABadRequest()
+	{
+		var io = new ChatAttachments(new FailingStore(new IOException("disk full")), _time);
+		var internalError = Assert.Throws<EnvelopeException>(() => io.Append(Chunk(0, [1], 1, true)));
+		Assert.Equal(ErrorCodes.Internal, internalError.Code);
+		Assert.Equal("Could not store the attachment.", internalError.Message);
+
+		var invalid = new ChatAttachments(new FailingStore(new ArgumentException("bad name")), _time);
+		var badName = Assert.Throws<EnvelopeException>(() => invalid.Append(Chunk(0, [1], 1, true)));
+		Assert.Equal(ErrorCodes.BadRequest, badName.Code);
+		Assert.Equal("Invalid attachment name.", badName.Message);
+	}
+
+	[Fact]
 	public void Resolve_UnknownForeignOrBadIds_AreExpired()
 	{
 		_attachments.Append(Chunk(0, [1], 1, true));
@@ -193,4 +232,27 @@ public sealed class ChatAttachmentsTests : IDisposable
 
 	private static ChatAttachPayload Chunk(long offset, byte[] data, long size, bool last, string name = "shot.png") =>
 		new("repo", Id, name, size, offset, SyncData.Encode(data), last);
+
+	private sealed class FailingStore(Exception failure) : IAttachmentStore
+	{
+		public string RepoFolder(string repo) => repo;
+
+		public void Begin(string repo, string id, string name)
+		{
+		}
+
+		public long Append(string repo, string id, string name, byte[] data) => throw failure;
+
+		public void Commit(string repo, string id, string name)
+		{
+		}
+
+		public StoredAttachment? Find(string repo, string id) => null;
+
+		public void Delete(string repo, string id)
+		{
+		}
+
+		public int Sweep(DateTimeOffset olderThan, DateTimeOffset partsOlderThan) => 0;
+	}
 }

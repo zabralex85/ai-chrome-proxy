@@ -61,14 +61,25 @@ public sealed class ChatAttachments(IAttachmentStore store, TimeProvider time)
 				return null;
 			}
 
+			// A stray chunk with no upload in progress (e.g. a duplicate of a finished upload's last one) must not delete the finished file.
+			var inProgress = _uploads.ContainsKey(key);
 			try
 			{
 				return AppendLocked(repo, key, payload);
 			}
-			catch (Exception ex) when (ex is EnvelopeException or IOException or UnauthorizedAccessException)
+			catch (Exception ex) when (ex is EnvelopeException or IOException or UnauthorizedAccessException or ArgumentException)
 			{
-				var failure = ex as EnvelopeException ?? new EnvelopeException(ErrorCodes.Internal, "Could not store the attachment.");
-				store.Delete(repo, payload.Id);
+				var failure = ex switch
+				{
+					EnvelopeException envelope => envelope,
+					ArgumentException => new EnvelopeException(ErrorCodes.BadRequest, "Invalid attachment name."),
+					_ => new EnvelopeException(ErrorCodes.Internal, "Could not store the attachment."),
+				};
+				if (inProgress || payload.Offset == 0)
+				{
+					store.Delete(repo, payload.Id);
+				}
+
 				if (payload.Last)
 				{
 					_uploads.Remove(key);
@@ -114,6 +125,7 @@ public sealed class ChatAttachments(IAttachmentStore store, TimeProvider time)
 
 		if (payload.Offset == 0)
 		{
+			SweepIfDue();
 			var name = AttachmentNames.Sanitize(payload.Name);
 			if (payload.Size < 0)
 			{
@@ -130,7 +142,6 @@ public sealed class ChatAttachments(IAttachmentStore store, TimeProvider time)
 				throw new EnvelopeException(ErrorCodes.TooLarge, "Too many uploads in progress.");
 			}
 
-			SweepIfDue();
 			store.Begin(repo, payload.Id, name);
 			_uploads[key] = new Upload(name, payload.Size, time.GetUtcNow());
 		}

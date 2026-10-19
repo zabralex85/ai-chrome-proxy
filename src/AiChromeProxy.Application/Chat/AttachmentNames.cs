@@ -16,7 +16,7 @@ public static class AttachmentNames
 	private static readonly SearchValues<char> Invalid = SearchValues.Create("<>:\"/\\|?*");
 
 	private static readonly HashSet<string> Reserved = new(
-		["CON", "PRN", "AUX", "NUL", .. Enumerable.Range(1, 9).SelectMany(i => new[] { $"COM{i}", $"LPT{i}" })],
+		["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", .. Enumerable.Range(1, 9).SelectMany(i => new[] { $"COM{i}", $"LPT{i}" })],
 		StringComparer.OrdinalIgnoreCase);
 
 	/// <summary>
@@ -33,14 +33,9 @@ public static class AttachmentNames
 			return "file";
 		}
 
-		if (Reserved.Contains(clean.Split('.')[0]))
+		if (Reserved.Contains(clean.Split('.')[0].Trim()))
 		{
 			clean = "_" + clean;
-		}
-
-		if (clean.EndsWith(PartSuffix, StringComparison.OrdinalIgnoreCase))
-		{
-			clean += "_";
 		}
 
 		if (clean.Length > MaxChars)
@@ -54,6 +49,12 @@ public static class AttachmentNames
 			}
 
 			clean = clean[..keep].TrimEnd('.', ' ') + extension;
+		}
+
+		if (clean.EndsWith(PartSuffix, StringComparison.OrdinalIgnoreCase))
+		{
+			// Leave room for the trailing "_" so the result stays within MaxChars.
+			clean = (clean.Length >= MaxChars ? clean[..(MaxChars - 1)] : clean) + "_";
 		}
 
 		return clean;
