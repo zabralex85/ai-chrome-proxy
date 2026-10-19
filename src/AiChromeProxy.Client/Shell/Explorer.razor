@@ -1,8 +1,22 @@
+@using AiChromeProxy.Client.Packages
 @using AiChromeProxy.Client.Sync
 
 <aside class="panel panel-left @(Collapsed ? "collapsed" : null)" data-testid="file-tree" aria-label="Files">
-    <header class="panel-header"><span class="panel-title">Explorer</span></header>
-    <div class="panel-body" data-testid="explorer">
+    <header class="panel-header">
+        <div class="left-tabs" role="tablist" aria-label="Left panel" @onkeydown="OnTabKey">
+            <button type="button" role="tab" class="left-tab @(_packages ? null : "active")" aria-selected="@(_packages ? "false" : "true")" tabindex="@(_packages ? -1 : 0)"
+                    data-testid="left-tab-explorer" @onclick="() => _packages = false">Explorer</button>
+            <button type="button" role="tab" class="left-tab @(_packages ? "active" : null)" aria-selected="@(_packages ? "true" : "false")" tabindex="@(_packages ? 0 : -1)"
+                    data-testid="left-tab-packages" @onclick="() => _packages = true">Packages</button>
+        </div>
+    </header>
+    @if (_packages)
+    {
+        <div class="panel-body">
+            <PackagesView Engine="Packages" />
+        </div>
+    }
+    <div class="panel-body" data-testid="explorer" hidden="@_packages">
         @if (Engine.Folder == FolderStatus.Unsupported)
         {
             <div class="empty-state" role="alert" data-testid="unsupported">
@@ -81,6 +95,19 @@
 @code {
     [Parameter, EditorRequired]
     public SyncEngine Engine { get; set; } = null!;
+
+    [Parameter, EditorRequired]
+    public PackagesEngine Packages { get; set; } = null!;
+
+    private bool _packages;
+
+    private void OnTabKey(KeyboardEventArgs e)
+    {
+        if (e.Key is "ArrowLeft" or "ArrowRight" or "Home" or "End")
+        {
+            _packages = e.Key is "ArrowRight" or "End";
+        }
+    }
 
     /// <summary>Hidden by CSS but still rendered, so the tree keeps its state.</summary>
     [Parameter]

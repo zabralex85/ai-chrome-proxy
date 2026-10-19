@@ -1,3 +1,4 @@
+@using AiChromeProxy.Client.Packages
 @page "/"
 @using System.Diagnostics
 @using AiChromeProxy.Client.Chat
@@ -8,6 +9,7 @@
 @inject ITransport Transport
 @inject SyncEngine Engine
 @inject ChatEngine Chat
+@inject PackagesEngine Packages
 @inject HttpClient Http
 @inject IJSRuntime JS
 @inject IFileViewer Viewer
@@ -24,7 +26,7 @@
             FilesAttention="@(_filesOpen ? null : Format.Attention(Engine.Folder, Engine.ErrorCount))"
             HistoryOpen="@_historyOpen" OnToggleHistory="() => _historyOpen = !_historyOpen" />
     @* Collapsed panels stay rendered (hidden by CSS) so the tree keeps its expanded folders and active row. *@
-    <Explorer Engine="Engine" Collapsed="@(!_filesOpen)" Selected="@TabSet.SelectedPath(_tabs.Active)" OnSelect="OpenFile" OnRenamed="TreeRenamed" OnDeleted="TreeDeleted"
+    <Explorer Engine="Engine" Packages="Packages" Collapsed="@(!_filesOpen)" Selected="@TabSet.SelectedPath(_tabs.Active)" OnSelect="OpenFile" OnRenamed="TreeRenamed" OnDeleted="TreeDeleted"
               OnShowErrors="() => _tabs.Show(TabSet.Errors)" OnShowConflict="ShowFirstConflict" />
     @if (_filesOpen)
     {
@@ -106,6 +108,7 @@
         _ = LoadUserAsync();
         await Engine.InitializeAsync();
         await Chat.InitializeAsync();
+        await Packages.InitializeAsync();
         _ = Engine.RunAsync(_stop.Token);
         _ = PingEveryAsync(TimeSpan.FromSeconds(15));
     }
