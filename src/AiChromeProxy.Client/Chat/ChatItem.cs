@@ -1,3 +1,5 @@
+using AiChromeProxy.Domain.Chat;
+
 namespace AiChromeProxy.Client.Chat;
 
 /// <summary>What a <see cref="ChatItem"/> shows.</summary>
@@ -25,6 +27,7 @@ public enum ChatItemKind
 /// <param name="Result">The tool result's summary, once it arrived.</param>
 /// <param name="IsError">The tool result is an error.</param>
 /// <param name="Streaming">The text is still arriving (live deltas); the stored <c>message</c> will replace it.</param>
+/// <param name="Attachments">The files of a <see cref="ChatItemKind.User"/> message.</param>
 public sealed record ChatItem(
 	ChatItemKind Kind,
 	string RunId,
@@ -33,4 +36,5 @@ public sealed record ChatItem(
 	string? ToolId = null,
 	string? Result = null,
 	bool IsError = false,
-	bool Streaming = false);
+	bool Streaming = false,
+	IReadOnlyList<ChatAttachment>? Attachments = null);

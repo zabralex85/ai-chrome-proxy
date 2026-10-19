@@ -103,6 +103,18 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 		}
 	}
 
+	/// <summary>Gets the repo the chat sends to (the open folder's), or null without one.</summary>
+	public string? Repo
+	{
+		get
+		{
+			lock (_gate)
+			{
+				return _repo ?? sync.Repo;
+			}
+		}
+	}
+
 	/// <summary>Starts listening to the connection and the folder; opens the chat when both are ready already.</summary>
 	public async Task InitializeAsync()
 	{
@@ -156,7 +168,9 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 	/// line of the session; so does a message over <see cref="ChatLimits.MaxSendBytes"/> once encoded, which is not sent (the hub would drop the connection).
 	/// </summary>
 	/// <param name="text">The message.</param>
-	public async Task SendAsync(string text)
+	/// <param name="attachments">Ids of uploaded files (<see cref="ChatAttachments.ReadyIds"/>).</param>
+	/// <returns>Whether the run started (false: the refusal is an error line of the session).</returns>
+	public async Task<bool> SendAsync(string text, IReadOnlyList<string>? attachments = null)
 	{
 		ChatSession session;
 		string? repo;
@@ -170,7 +184,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 		}
 
 		session.ClearErrors();
-		var send = repo is null ? null : Envelope.Create(MessageTypes.ChatSend, new ChatSendPayload(repo, session.Id, text));
+		var send = repo is null ? null : Envelope.Create(MessageTypes.ChatSend, new ChatSendPayload(repo, session.Id, text, attachments is { Count: > 0 } ? attachments : null));
 		if (send is null || JsonSerializer.SerializeToUtf8Bytes(send, JsonSerializerOptions.Web).Length > ChatLimits.MaxSendBytes)
 		{
 			lock (_gate)
@@ -180,7 +194,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 
 			session.AddError(send is null ? NoFolder : TooLong);
 			Raise();
-			return;
+			return false;
 		}
 
 		try
@@ -196,6 +210,9 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 
 				_awaitingText = null;
 			}
+
+			Raise();
+			return true;
 		}
 		catch (Exception ex)
 		{
@@ -208,6 +225,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 		}
 
 		Raise();
+		return false;
 	}
 
 	/// <summary><b>Stop</b>: cancels the run in progress.</summary>
