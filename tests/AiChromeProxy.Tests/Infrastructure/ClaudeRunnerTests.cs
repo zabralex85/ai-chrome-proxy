@@ -1,5 +1,6 @@
 using AiChromeProxy.Application.Chat;
 using AiChromeProxy.Infrastructure.Chat;
+using AiChromeProxy.Infrastructure.Packages;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -180,7 +181,7 @@ public sealed class ClaudeRunnerTests : IAsyncDisposable
 			options.Command = FakeAgent;
 		}
 
-		return new ClaudeRunner(Options.Create(options), NullLogger<ClaudeRunner>.Instance);
+		return new ClaudeRunner(Options.Create(options), Options.Create(new PackagesOptions { Root = Path.Combine(TempRootCleanup.Root, "no-packages") }), NullLogger<ClaudeRunner>.Instance);
 	}
 
 	private async Task<List<string>> LinesAsync(ClaudeRunner runner, string prompt)
