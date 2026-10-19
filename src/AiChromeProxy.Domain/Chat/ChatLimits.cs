@@ -26,4 +26,13 @@ public static class ChatLimits
 
 	/// <summary>Longest event <c>name</c> (a tool), in UTF-8 bytes.</summary>
 	public const int MaxNameBytes = 200;
+
+	/// <summary>Largest attachment (<c>chat.attach</c>), in bytes.</summary>
+	public const long MaxAttachmentBytes = 20L * 1024 * 1024;
+
+	/// <summary>Most attachments of one <c>chat.send</c>.</summary>
+	public const int MaxAttachments = 10;
+
+	/// <summary>Largest <c>chat.attach</c> chunk before encoding, in bytes; base64url keeps the message well under SignalR's 32 KB limit.</summary>
+	public const int AttachmentChunkSize = 16 * 1024;
 }

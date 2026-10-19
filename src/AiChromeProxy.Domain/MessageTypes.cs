@@ -75,6 +75,12 @@ public static class MessageTypes
 	/// <summary>Server → client: a live event of a run (<c>Chat.ChatEvent</c>).</summary>
 	public const string ChatEvent = "chat.event";
 
+	/// <summary>Client → server: part of a file attached to the next message (<c>Chat.ChatAttachPayload</c>); the last one is answered with <see cref="ChatAttached"/>.</summary>
+	public const string ChatAttach = "chat.attach";
+
+	/// <summary>Server → client: an attachment is stored (<c>Chat.ChatAttachedPayload</c>).</summary>
+	public const string ChatAttached = "chat.attached";
+
 	/// <summary>Client → server: asks for the repo's Claude tools as last recorded (<c>Chat.ClaudeToolsRequest</c>); reply <see cref="AgentTools"/>.</summary>
 	public const string AgentToolsGet = "agent.tools.get";
 
