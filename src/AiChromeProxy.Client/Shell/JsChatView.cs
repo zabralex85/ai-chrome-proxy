@@ -5,9 +5,9 @@ using Microsoft.JSInterop;
 
 namespace AiChromeProxy.Client.Shell;
 
-/// <summary>Thin interop wrapper over <c>Scripts/diagrams.ts</c> and <c>Scripts/chat.ts</c> (compiled to <c>wwwroot/js</c>); no logic of its own (checked by the E2E scenarios and the manual checklist).</summary>
+/// <summary>Thin interop wrapper over <c>Scripts/diagrams.ts</c> and <c>Scripts/chat.ts</c> (compiled to <c>wwwroot/js</c>); and the chat box's attached files (<see cref="IAttachmentSource"/>); no logic of its own (checked by the E2E scenarios and the manual checklist).</summary>
 [ExcludeFromCodeCoverage]
-public sealed class JsChatView(IJSRuntime js) : IAsyncDisposable
+public sealed class JsChatView(IJSRuntime js) : IAttachmentSource, IAsyncDisposable
 {
 	private IJSObjectReference? _diagrams;
 	private IJSObjectReference? _chat;
@@ -53,6 +53,24 @@ public sealed class JsChatView(IJSRuntime js) : IAsyncDisposable
 		return callback;
 	}
 
+	/// <summary>Makes files pasted into or dropped on <paramref name="zone"/>, or picked with <paramref name="picker"/>, call <paramref name="add"/>.</summary>
+	/// <param name="zone">The chat box with its chips.</param>
+	/// <param name="picker">The paperclip file input.</param>
+	/// <param name="add">What to do with the files.</param>
+	/// <returns>The reference to dispose with the box.</returns>
+	public async Task<IDisposable> AcceptFilesAsync(ElementReference zone, ElementReference picker, Func<IReadOnlyList<AttachmentFile>, Task> add)
+	{
+		var callback = DotNetObjectReference.Create(new AttachCallback(add));
+		await (await ChatAsync()).InvokeVoidAsync("acceptFiles", zone, picker, callback);
+		return callback;
+	}
+
+	public async Task<byte[]> ReadChunkAsync(string handle, long offset, int length) =>
+		await (await ChatAsync()).InvokeAsync<byte[]>("readAttachment", handle, offset, length);
+
+	public async Task ForgetAsync(string handle) =>
+		await (await ChatAsync()).InvokeVoidAsync("forgetAttachment", handle);
+
 	/// <summary>Makes a click on a <c>path:line</c> link in the log call <paramref name="open"/> with its <c>#open=path:line</c> address.</summary>
 	/// <param name="log">The chat log.</param>
 	/// <param name="open">What to do with the address.</param>
@@ -92,6 +110,14 @@ public sealed class JsChatView(IJSRuntime js) : IAsyncDisposable
 	{
 		[JSInvokable]
 		public Task Open(string href) => open(href);
+	}
+
+	/// <summary>Target of <c>callback.invokeMethodAsync('Add', files)</c>.</summary>
+	[ExcludeFromCodeCoverage]
+	public sealed class AttachCallback(Func<IReadOnlyList<AttachmentFile>, Task> add)
+	{
+		[JSInvokable]
+		public Task Add(AttachmentFile[] files) => add(files);
 	}
 
 	/// <summary>Target of <c>callback.invokeMethodAsync('Submit', text)</c>.</summary>

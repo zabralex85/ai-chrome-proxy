@@ -14,7 +14,7 @@ public static class DependencyInjection
 {
 	/// <summary>
 	/// Registers the Cloudflare Access options (section <c>CloudflareAccess</c>), the JWKS HttpClient, the token validator, the
-	/// agent runner and the Claude tools probe (section <c>Agent</c>) and the file-system mirror (section <c>Mirror</c>; the host resolves an empty <c>Root</c> with <see cref="MirrorOptions.ResolveRoot"/>).
+	/// agent runner and the Claude tools probe (section <c>Agent</c>) and the file-system mirror (section <c>Mirror</c>; the host resolves an empty <c>Root</c> with <see cref="MirrorOptions.ResolveRoot"/>) and the chat attachments store (section <c>Attachments</c>; the host resolves an empty <c>Root</c> with <see cref="AttachmentsOptions.ResolveRoot"/>).
 	/// </summary>
 	public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
 	{
@@ -28,6 +28,8 @@ public static class DependencyInjection
 		services.Configure<ProjectsOptions>(configuration.GetSection(ProjectsOptions.Section));
 		services.AddSingleton<IProjectStore, SqliteProjectStore>();
 		services.AddSingleton<IChatStore, SqliteChatStore>();
+		services.Configure<AttachmentsOptions>(configuration.GetSection(AttachmentsOptions.Section));
+		services.AddSingleton<IAttachmentStore, FileSystemAttachmentStore>();
 		services.AddOptions<AgentOptions>()
 			.Bind(configuration.GetSection(AgentOptions.Section))
 			.Validate(o => o.HasValidIdleTimeout, "Agent:IdleTimeout must be positive and at most 49 days, or -00:00:00.001 for no limit.")

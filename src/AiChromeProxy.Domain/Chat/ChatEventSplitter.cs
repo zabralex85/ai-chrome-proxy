@@ -12,7 +12,7 @@ public static class ChatEventSplitter
 	/// Truncates <c>summary</c> to <see cref="ChatLimits.ToolSummaryBytes"/> UTF-8 bytes (ending in an ellipsis) — a <c>permission</c>'s
 	/// to <see cref="ChatLimits.PermissionSummaryBytes"/> serialized, marking it <c>truncated</c> when cut — and <c>name</c> to
 	/// <see cref="ChatLimits.MaxNameBytes"/>, and splits a long <c>prompt</c>/<c>text</c>/<c>message</c> into parts that each serialize
-	/// to at most <paramref name="maxBytes"/> bytes; parts keep the original <c>Seq</c> (the caller numbers them) and never cut a surrogate pair.
+	/// to at most <paramref name="maxBytes"/> bytes; parts keep the original <c>Seq</c> (the caller numbers them) and never cut a surrogate pair; only the first part keeps <c>attachments</c>.
 	/// </summary>
 	/// <param name="value">The event.</param>
 	/// <param name="maxBytes">Largest serialized part; below <see cref="ChatLimits.MaxEventBytes"/> when the event must also fit a page with others' fields.</param>
@@ -54,7 +54,8 @@ public static class ChatEventSplitter
 				length = Math.Max(2, length - (excess / 12) - 1);
 			}
 
-			parts.Add(e with { Text = text.Substring(start, length) });
+			// Attachments belong to the message once: the first part carries them.
+			parts.Add(e with { Text = text.Substring(start, length), Attachments = parts.Count == 0 ? e.Attachments : null });
 			start += length;
 		}
 

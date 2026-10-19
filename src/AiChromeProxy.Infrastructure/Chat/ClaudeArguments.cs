@@ -15,7 +15,7 @@ public static class ClaudeArguments
 	private const string ApprovalTool = "mcp__aicp__approve";
 
 	/// <summary>
-	/// The arguments for one turn. <c>--allowedTools</c> is variadic, so it comes right before <c>--append-system-prompt</c>, which ends its list;
+	/// The arguments for one turn. <c>--allowedTools</c> and <c>--add-dir</c> are variadic, so they come right before <c>--append-system-prompt</c>, which ends their list;
 	/// <c>--settings</c> (the project's MCP server and plugin switches) comes before every variadic flag (<c>--mcp-config</c> too), so none swallows it;
 	/// <see cref="AgentOptions.Args"/> follow last.
 	/// </summary>
@@ -61,6 +61,14 @@ public static class ClaudeArguments
 		{
 			args.Add("--allowedTools");
 			args.AddRange(rules);
+		}
+
+		// Variadic as well; --append-system-prompt ends its list too.
+		var dirs = (run.AddDirs ?? []).Where(d => !string.IsNullOrWhiteSpace(d) && !d.StartsWith('-')).ToList();
+		if (dirs.Count > 0)
+		{
+			args.Add("--add-dir");
+			args.AddRange(dirs);
 		}
 
 		args.AddRange(["--append-system-prompt", Convention]);

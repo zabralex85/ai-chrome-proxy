@@ -5,6 +5,7 @@ using AiChromeProxy.Application.Transport;
 using AiChromeProxy.Client.Transport;
 using AiChromeProxy.Domain;
 using AiChromeProxy.Domain.Chat;
+using AiChromeProxy.Infrastructure.Chat;
 using AiChromeProxy.Infrastructure.Sync;
 using AiChromeProxy.Tests.Application;
 using AiChromeProxy.Tests.Server;
@@ -27,12 +28,14 @@ public sealed class LoopbackServer : IDisposable
 		var store = new FileSystemMirrorStore(Options.Create(new MirrorOptions { Root = MirrorRoot }));
 		_sessions = new SyncSessions(store, Projects, new ListLogger<SyncSession>(), TimeProvider.System, Watcher);
 		Broker = new PermissionBroker(Projects, TimeProvider.System, new ListLogger<PermissionBroker>());
-		Chat = new ChatService(Chats, store, Projects, Agent, TimeProvider.System, new ListLogger<ChatService>(), Broker, new ApprovalEndpoint());
+		Attachments = new ChatAttachments(new FileSystemAttachmentStore(Options.Create(new AttachmentsOptions { Root = AttachmentsRoot })), TimeProvider.System);
+		Chat = new ChatService(Chats, store, Projects, Agent, TimeProvider.System, new ListLogger<ChatService>(), Broker, new ApprovalEndpoint(), attachments: Attachments);
 		_router = new EnvelopeRouter(
 		[
 			.. SyncHandler.Types.Select(t => (IEnvelopeHandler)new SyncHandler(t, _sessions)),
 			.. ProjectSettingsHandler.Types.Select(t => new ProjectSettingsHandler(t, Projects, _sessions)),
 			.. ChatHandler.Types.Select(t => new ChatHandler(t, Chat)),
+			new ChatAttachHandler(Attachments),
 			.. ClaudeToolsHandler.Types.Select(t => new ClaudeToolsHandler(t, Projects, store, new ToolsProbe(this), TimeProvider.System, new ListLogger<ClaudeToolsHandler>())),
 		]);
 		Transport.Reply = ReplyAsync;
@@ -41,7 +44,12 @@ public sealed class LoopbackServer : IDisposable
 
 	public string MirrorRoot { get; } = Path.Combine(TempRootCleanup.Root, Guid.NewGuid().ToString("N"));
 
+	public string AttachmentsRoot { get; } = Path.Combine(TempRootCleanup.Root, Guid.NewGuid().ToString("N"));
+
 	public FakeTransport Transport { get; } = new();
+
+	/// <summary>The server's attachment uploads.</summary>
+	public ChatAttachments Attachments { get; }
 
 	/// <summary>The server's mirror watcher: <c>RaiseAsync</c> stands for an edit seen on the mirror (its pushes reach <see cref="Transport"/>).</summary>
 	public FakeMirrorWatcher Watcher { get; } = new();
@@ -91,6 +99,11 @@ public sealed class LoopbackServer : IDisposable
 		if (Directory.Exists(MirrorRoot))
 		{
 			Directory.Delete(MirrorRoot, recursive: true);
+		}
+
+		if (Directory.Exists(AttachmentsRoot))
+		{
+			Directory.Delete(AttachmentsRoot, recursive: true);
 		}
 	}
 

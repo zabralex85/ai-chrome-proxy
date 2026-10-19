@@ -138,7 +138,7 @@ public sealed class ChatSession
 
 			switch (e.Kind)
 			{
-				case ChatEventKinds.Prompt when Title.Length == 0 && e.Text is { } text:
+				case ChatEventKinds.Prompt when Title.Length == 0 && (string.IsNullOrWhiteSpace(e.Text) ? e.Attachments?.FirstOrDefault()?.Name : e.Text) is { } text:
 					Title = Shorten(text);
 					break;
 				case ChatEventKinds.Message or ChatEventKinds.Tool or ChatEventKinds.ToolResult:
@@ -267,11 +267,11 @@ public sealed class ChatSession
 		var text = e.Text ?? string.Empty;
 		if (items.Count > 0 && items[^1] is { Streaming: false } last && last.Kind == kind && last.RunId == e.RunId)
 		{
-			items[^1] = last with { Text = last.Text + text };
+			items[^1] = last with { Text = last.Text + text, Attachments = last.Attachments ?? e.Attachments };
 			return;
 		}
 
-		items.Add(new ChatItem(kind, e.RunId, text));
+		items.Add(new ChatItem(kind, e.RunId, text, Attachments: e.Attachments));
 	}
 
 	private Run RunOf(string runId)

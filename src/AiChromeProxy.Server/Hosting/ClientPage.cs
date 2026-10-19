@@ -62,7 +62,7 @@ public static partial class ClientPage
 		var hashes = InlineScript().Matches(html)
 			.Select(m => $"'sha256-{Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(m.Groups[1].Value.ReplaceLineEndings("\n"))))}'");
 		return "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' " + string.Join(' ', hashes)
-			+ "; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
+			+ "; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
 	}
 
 	/// <summary>A <c>&lt;script&gt;</c> without <c>src</c>; group 1 is its text.</summary>

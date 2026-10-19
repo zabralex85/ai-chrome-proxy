@@ -22,6 +22,9 @@ public sealed class BrowserHooks(IObjectContainer container)
 	/// <summary>Where the fake agent writes each run's arguments (<c>&lt;repo&gt;.args</c>).</summary>
 	public static string ArgsDirectory => _server!.ArgsDirectory;
 
+	/// <summary>Where the server keeps chat attachments (<c>&lt;repo&gt;\&lt;id&gt;\&lt;name&gt;</c>).</summary>
+	public static string AttachmentsRoot => _server!.AttachmentsRoot;
+
 	[BeforeTestRun]
 	public static async Task StartAsync()
 	{

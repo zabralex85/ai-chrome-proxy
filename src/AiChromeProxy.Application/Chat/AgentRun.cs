@@ -18,6 +18,7 @@ namespace AiChromeProxy.Application.Chat;
 /// Project <c>.mcp.json</c> servers approved in this project (setting <c>agentApprovedMcpServers</c>); <see cref="ChatService"/> passes only those
 /// whose entry is unchanged since (<see cref="McpJson.Approved"/>).
 /// </param>
+/// <param name="AddDirs">Extra folders the agent may read without asking (the repo's attachments folder when the message has attachments).</param>
 /// <remarks><see cref="ToString"/> hides <paramref name="ApprovalToken"/>, so a logged run never shows it.</remarks>
 public sealed record AgentRun(
 	string RepoFolder,
@@ -30,12 +31,13 @@ public sealed record AgentRun(
 	string? ApprovalToken = null,
 	IReadOnlyList<string>? DisabledMcpServers = null,
 	IReadOnlyList<string>? DisabledPlugins = null,
-	IReadOnlyList<string>? ApprovedMcpServers = null)
+	IReadOnlyList<string>? ApprovedMcpServers = null,
+	IReadOnlyList<string>? AddDirs = null)
 {
 	private bool PrintMembers(StringBuilder builder)
 	{
 		builder.Append(CultureInfo.InvariantCulture, $"RepoFolder = {RepoFolder}, Prompt = {Prompt}, ResumeId = {ResumeId}, Permissions = {Permissions}, Model = {Model}, ");
-		builder.Append(CultureInfo.InvariantCulture, $"AllowedTools = {AllowedTools}, DisabledMcpServers = {DisabledMcpServers}, DisabledPlugins = {DisabledPlugins}, ApprovedMcpServers = {ApprovedMcpServers}, ");
+		builder.Append(CultureInfo.InvariantCulture, $"AllowedTools = {AllowedTools}, DisabledMcpServers = {DisabledMcpServers}, DisabledPlugins = {DisabledPlugins}, ApprovedMcpServers = {ApprovedMcpServers}, AddDirs = {AddDirs}, ");
 		builder.Append(CultureInfo.InvariantCulture, $"ApprovalUrl = {ApprovalUrl}, ApprovalToken = {(ApprovalToken is null ? string.Empty : "***")}");
 		return true;
 	}

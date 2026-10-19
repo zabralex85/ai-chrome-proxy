@@ -480,6 +480,45 @@ public sealed class ChatEngineTests : IDisposable
 		await ExitAsync(process);
 	}
 
+	[Fact]
+	public async Task Send_WithAttachments_StartsTheRun_AndTheUserItemListsThem()
+	{
+		await ReadyAsync();
+		var repo = _chat.Repo!;
+		_server.Attachments.Append(new ChatAttachPayload(repo, "0123456789abcdef0123456789abcdef", "shot.png", 1, 0, "AQ", true));
+
+		Assert.True(await _chat.SendAsync("look", ["0123456789abcdef0123456789abcdef"]));
+		var process = await _server.Agent.NextAsync();
+
+		Assert.Contains("shot.png", process.Run.Prompt);
+		await UntilAsync(() => _chat.Current.Items.Any(i => i.Kind == ChatItemKind.User));
+		var user = _chat.Current.Items.First(i => i.Kind == ChatItemKind.User);
+		Assert.Equal("look", user.Text);
+		Assert.Equal([new ChatAttachment("shot.png", 1)], user.Attachments);
+	}
+
+	[Fact]
+	public async Task Send_OnlyAttachments_TitlesTheSessionWithTheFirstName()
+	{
+		await ReadyAsync();
+		var repo = _chat.Repo!;
+		_server.Attachments.Append(new ChatAttachPayload(repo, "0123456789abcdef0123456789abcdef", "shot.png", 1, 0, "AQ", true));
+
+		Assert.True(await _chat.SendAsync(string.Empty, ["0123456789abcdef0123456789abcdef"]));
+
+		await UntilAsync(() => _chat.Current.Title == "shot.png");
+	}
+
+	[Fact]
+	public async Task Send_AnExpiredAttachment_ReturnsFalse_WithTheServersMessage()
+	{
+		await ReadyAsync();
+
+		Assert.False(await _chat.SendAsync("look", ["ffffffffffffffffffffffffffffffff"]));
+
+		Assert.Contains(_chat.Current.Items, i => i.Kind == ChatItemKind.Error && i.Text == "An attachment has expired; attach it again.");
+	}
+
 	private static async Task UntilAsync(Func<bool> condition)
 	{
 		var deadline = DateTime.UtcNow.AddSeconds(10);

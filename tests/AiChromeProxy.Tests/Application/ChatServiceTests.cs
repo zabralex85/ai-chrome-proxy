@@ -5,6 +5,7 @@ using AiChromeProxy.Application.Transport;
 using AiChromeProxy.Domain;
 using AiChromeProxy.Domain.Chat;
 using AiChromeProxy.Domain.Sync;
+using AiChromeProxy.Infrastructure.Chat;
 using AiChromeProxy.Infrastructure.Sync;
 using AiChromeProxy.Tests.Server;
 using Microsoft.Extensions.Logging;
@@ -33,6 +34,8 @@ public sealed class ChatServiceTests : IDisposable
 	private readonly ListLogger<ChatService> _logger = new();
 	private readonly Endpoint _endpoint = new();
 	private readonly PermissionBroker _broker;
+	private readonly string _attachRoot = Path.Combine(TempRootCleanup.Root, Guid.NewGuid().ToString("N"));
+	private readonly ChatAttachments _attachments;
 	private readonly ChatService _service;
 	private readonly EnvelopeRouter _router;
 
@@ -43,7 +46,8 @@ public sealed class ChatServiceTests : IDisposable
 		_store = new MemoryChatStore(_time);
 		var mirror = new FileSystemMirrorStore(Options.Create(new MirrorOptions { Root = _root }));
 		_broker = new PermissionBroker(_projects, _time, new ListLogger<PermissionBroker>());
-		_service = new ChatService(_store, mirror, _projects, _runner, _time, _logger, _broker, _endpoint);
+		_attachments = new ChatAttachments(new FileSystemAttachmentStore(Options.Create(new AttachmentsOptions { Root = _attachRoot })), _time);
+		_service = new ChatService(_store, mirror, _projects, _runner, _time, _logger, _broker, _endpoint, attachments: _attachments);
 		_router = new EnvelopeRouter([.. ChatHandler.Types.Select(t => new ChatHandler(t, _service))]);
 	}
 
@@ -53,6 +57,10 @@ public sealed class ChatServiceTests : IDisposable
 	{
 		_service.Dispose();
 		Directory.Delete(_root, recursive: true);
+		if (Directory.Exists(_attachRoot))
+		{
+			Directory.Delete(_attachRoot, recursive: true);
+		}
 	}
 
 	[Fact]
@@ -755,6 +763,79 @@ public sealed class ChatServiceTests : IDisposable
 		Assert.Equal((null, null), (next.Run.ApprovalUrl, next.Run.ApprovalToken));
 	}
 
+	[Fact]
+	public async Task Send_WithAttachments_GivesClaudeTheirPaths_AndTheFolder_AndStoresNamesOnThePrompt()
+	{
+		var client = new Client("c1");
+		await OpenAsync(client, Repo);
+		var shot = Attach("0123456789abcdef0123456789abcdef", "shot.png", [1, 2, 3]);
+		var notes = Attach("fedcba9876543210fedcba9876543210", "notes.txt", [4]);
+
+		await RouteAsync(client, MessageTypes.ChatSend, new ChatSendPayload(Repo, null, "Look at these", [shot.Id, notes.Id]));
+		var process = await _runner.NextAsync();
+
+		Assert.Equal($"Look at these\n\n{ChatService.AttachedFilesHeader}\n- {shot.Path}\n- {notes.Path}", process.Run.Prompt);
+		Assert.Equal([Path.Combine(_attachRoot, Repo)], process.Run.AddDirs);
+		var prompt = await client.WaitAsync(e => e.Kind == ChatEventKinds.Prompt);
+		Assert.Equal("Look at these", prompt.Text);
+		Assert.Equal([new ChatAttachment("shot.png", 3), new ChatAttachment("notes.txt", 1)], prompt.Attachments);
+	}
+
+	[Fact]
+	public async Task Send_OnlyAttachments_IsAccepted_AndTheTitleIsTheFirstName()
+	{
+		var client = new Client("c1");
+		await OpenAsync(client, Repo);
+		var shot = Attach("0123456789abcdef0123456789abcdef", "shot.png", [1]);
+
+		await RouteAsync(client, MessageTypes.ChatSend, new ChatSendPayload(Repo, null, " ", [shot.Id]));
+		var process = await _runner.NextAsync();
+
+		Assert.Equal($"{ChatService.AttachedFilesHeader}\n- {shot.Path}", process.Run.Prompt);
+		Assert.Equal("shot.png", Assert.Single(await SessionsAsync(client, Repo)).Title);
+	}
+
+	[Fact]
+	public async Task Send_WithoutAttachments_RunHasNoAddDirs()
+	{
+		var client = new Client("c1");
+		await OpenAsync(client, Repo);
+
+		await SendAsync(client, Repo, null, "hi");
+
+		Assert.Null((await _runner.NextAsync()).Run.AddDirs);
+	}
+
+	[Fact]
+	public async Task Send_UnknownOrForeignAttachment_IsRefused_AndNoSessionIsCreated()
+	{
+		var client = new Client("c1");
+		await OpenAsync(client, Repo);
+		var foreign = _attachments.Append(new ChatAttachPayload("other", "0123456789abcdef0123456789abcdef", "a.txt", 1, 0, SyncData.Encode([1]), true))!;
+
+		Assert.Equal(ErrorCodes.BadRequest, await ErrorAsync(client, MessageTypes.ChatSend, new ChatSendPayload(Repo, null, "hi", [foreign.Id])));
+		Assert.Equal(ErrorCodes.BadRequest, await ErrorAsync(client, MessageTypes.ChatSend, new ChatSendPayload(Repo, null, "hi", ["ffffffffffffffffffffffffffffffff"])));
+		Assert.Empty(await SessionsAsync(client, Repo));
+	}
+
+	[Fact]
+	public async Task Send_NoTextAndNoAttachments_IsABadRequest()
+	{
+		var client = new Client("c1");
+		await OpenAsync(client, Repo);
+
+		Assert.Equal(ErrorCodes.BadRequest, await ErrorAsync(client, MessageTypes.ChatSend, new ChatSendPayload(Repo, null, " ", [])));
+	}
+
+	[Fact]
+	public async Task Send_ElevenAttachments_IsTooLarge()
+	{
+		var client = new Client("c1");
+		await OpenAsync(client, Repo);
+
+		Assert.Equal(ErrorCodes.TooLarge, await ErrorAsync(client, MessageTypes.ChatSend, new ChatSendPayload(Repo, null, "hi", [.. Enumerable.Range(0, 11).Select(i => i.ToString("x32"))])));
+	}
+
 	private static string McpJsonText(string command) => $$$$"""{"mcpServers":{"team-db":{"command":"{{{{command}}}}","args":["-y","db-mcp"]}}}""";
 
 	private static string TeamDbApproval(string command) => ClaudeToolEntries.Approval("team-db", McpJson.Parse(McpJsonText(command))["team-db"].Hash);
@@ -794,6 +875,12 @@ public sealed class ChatServiceTests : IDisposable
 		var reply = await RouteAsync(client, MessageTypes.ChatSend, new ChatSendPayload(repo, sessionId, text));
 		Assert.Equal(MessageTypes.ChatStarted, reply.Type);
 		return reply.Payload.Deserialize<ChatStartedPayload>(JsonSerializerOptions.Web)!;
+	}
+
+	private (string Id, string Path) Attach(string id, string name, byte[] data)
+	{
+		_attachments.Append(new ChatAttachPayload(Repo, id, name, data.Length, 0, SyncData.Encode(data), true));
+		return (id, _attachments.Resolve(Repo, [id])[0].Path);
 	}
 
 	/// <summary>The Server's approval endpoint (none until a test sets one).</summary>

@@ -20,6 +20,7 @@ public sealed class AppServer : IAsyncDisposable
 		// A fresh mirror and database per run: project settings and baselines of an earlier run must not leak in.
 		var root = Path.Combine(Path.GetTempPath(), "aicp-e2e", Guid.NewGuid().ToString("N"));
 		MirrorRoot = Path.Combine(root, "mirror");
+		AttachmentsRoot = Path.Combine(root, "attachments");
 		ArgsDirectory = Directory.CreateDirectory(Path.Combine(root, "args")).FullName;
 		_factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
 		{
@@ -29,6 +30,7 @@ public sealed class AppServer : IAsyncDisposable
 			// A free port, not 0: the approval endpoint's address that the agent is given comes from the configured port.
 			b.UseSetting("Server:Port", FreePort().ToString(System.Globalization.CultureInfo.InvariantCulture));
 			b.UseSetting("Mirror:Root", MirrorRoot);
+			b.UseSetting("Attachments:Root", AttachmentsRoot);
 			b.UseSetting("Projects:Database", Path.Combine(root, "aicp.db"));
 
 			// Claude is a fake agent: it prints the fixture named after the first word of the message (Fixtures/tour.jsonl, slow.jsonl, twotext.jsonl), a little slowly.
@@ -52,6 +54,9 @@ public sealed class AppServer : IAsyncDisposable
 
 	/// <summary>Where the server keeps the mirrors (one folder per repo).</summary>
 	public string MirrorRoot { get; }
+
+	/// <summary>Where the server keeps chat attachments (one folder per repo).</summary>
+	public string AttachmentsRoot { get; }
 
 	/// <summary>Where the fake agent writes each run's arguments, as <c>&lt;repo&gt;.args</c>.</summary>
 	public string ArgsDirectory { get; }

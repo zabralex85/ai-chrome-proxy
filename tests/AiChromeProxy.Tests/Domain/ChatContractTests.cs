@@ -267,5 +267,39 @@ public sealed class ChatContractTests
 		Assert.Equal(expected, new ProjectSettings { AgentPermissions = value }.AgentPermissionsOrDefault);
 	}
 
+	[Fact]
+	public void Attachments_AreOptional_CamelCase_AndLeftOutWhenNull()
+	{
+		Assert.Equal("""{"repo":"r","sessionId":null,"text":"hi","attachments":["a"]}""", Json(new ChatSendPayload("r", null, "hi", ["a"])));
+		Assert.Equal("""{"repo":"r","sessionId":null,"text":"hi"}""", Json(new ChatSendPayload("r", null, "hi")));
+		Assert.Equal("""{"repo":"r","id":"i","name":"n.png","size":3,"offset":0,"data":"AAEC","last":true}""", Json(new ChatAttachPayload("r", "i", "n.png", 3, 0, "AAEC", true)));
+		Assert.Equal("""{"repo":"r","id":"i"}""", Json(new ChatAttachedPayload("r", "i")));
+		Assert.EndsWith(""","truncated":null,"attachments":[{"name":"n.png","size":3}]}""", Json(new ChatEvent("s", "u", 1, ChatEventKinds.Prompt, Text: string.Empty, Attachments: [new ChatAttachment("n.png", 3)])));
+		Assert.Null(JsonSerializer.Deserialize<ChatSendPayload>("""{"repo":"r","text":"hi"}""", JsonSerializerOptions.Web)!.Attachments);
+		Assert.Equal(new[] { "a" }, JsonSerializer.Deserialize<ChatSendPayload>("""{"repo":"r","text":"hi","attachments":["a"]}""", JsonSerializerOptions.Web)!.Attachments);
+	}
+
+	[Fact]
+	public void Split_KeepsAttachmentsOnTheFirstPartOnly()
+	{
+		var e = new ChatEvent("s", "u", 1, ChatEventKinds.Prompt, Text: new string('a', ChatLimits.MaxTextChars + 10), Attachments: [new ChatAttachment("a.png", 1)]);
+
+		var parts = ChatEventSplitter.Split(e);
+
+		Assert.Equal(2, parts.Count);
+		Assert.Equal("a.png", Assert.Single(parts[0].Attachments!).Name);
+		Assert.Null(parts[1].Attachments);
+	}
+
+	[Fact]
+	public void AttachmentLimits_MatchTheSpec()
+	{
+		Assert.Equal(20L * 1024 * 1024, ChatLimits.MaxAttachmentBytes);
+		Assert.Equal(10, ChatLimits.MaxAttachments);
+		Assert.Equal(16 * 1024, ChatLimits.AttachmentChunkSize);
+		Assert.Equal("chat.attach", MessageTypes.ChatAttach);
+		Assert.Equal("chat.attached", MessageTypes.ChatAttached);
+	}
+
 	private static string Json(object value) => JsonSerializer.Serialize(value, JsonSerializerOptions.Web);
 }
