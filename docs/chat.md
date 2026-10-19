@@ -74,6 +74,15 @@ The approval tool is an MCP endpoint, `/mcp/approve`, reachable only from `127.0
 - Replies render as markdown (raw HTML is not rendered), mermaid diagrams (mermaid 12.1.0, vendored) and `path:line` and `path#Symbol` links that open the file's tab in the [code viewer](navigator.md). **Enter** sends, **Shift+Enter** adds a line.
 - The status bar shows "Claude idle" or "Claude working... 0:42" and the last run's cost at API prices ("≈ $0.12 API"): on a Claude subscription runs are not charged, it only shows how heavy a run was.
 
+## Attachments
+
+Paste (Ctrl+V of a screenshot or of files copied in Explorer), drop files on the message box, or use the paperclip. Each file shows as a chip above the box — pictures with a preview — and uploads at once; **Send** waits until every chip is uploaded, and a message may consist of files alone. Pasted screenshots are named `pasted-<yyyyMMdd-HHmmss>.png`.
+
+- Up to 10 files per message, 20 MB each ("'name' is larger than 20 MB.", "At most 10 files per message."). A failed upload turns its chip red with the reason: remove it and attach the file again.
+- Files are stored on the home computer in `<DataDir>\attachments\<repo>\<id>\<name>` (`Attachments:Root`; in development `data\attachments`), outside the mirror: they never reach your folder or git. Claude gets their absolute paths after your text ("Attached files (read them with the Read tool): ...") and may read that folder without a card (`--add-dir`); pictures and PDFs are read with its Read tool.
+- Sent messages list their files (name and size) in the history. Attachments are deleted after 30 days, unfinished uploads after a day (checked when an upload starts, at most once a day); a resumed session keeps what Claude read. Sending a file deleted meanwhile says "An attachment has expired; attach it again." and keeps the chips.
+- Copying cells or text from Office puts text and a picture on the clipboard: Ctrl+V pastes the text and attaches nothing. A file dropped next to the box is ignored instead of being opened by the browser.
+
 ## Diagrams
 
 Each drawn diagram has a toolbar (shown on hover or focus, always on touch screens):
@@ -92,12 +101,13 @@ Pictures are saved in the theme you see, with its background. PNG is drawn at tw
 - In *Ask before commands* mode edits are applied without a card, and the back channel writes them into your real folder (turn off *Apply server changes automatically* to review each one first).
 - Approving a build or test command runs whatever build files and scripts Claude may just have edited (`Directory.Build.props`, `package.json` scripts, test code): approving `dotnet build` approves that code. `.git` is never synced in either direction, so hooks Claude writes under `.git/hooks` stay on the mirror, but a `git` command run there would run them.
 - In `-p` mode Claude Code loads the repo's own `.claude/settings.json` (its hooks run without a card, its permissions apply), and Claude can write that file like any other edit, changing what the next run may do. Opt-in hardening: `"Args": [ "--setting-sources", "user" ]` in `Agent` loads only your user settings; the trade-off is that the project's `.claude/settings.json` and `.claude/settings.local.json` (their permissions, hooks and environment) are ignored.
+- Attached files are kept as the service account in the attachments folder for 30 days and are readable by every run of that repo.
 - MCP servers run as the service account with its full access: approve or keep on only servers you trust. Claude can edit `.mcp.json` like any other file; an approved server whose entry changed stays off until you approve it again, but review `.mcp.json` diffs before you do.
 - The run's approval token is in `--mcp-config` on Claude's command line, so other processes of the same account can read it; with it they can only create approval cards, not answer them.
 
 ## Limitations
 
-- No attachments, no slash commands or TUI.
+- No slash commands or TUI.
 - One run per repo.
 - The cost is Claude Code's own estimate at API prices, not what a subscription is charged.
 - Edit conflicts behave as in the [back channel](sync.md#back-channel).
@@ -122,3 +132,6 @@ Run this before a release that touches the chat. Use a test repository.
 - [ ] Open the app from a page on another origin: the hub refuses it (403).
 - [ ] **Claude tools** on the real install: after a message and after **Check now** the servers and plugins and their statuses match `claude mcp list` and `claude plugin list` run as the service account (a failed server shows **Failed** with its reason, the check itself does not fail).
 - [ ] Switch a server off (e.g. `blender`) and **Save**: the next message's run does not load it (ask Claude to list its MCP tools; the tab then shows **Off in this project**); switch it back on and it is back on the next message. Same for a plugin.
+- [ ] Paste a screenshot (Win+Shift+S, then Ctrl+V in the box) and drop a PDF: chips with preview and size, Send waits for the upload; Claude describes the picture and quotes the PDF. The history shows both files after a reload; neither appears in your folder.
+- [ ] Attach a file over 20 MB and an 11th file: refused with the note. Remove a chip during a large upload: it disappears and the message goes without it.
+- [ ] Copy cells from Excel and press Ctrl+V in the box: the text is pasted, no chip appears.

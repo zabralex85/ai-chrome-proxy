@@ -80,3 +80,23 @@ Scenario: The project settings choose how Claude may act and the model
 	When I choose "Allow everything" and type the model "opus" and save
 	Then the settings are saved
 	And I save screenshots named "settings"
+
+Scenario: A pasted picture and a dropped file go to Claude with the message
+	Given the app is connected with a synced folder open
+	When I paste a picture into the chat box
+	And I drop a file "notes.txt" on the chat box
+	Then the chat box shows 2 attachments
+	And I save screenshots named "attachments"
+	When I type "attach please" and press Enter
+	Then my message "attach please" is shown
+	And the message lists the attachments "pasted-" and "notes.txt"
+	And the chat box shows 0 attachments
+	And Claude's answer says "Got the files."
+	And the run could read the attachments folder, which holds "notes.txt"
+	And I save screenshots named "attachments-sent"
+
+Scenario: Text copied from Office together with a picture pastes the text
+	Given the app is connected with a synced folder open
+	When I paste text together with a picture into the chat box
+	Then the paste was left to the browser
+	And the chat box shows 0 attachments
