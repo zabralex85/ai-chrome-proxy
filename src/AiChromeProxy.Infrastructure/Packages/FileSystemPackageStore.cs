@@ -7,7 +7,8 @@ namespace AiChromeProxy.Infrastructure.Packages;
 /// <summary><see cref="IPackageStore"/> on the file system under <see cref="PackagesOptions.Root"/>.</summary>
 public sealed class FileSystemPackageStore(IOptions<PackagesOptions> options) : IPackageStore
 {
-	private const string TempSuffix = ".tmp";
+	/// <summary>Temp folders start with this; a NuGet version (<c>[A-Za-z0-9.+-]</c>) cannot.</summary>
+	private const string TempMark = "~";
 
 	private readonly string _nuget = Path.Combine(Path.TrimEndingDirectorySeparator(Path.GetFullPath(options.Value.Root)), "nuget");
 
@@ -19,7 +20,7 @@ public sealed class FileSystemPackageStore(IOptions<PackagesOptions> options) : 
 	{
 		var folder = Child(_nuget, id);
 		Child(folder, version);
-		var temp = Child(folder, version + "." + tag + TempSuffix);
+		var temp = Child(folder, TempMark + version + "." + tag);
 		if (Directory.Exists(temp))
 		{
 			Directory.Delete(temp, recursive: true);
@@ -51,14 +52,27 @@ public sealed class FileSystemPackageStore(IOptions<PackagesOptions> options) : 
 	{
 		var temp = Temp(upload);
 		var target = Package(id, version);
-		if (Directory.Exists(target))
+		if (!string.Equals(Path.GetFileName(Path.GetDirectoryName(temp)), Path.GetFileName(Path.GetDirectoryName(target)), StringComparison.OrdinalIgnoreCase)
+			|| !Path.GetFileName(temp).StartsWith(TempMark + version + ".", StringComparison.OrdinalIgnoreCase))
 		{
-			Directory.Delete(temp, recursive: true);
-			return false;
+			throw new ArgumentException("The upload belongs to another package.", nameof(upload));
 		}
 
-		Directory.Move(temp, target);
-		return true;
+		try
+		{
+			if (!Directory.Exists(target))
+			{
+				Directory.Move(temp, target);
+				return true;
+			}
+		}
+		catch (IOException) when (Directory.Exists(target))
+		{
+			// Another upload committed the same package between the check and the move: ours is the loser.
+		}
+
+		Directory.Delete(temp, recursive: true);
+		return false;
 	}
 
 	public void Discard(string upload)
@@ -77,7 +91,7 @@ public sealed class FileSystemPackageStore(IOptions<PackagesOptions> options) : 
 			return 0;
 		}
 
-		var temps = Directory.EnumerateDirectories(_nuget).SelectMany(Directory.EnumerateDirectories).Where(d => d.EndsWith(TempSuffix, StringComparison.OrdinalIgnoreCase)).ToList();
+		var temps = Directory.EnumerateDirectories(_nuget).SelectMany(Directory.EnumerateDirectories).Where(d => Path.GetFileName(d).StartsWith(TempMark, StringComparison.Ordinal)).ToList();
 		temps.ForEach(d => Directory.Delete(d, recursive: true));
 		return temps.Count;
 	}
@@ -110,7 +124,7 @@ public sealed class FileSystemPackageStore(IOptions<PackagesOptions> options) : 
 	private string Temp(string upload)
 	{
 		var full = Path.GetFullPath(upload);
-		if (!full.EndsWith(TempSuffix, StringComparison.OrdinalIgnoreCase) || !string.Equals(Path.GetDirectoryName(Path.GetDirectoryName(full)), _nuget, StringComparison.OrdinalIgnoreCase))
+		if (!Path.GetFileName(full).StartsWith(TempMark, StringComparison.Ordinal) || !string.Equals(Path.GetDirectoryName(Path.GetDirectoryName(full)), _nuget, StringComparison.OrdinalIgnoreCase))
 		{
 			throw new ArgumentException("Not an upload of this store.", nameof(upload));
 		}

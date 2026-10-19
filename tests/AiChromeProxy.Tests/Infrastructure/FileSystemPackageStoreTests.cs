@@ -71,6 +71,65 @@ public sealed class FileSystemPackageStoreTests : IDisposable
 	}
 
 	[Fact]
+	public void DeleteTemps_KeepsAPackageWhoseVersionEndsInTmp()
+	{
+		Commit("corp.a", "1.0.0-rc.tmp", "t1");
+
+		Assert.Equal(0, _store.DeleteTemps());
+		Assert.True(_store.HasNuGet("corp.a", "1.0.0-rc.tmp"));
+		Assert.Throws<ArgumentException>(() => _store.Discard(Path.Combine(_root, "nuget", "corp.a", "1.0.0-rc.tmp")));
+	}
+
+	[Fact]
+	public void Commit_WithAnotherPackagesHandle_Throws()
+	{
+		var upload = _store.Begin("corp.a", "1.0.0", "t1");
+
+		Assert.Throws<ArgumentException>(() => _store.Commit(upload, "corp.b", "1.0.0"));
+		Assert.Throws<ArgumentException>(() => _store.Commit(upload, "corp.a", "2.0.0"));
+		Assert.True(Directory.Exists(upload));
+	}
+
+	[Fact]
+	public void Commit_WhenThePackageAppearsMeanwhile_DiscardsTheUpload()
+	{
+		var upload = _store.Begin("corp.a", "1.0.0", "t1");
+		var target = Path.Combine(_root, "nuget", "corp.a", "1.0.0");
+		Directory.CreateDirectory(target);
+		File.WriteAllBytes(Path.Combine(target, "x"), [1]);
+
+		// The Directory.Exists pre-check also catches this; the IOException path of the race itself is not tested deterministically.
+		Assert.False(_store.Commit(upload, "corp.a", "1.0.0"));
+		Assert.False(Directory.Exists(upload));
+	}
+
+	[Fact]
+	public void Sha512_WithAPathEscape_Throws()
+	{
+		var upload = _store.Begin("corp.a", "1.0.0", "t1");
+		Assert.Throws<ArgumentException>(() => _store.Sha512(upload, "../x.dll"));
+	}
+
+	[Fact]
+	public void Append_WithARootedPath_Throws()
+	{
+		var upload = _store.Begin("corp.a", "1.0.0", "t1");
+		Assert.Throws<ArgumentException>(() => _store.Append(upload, Path.Combine(_root, "x.dll"), [1], create: true));
+	}
+
+	[Fact]
+	public void Begin_WithTheSameTag_ReplacesTheFolder()
+	{
+		var first = _store.Begin("corp.a", "1.0.0", "t1");
+		_store.Append(first, "old.dll", [1], create: true);
+
+		var second = _store.Begin("corp.a", "1.0.0", "t1");
+
+		Assert.Equal(first, second);
+		Assert.Empty(Directory.GetFileSystemEntries(second));
+	}
+
+	[Fact]
 	public void DeleteTemps_WithoutARoot_IsZero() => Assert.Equal(0, _store.DeleteTemps());
 
 	[Fact]
