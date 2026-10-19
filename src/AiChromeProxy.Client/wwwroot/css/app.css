@@ -2554,6 +2554,14 @@ h1:focus-visible {
     padding: 0 14px 10px;
 }
 
+.packages-heading {
+    margin: 10px 0 4px;
+}
+
+.packages > .packages-heading {
+    padding: 0 14px;
+}
+
 .packages-row {
     display: flex;
     flex-wrap: wrap;

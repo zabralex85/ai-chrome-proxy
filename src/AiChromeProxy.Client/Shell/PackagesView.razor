@@ -11,6 +11,7 @@
     }
     else if (Engine.Source == SourceState.None)
     {
+        <h2 class="panel-title packages-heading">Sources</h2>
         <div class="empty-state">
             <Icon Name="folder-open" Size="32" Class="empty-icon" />
             <p>Add your NuGet cache folder, usually <code>%USERPROFILE%\.nuget\packages</code>, so that private packages reach the home server.</p>
@@ -19,6 +20,7 @@
     }
     else
     {
+        <h2 class="panel-title packages-heading">Sources</h2>
         <div class="folder-row" data-testid="packages-source">
             <Icon Name="folder" Class="kind-folder" />
             <span class="folder-name">NuGet cache · @Engine.SourceName · @StateText(Engine.Source)</span>
@@ -29,6 +31,7 @@
             <button type="button" class="button link" data-testid="packages-remove-source" @onclick="Engine.RemoveSourceAsync">Remove</button>
         </div>
         <div class="packages-list">
+            <h2 class="panel-title packages-heading">Packages this folder needs</h2>
             @if (Engine.Summary.Length > 0)
             {
                 <div class="sync-summary" data-testid="packages-summary">@Engine.Summary</div>

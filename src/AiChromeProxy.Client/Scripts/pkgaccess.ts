@@ -83,7 +83,22 @@ function isNotFound(e: unknown): boolean {
     return e instanceof DOMException && (e.name === 'NotFoundError' || e.name === 'TypeMismatchError');
 }
 
-/** The folder at the path under the picked folder, or null when it (or a part of the path) is missing. */
+/**
+ * Throws when the picked folder itself is gone (deleted or moved), so the engine shows "Not found" instead of every package being
+ * "Not on this computer". Reading one entry is what fails then; a lookup below the folder only says NotFoundError either way.
+ */
+async function ensureRoot(): Promise<void> {
+    try {
+        await pickedRoot().entries().next();
+    } catch (e) {
+        if (isNotFound(e)) {
+            throw new Error('NotFoundError: the NuGet cache folder is gone.');
+        }
+        throw e;
+    }
+}
+
+/** The folder at the path under the picked folder, or null when it (or a part of the path) is missing; throws when the picked folder is gone. */
 async function folderAt(segments: string[]): Promise<FileSystemDirectoryHandle | null> {
     let dir = pickedRoot();
     try {
@@ -92,6 +107,7 @@ async function folderAt(segments: string[]): Promise<FileSystemDirectoryHandle |
         }
     } catch (e) {
         if (isNotFound(e)) {
+            await ensureRoot();
             return null;
         }
         throw e;
@@ -99,7 +115,7 @@ async function folderAt(segments: string[]): Promise<FileSystemDirectoryHandle |
     return dir;
 }
 
-/** The file at the path under the picked folder, or null when it is missing. */
+/** The file at the path under the picked folder, or null when it is missing; throws when the picked folder is gone. */
 async function fileAt(path: string): Promise<File | null> {
     const segments = segmentsOf(path);
     const name = segments.pop() ?? '';
@@ -111,15 +127,11 @@ async function fileAt(path: string): Promise<File | null> {
         return await (await dir.getFileHandle(name)).getFile();
     } catch (e) {
         if (isNotFound(e)) {
+            await ensureRoot();
             return null;
         }
         throw e;
     }
-}
-
-/** Whether this browser can open folders: a secure context with the File System Access API (desktop Chrome, Edge). */
-export function supported(): boolean {
-    return isSecureContext && 'showDirectoryPicker' in window;
 }
 
 /** Shows the folder picker; returns the folder name, or null when the user cancelled. */
@@ -138,9 +150,12 @@ export async function pick(): Promise<string | null> {
     return handle.name;
 }
 
-/** The folder picked on an earlier visit: { name, granted }, or null. */
+/**
+ * The folder picked in this tab or on an earlier visit: { name, granted }, or null. A handle already in memory is not read from IndexedDB
+ * again: Chrome closes the tab that reads back a stored handle whose origin-private folder was deleted (the E2E stand-in for the cache).
+ */
 export async function restore(): Promise<FolderGrant | null> {
-    const handle = await tryIdb<FileSystemDirectoryHandle | undefined, null>('readonly', s => s.get(KEY), null);
+    const handle = root ?? await tryIdb<FileSystemDirectoryHandle | undefined, null>('readonly', s => s.get(KEY), null);
     if (!handle) {
         return null;
     }
@@ -159,13 +174,13 @@ export async function forget(): Promise<void> {
     await tryIdb('readwrite', s => s.delete(KEY), undefined);
 }
 
-/** Text of a file, or null when it is missing. */
+/** Text of a file, or null when it is missing; throws when the picked folder is gone. */
 export async function readText(path: string): Promise<string | null> {
     const file = await fileAt(path);
     return file === null ? null : await file.text();
 }
 
-/** Every file under the folder (recursive; paths relative to it, with '/'), or null when the folder is missing. */
+/** Every file under the folder (recursive; paths relative to it, with '/'), or null when the folder is missing; throws when the picked folder is gone. */
 export async function list(folder: string): Promise<FileMeta[] | null> {
     const start = await folderAt(segmentsOf(folder));
     if (start === null) {
@@ -173,7 +188,7 @@ export async function list(folder: string): Promise<FileMeta[] | null> {
     }
     const found: FileMeta[] = [];
     // A listing is never silently partial: too deep throws (the engine shows "Failed: ..."). More than MAX_FILES files stops the walk with
-    // MAX_FILES + 1 entries, which the engine already reports as "Too large to upload (N files > 2 000)"; walking a huge package on is pointless.
+    // MAX_FILES + 1 entries, which the engine reports as "Too large to upload (more than 2 000 files)"; walking a huge package on is pointless.
     async function walk(dir: FileSystemDirectoryHandle, prefix: string, depth: number): Promise<void> {
         if (depth > MAX_DEPTH) {
             throw new Error(`'${folder}' is nested deeper than ${MAX_DEPTH} folders.`);

@@ -12,6 +12,8 @@ public sealed class PackagesSteps(IPage page)
 	/// <summary>Set it to a folder to get the screenshots of the "I save package screenshots named" step.</summary>
 	private const string ScreenshotDirectory = "E2E_SCREENSHOT_DIR";
 
+	/// <summary>A sync pass (every 10 s) starts the packages pass that notices a change of the cache folder.</summary>
+	private const float NextPassTimeout = 30_000;
 	// The repo folder and a NuGet cache folder (picked with id 'aicp-pkg'). The metadata hash of the private package is computed here, like NuGet does.
 	private const string PickerStub =
 		"""
@@ -49,12 +51,16 @@ public sealed class PackagesSteps(IPage page)
 		}
 		""";
 
+	/// <summary>The NuGet cache folder's name in the origin-private file system.</summary>
+	private string _nuget = string.Empty;
+
 	[Given("the app is connected with a synced folder that restored a private and a public package")]
 	public async Task GivenTheAppIsConnectedWithARestoredFolderAsync()
 	{
 		var suffix = Guid.NewGuid().ToString("N")[..8];
 		var repo = "e2e-repo-" + suffix;
-		await page.AddInitScriptAsync($"({PickerStub})({{ repo: '{repo}', nuget: 'e2e-nuget-{suffix}' }});");
+		_nuget = "e2e-nuget-" + suffix;
+		await page.AddInitScriptAsync($"({PickerStub})({{ repo: '{repo}', nuget: '{_nuget}' }});");
 		await page.GotoAsync("/");
 		await Expect(page.GetByTestId("connection-state")).ToHaveTextAsync("Connected");
 		await page.GetByTestId("open-folder").ClickAsync();
@@ -79,6 +85,14 @@ public sealed class PackagesSteps(IPage page)
 	[Then("the package {string} {string} says {string}")]
 	public async Task ThenThePackageSaysAsync(string id, string version, string text) =>
 		await Expect(page.GetByTestId("packages-row").Filter(new() { HasText = id }).Filter(new() { HasText = version })).ToContainTextAsync(text);
+
+	[When("the NuGet cache folder is deleted")]
+	public async Task WhenTheNuGetCacheFolderIsDeletedAsync() =>
+		await page.EvaluateAsync("async (name) => (await navigator.storage.getDirectory()).removeEntry(name, { recursive: true })", _nuget);
+
+	[Then("the NuGet cache source says {string}")]
+	public async Task ThenTheNuGetCacheSourceSaysAsync(string state) =>
+		await Expect(page.GetByTestId("packages-source")).ToContainTextAsync(state, new() { Timeout = NextPassTimeout });
 
 	[Then("the server holds {string} {string}")]
 	public async Task ThenTheServerHoldsAsync(string id, string version)
