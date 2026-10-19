@@ -173,6 +173,54 @@ public sealed class ChatServiceTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Cancel_WithoutARunId_StopsTheReposRun()
+	{
+		var client = new Client("c1");
+		await SendAsync(client, Repo, null, "Long job");
+		var process = await _runner.NextAsync();
+		process.Write(Init, Message);
+		await client.WaitAsync(e => e.Kind == ChatEventKinds.Message);
+
+		await RouteAsync(client, MessageTypes.ChatCancel, new ChatCancelPayload(null, Repo));
+
+		var result = await client.WaitAsync(e => e.Kind == ChatEventKinds.Result);
+		Assert.True(process.Killed);
+		Assert.Equal((false, "Cancelled."), (result.Ok, result.Error));
+	}
+
+	[Fact]
+	public async Task Cancel_ByRepo_OtherRepoUntouched_NeitherIdNorRepoIgnored()
+	{
+		var client = new Client("c1");
+		await SendAsync(client, Repo, null, "Long job");
+		var process = await _runner.NextAsync();
+		process.Write(Init, Message);
+		await client.WaitAsync(e => e.Kind == ChatEventKinds.Message);
+
+		await RouteAsync(client, MessageTypes.ChatCancel, new ChatCancelPayload(null, "other"));
+		await RouteAsync(client, MessageTypes.ChatCancel, new ChatCancelPayload(null));
+
+		Assert.False(process.Killed);
+		Assert.DoesNotContain(_logger.Messages, m => m.Contains("cancel requested", StringComparison.Ordinal));
+	}
+
+	[Fact]
+	public async Task Cancel_LogsTheRequestAndHowLongTheRunTookToStop()
+	{
+		var client = new Client("c1");
+		var started = await SendAsync(client, Repo, null, "Long job");
+		var process = await _runner.NextAsync();
+		process.Write(Init, Message);
+		await client.WaitAsync(e => e.Kind == ChatEventKinds.Message);
+
+		await RouteAsync(client, MessageTypes.ChatCancel, new ChatCancelPayload(started.RunId));
+		await client.WaitAsync(e => e.Kind == ChatEventKinds.Result);
+
+		Assert.Contains((LogLevel.Information, $"Chat run {started.RunId} in {Repo}: cancel requested"), _logger.Entries);
+		Assert.Contains(_logger.Entries, e => e.Level == LogLevel.Information && System.Text.RegularExpressions.Regex.IsMatch(e.Message, $@"^Chat run {started.RunId} stopped \d+ ms after the cancel$"));
+	}
+
+	[Fact]
 	public async Task Cancel_UnknownRun_EchoedAnyway()
 	{
 		var echo = await RouteAsync(new Client("c1"), MessageTypes.ChatCancel, new ChatCancelPayload("nope"));

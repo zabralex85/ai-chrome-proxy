@@ -114,12 +114,17 @@ public static class Format
 		_ => "file",
 	};
 
-	/// <summary>Status 2: "Claude idle", or "Claude working… 0:42" with the time since the run started.</summary>
-	public static string AgentStatus(bool running, TimeSpan? elapsed)
+	/// <summary>Status 2: "Claude idle", or "Claude working… 0:42" with the time since the run started, or "Stopping…" after Stop.</summary>
+	public static string AgentStatus(bool running, TimeSpan? elapsed, bool stopping = false)
 	{
 		if (!running)
 		{
 			return "Claude idle";
+		}
+
+		if (stopping)
+		{
+			return "Stopping…";
 		}
 
 		var time = elapsed is { } e && e > TimeSpan.Zero ? e : TimeSpan.Zero;

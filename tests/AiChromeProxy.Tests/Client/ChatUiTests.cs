@@ -80,6 +80,13 @@ public sealed class ChatUiTests
 	}
 
 	[Fact]
+	public void AgentStatus_Stopping_SaysSoWhileRunning()
+	{
+		Assert.Equal("Stopping…", Format.AgentStatus(true, TimeSpan.FromSeconds(42), stopping: true));
+		Assert.Equal("Claude idle", Format.AgentStatus(false, null, stopping: true));
+	}
+
+	[Fact]
 	public void AgentStatus_RunningWithoutAClockYet_ShowsZero()
 	{
 		Assert.Equal("Claude working… 0:00", Format.AgentStatus(true, null));

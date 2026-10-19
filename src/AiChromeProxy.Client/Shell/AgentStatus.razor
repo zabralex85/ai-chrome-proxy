@@ -5,7 +5,7 @@
 <div class="status-box" data-testid="agent-status">
     <span class="status-line status-@(Chat.Running ? "info" : "muted")">
         <Icon Name="@(Chat.Running ? "sync" : "chat")" Class="@(Chat.Running ? "spin" : null)" />
-        <span class="status-text" role="status" data-testid="agent-state">@Format.AgentStatus(Chat.Running, Chat.Elapsed)</span>
+        <span class="status-text" role="status" data-testid="agent-state">@Format.AgentStatus(Chat.Running, Chat.Elapsed, Chat.Stopping)</span>
     </span>
     @if (Chat.LastCost is { } cost)
     {

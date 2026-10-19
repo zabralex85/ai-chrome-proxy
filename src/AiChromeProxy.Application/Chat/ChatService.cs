@@ -182,12 +182,17 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 		return new ChatStartedPayload(run.SessionId, run.Id);
 	}
 
-	/// <summary><c>chat.cancel</c>: stops the run (its process tree is killed); unknown or finished runs are ignored.</summary>
-	public void Cancel(string? runId)
+	/// <summary>
+	/// <c>chat.cancel</c>: stops the run (its process tree is killed). A client that does not know the run id names the repo instead
+	/// (the folder has at most one run); unknown or finished runs, and neither id, are ignored.
+	/// </summary>
+	public void Cancel(string? runId, string? repo = null)
 	{
-		foreach (var run in _runs.Values.Where(r => r.Id == runId))
+		var name = runId is null ? RepoName.Sanitize(repo) : null;
+		foreach (var run in _runs.Values.Where(r => runId is not null ? r.Id == runId : name is not null && string.Equals(r.Repo, name, StringComparison.OrdinalIgnoreCase)))
 		{
-			run.RequestCancel();
+			_logger.LogInformation("Chat run {RunId} in {Repo}: cancel requested", run.Id, run.Repo);
+			run.RequestCancel(_time.GetUtcNow());
 		}
 	}
 
@@ -533,6 +538,11 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 		}
 
 		_runs.TryRemove(new KeyValuePair<string, Run>(run.Repo, run));
+		if (run.CancelRequestedAt is { } cancelledAt)
+		{
+			_logger.LogInformation("Chat run {RunId} stopped {Ms} ms after the cancel", run.Id, (long)(_time.GetUtcNow() - cancelledAt).TotalMilliseconds);
+		}
+
 		run.Dispose();
 		try
 		{
@@ -567,6 +577,9 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 		public CancellationToken Token => _cancel.Token;
 
 		public bool CancelRequested { get; private set; }
+
+		/// <summary>Gets when the first cancel arrived, or null.</summary>
+		public DateTimeOffset? CancelRequestedAt { get; private set; }
 
 		public Lock StoreLock { get; } = new();
 
@@ -604,9 +617,10 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 			}
 		}
 
-		public void RequestCancel()
+		public void RequestCancel(DateTimeOffset at)
 		{
 			CancelRequested = true;
+			CancelRequestedAt ??= at;
 			try
 			{
 				_cancel.Cancel();

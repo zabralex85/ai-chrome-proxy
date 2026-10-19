@@ -39,6 +39,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 	private DateTimeOffset? _since;
 	private decimal? _liveCost;
 	private ChatSession _current = new(null);
+	private bool _stopping;
 
 	/// <summary>Raised after every visible change; the UI re-renders (it coalesces bursts, e.g. with <c>RenderCoalescer</c>).</summary>
 	public event Action? Changed;
@@ -75,6 +76,18 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 			lock (_gate)
 			{
 				return IsRunning();
+			}
+		}
+	}
+
+	/// <summary>Gets a value indicating whether Stop was pressed and the run has not ended yet (the cancel request failing ends it too).</summary>
+	public bool Stopping
+	{
+		get
+		{
+			lock (_gate)
+			{
+				return _stopping && IsRunning();
 			}
 		}
 	}
@@ -228,18 +241,35 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 		return ok;
 	}
 
-	/// <summary><b>Stop</b>: cancels the run in progress.</summary>
+	/// <summary>
+	/// <b>Stop</b>: cancels the run in progress, shows <see cref="Stopping"/> at once and sends one cancel however often it is called. Without a known
+	/// run id (the history of the running session is still loading) the folder's run is named by the repo.
+	/// </summary>
 	public async Task StopAsync()
 	{
 		string? runId;
+		string? repo;
 		lock (_gate)
 		{
+			repo = _repo ?? sync.Repo;
 			runId = _current.ActiveRunId ?? _sessions.Values.Select(s => s.ActiveRunId).FirstOrDefault(id => id is not null);
+			if (_stopping || !IsRunning() || (runId is null && repo is null))
+			{
+				return;
+			}
+
+			_stopping = true;
 		}
 
-		if (runId is not null)
+		Raise();
+		if (!await TryAsync(MessageTypes.ChatCancel, new ChatCancelPayload(runId, runId is null ? repo : null)))
 		{
-			await TryAsync(MessageTypes.ChatCancel, new ChatCancelPayload(runId));
+			lock (_gate)
+			{
+				_stopping = false;
+			}
+
+			Raise();
 		}
 	}
 
@@ -407,6 +437,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 					_awaitingText = null;
 					_since = null;
 					_liveCost = null;
+					_stopping = false;
 					_repo = repo;
 				}
 
@@ -416,7 +447,11 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 				// A session the server lists as running is loaded too, so that its run is known (Stop) after a reload.
 				foreach (var info in sessions.Sessions.Where(i => i.Running))
 				{
-					GetOrCreate(info.Id).Loaded = true;
+					var running = GetOrCreate(info.Id);
+					running.Loaded = true;
+
+					// Running at once (Stop works), before its history says which run it is.
+					running.SetListed(info);
 				}
 
 				catchUp = [.. _sessions.Values.Where(s => s.Loaded)];
@@ -560,6 +595,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 		else if (!running)
 		{
 			_since = null;
+			_stopping = false;
 		}
 	}
 

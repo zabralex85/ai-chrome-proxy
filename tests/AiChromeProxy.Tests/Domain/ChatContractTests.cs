@@ -31,6 +31,7 @@ public sealed class ChatContractTests
 		Assert.Equal("""{"repo":"r","sessionId":null,"text":"hi"}""", Json(new ChatSendPayload("r", null, "hi")));
 		Assert.Equal("""{"sessionId":"s","runId":"u"}""", Json(new ChatStartedPayload("s", "u")));
 		Assert.Equal("""{"runId":"u"}""", Json(new ChatCancelPayload("u")));
+		Assert.Equal("""{"runId":null,"repo":"r"}""", Json(new ChatCancelPayload(null, "r")));
 		Assert.Equal("""{"runId":"u","requestId":"q","decision":"allowAlways"}""", Json(new ChatApprovePayload("u", "q", ChatDecisions.AllowAlways)));
 	}
 

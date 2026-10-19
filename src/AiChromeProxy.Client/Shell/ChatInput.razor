@@ -49,7 +49,7 @@
         </label>
         @if (Chat.Running)
         {
-            <button type="button" class="send stop" data-testid="chat-stop" title="Stop" aria-label="Stop" disabled="@(!Enabled)" @onclick="Chat.StopAsync"><Icon Name="stop" /></button>
+            <button type="button" class="send stop" data-testid="chat-stop" title="@(Chat.Stopping ? "Stopping…" : "Stop")" aria-label="@(Chat.Stopping ? "Stopping…" : "Stop")" disabled="@(!Enabled || Chat.Stopping)" @onclick="Chat.StopAsync"><Icon Name="stop" /></button>
         }
         else
         {
