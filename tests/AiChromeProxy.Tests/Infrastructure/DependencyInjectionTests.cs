@@ -73,6 +73,7 @@ public sealed class DependencyInjectionTests
 			["CloudflareAccess:TeamDomain"] = "team.cloudflareaccess.com",
 			["CloudflareAccess:Audience"] = "aud",
 			["Mirror:Root"] = Path.Combine(TempRootCleanup.Root, "di-mirror"),
+			["Attachments:Root"] = Path.Combine(TempRootCleanup.Root, "di-attachments"),
 			["Projects:Database"] = Path.Combine(TempRootCleanup.Root, "di-projects", "aicp.db"),
 		})
 		.Build();
