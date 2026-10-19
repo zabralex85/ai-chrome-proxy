@@ -42,6 +42,7 @@ public sealed class PackagesContractTests
 	[InlineData(".hidden", false)]
 	[InlineData("a/b", false)]
 	[InlineData("a b", false)]
+	[InlineData("corp.a.", false)]
 	public void Ids(string? id, bool valid) => Assert.Equal(valid, NuGetNames.IsValidId(id));
 
 	[Fact]
@@ -54,6 +55,7 @@ public sealed class PackagesContractTests
 	[InlineData("1..2", false)]
 	[InlineData("../1", false)]
 	[InlineData("1.0 ", false)]
+	[InlineData("1.0.", false)]
 	public void Versions(string version, bool valid) => Assert.Equal(valid, NuGetNames.IsValidVersion(version));
 
 	[Fact]

@@ -59,6 +59,17 @@ public sealed class FileSystemPackageStoreTests : IDisposable
 		Assert.Throws<ArgumentException>(() => _store.Discard(Path.Combine(_root, "elsewhere")));
 	}
 
+	[Theory]
+	[InlineData("corp.a.", "1.0.0")]
+	[InlineData("corp.a ", "1.0.0")]
+	[InlineData("corp.a", "1.0.")]
+	public void Names_WindowsWouldTrim_Throw(string id, string version)
+	{
+		// Windows drops trailing dots and spaces: "corp.a." would be the folder of "corp.a".
+		Assert.Throws<ArgumentException>(() => _store.Begin(id, version, "t"));
+		Assert.Throws<ArgumentException>(() => _store.HasNuGet(id, version));
+	}
+
 	[Fact]
 	public void DeleteTemps_RemovesUnfinishedUploadsOnly()
 	{

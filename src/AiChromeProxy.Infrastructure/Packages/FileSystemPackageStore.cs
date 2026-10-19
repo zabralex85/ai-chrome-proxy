@@ -96,10 +96,11 @@ public sealed class FileSystemPackageStore(IOptions<PackagesOptions> options) : 
 		return temps.Count;
 	}
 
+	/// <summary>The folder <paramref name="segment"/> right under <paramref name="parent"/>; a name Windows would change (trailing dots or spaces) throws.</summary>
 	private static string Child(string parent, string segment)
 	{
 		var full = Path.GetFullPath(Path.Combine(parent, segment));
-		if (!string.Equals(Path.GetDirectoryName(full), parent, StringComparison.OrdinalIgnoreCase))
+		if (!string.Equals(Path.GetDirectoryName(full), parent, StringComparison.OrdinalIgnoreCase) || !string.Equals(Path.GetFileName(full), segment, StringComparison.Ordinal))
 		{
 			throw new ArgumentException("The path leaves its folder.", nameof(segment));
 		}

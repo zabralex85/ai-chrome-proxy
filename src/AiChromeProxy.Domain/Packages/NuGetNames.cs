@@ -7,17 +7,19 @@ public static class NuGetNames
 
 	public const int MaxVersionLength = 64;
 
-	/// <summary><c>[A-Za-z0-9._-]</c>, at most <see cref="MaxIdLength"/>, starting with a letter, digit or <c>_</c>, without <c>..</c>.</summary>
+	/// <summary><c>[A-Za-z0-9._-]</c>, at most <see cref="MaxIdLength"/>, starting with a letter, digit or <c>_</c>, without <c>..</c> or a trailing <c>.</c> (Windows drops it).</summary>
 	public static bool IsValidId(string? id) =>
 		id is { Length: > 0 and <= MaxIdLength }
 		&& (char.IsAsciiLetterOrDigit(id[0]) || id[0] == '_')
+		&& id[^1] != '.'
 		&& !id.Contains("..", StringComparison.Ordinal)
 		&& id.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-');
 
-	/// <summary><c>[A-Za-z0-9.+-]</c>, at most <see cref="MaxVersionLength"/>, starting with a letter or digit, without <c>..</c>.</summary>
+	/// <summary><c>[A-Za-z0-9.+-]</c>, at most <see cref="MaxVersionLength"/>, starting with a letter or digit, without <c>..</c> or a trailing <c>.</c> (Windows drops it).</summary>
 	public static bool IsValidVersion(string? version) =>
 		version is { Length: > 0 and <= MaxVersionLength }
 		&& char.IsAsciiLetterOrDigit(version[0])
+		&& version[^1] != '.'
 		&& !version.Contains("..", StringComparison.Ordinal)
 		&& version.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '+' or '-');
 
