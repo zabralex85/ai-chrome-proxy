@@ -47,6 +47,12 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 	/// <summary>The repo shown read-only instead of the open folder's (another computer's project), or null.</summary>
 	private string? _viewing;
 
+	/// <summary>
+	/// The last <c>chat.open</c> sent was for a viewed project. The server moves the subscription when it gets the open, before the reply, so the
+	/// chat stays read-only until the folder's own open is sent (with or without a folder).
+	/// </summary>
+	private bool _openedAsView;
+
 	/// <summary>Raised after every visible change; the UI re-renders (it coalesces bursts, e.g. with <c>RenderCoalescer</c>).</summary>
 	public event Action? Changed;
 
@@ -146,6 +152,22 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 		}
 	}
 
+	/// <summary>
+	/// Gets a value indicating whether the chat on screen is not the open folder's: another project is viewed, or the subscription still sits on one
+	/// (after <see cref="ViewAsync"/> back, until the folder's own <c>chat.open</c> succeeded). Nothing may write to it then (send, stop, approve,
+	/// tools, attachments); the UI disables those while it is set.
+	/// </summary>
+	public bool IsReadOnly
+	{
+		get
+		{
+			lock (_gate)
+			{
+				return IsReadOnlyLocked();
+			}
+		}
+	}
+
 	/// <summary>Starts listening to the connection and the folder; opens the chat when both are ready already.</summary>
 	public async Task InitializeAsync()
 	{
@@ -179,6 +201,9 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 		lock (_gate)
 		{
 			_viewing = repo;
+
+			// An open still on its way is for the old choice: wait for it, then open again.
+			_needsOpen = true;
 			if (repo is null && sync.Repo is null)
 			{
 				// Back without a folder of its own: nothing to show.
@@ -223,7 +248,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 	/// <returns>Whether the run started (false: the refusal is an error line of the session).</returns>
 	public async Task<bool> SendAsync(string text, IReadOnlyList<string>? attachments = null)
 	{
-		if (IsReadOnly())
+		if (IsReadOnly)
 		{
 			Current.AddError(ReadOnlyNote);
 			Raise();
@@ -324,7 +349,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 	/// <returns>Whether the answer was sent (false: the card is gone, or the request failed, which shows as an error line).</returns>
 	public async Task<bool> ApproveAsync(string requestId, string decision)
 	{
-		if (IsReadOnly())
+		if (IsReadOnly)
 		{
 			return false;
 		}
@@ -364,20 +389,8 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 
 	private static T Read<T>(Envelope envelope) => envelope.Payload.Deserialize<T>(JsonSerializerOptions.Web)!;
 
-	/// <summary>
-	/// Whether the chat on screen is not the open folder's: another project is viewed, or the subscription still sits on one (after
-	/// <see cref="ViewAsync"/> back, until the folder's own <c>chat.open</c> succeeded). Nothing may write to it then.
-	/// </summary>
-	private bool IsReadOnly()
-	{
-		lock (_gate)
-		{
-			return IsReadOnlyLocked();
-		}
-	}
-
 	private bool IsReadOnlyLocked() =>
-		_viewing is not null || (_repo is { } open && sync.Repo is { } local && !string.Equals(open, local, StringComparison.OrdinalIgnoreCase));
+		_viewing is not null || _openedAsView || (_repo is { } open && sync.Repo is { } local && !string.Equals(open, local, StringComparison.OrdinalIgnoreCase));
 
 	private string Describe(Exception ex) => ex switch
 	{
@@ -456,6 +469,12 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 			case MessageTypes.ChatEvent:
 				lock (_gate)
 				{
+					// Back without a folder: the subscription still sits on the viewed project, whose chat is not shown any more.
+					if (_openedAsView && _repo is null)
+					{
+						return;
+					}
+
 					Apply(Read<ChatEvent>(envelope), live: true);
 				}
 
@@ -470,7 +489,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 	/// <summary>Whether the chat should be (re)opened now, and on which repo; call under the lock.</summary>
 	private bool WantsOpen(out string repo, out int epoch, out CancellationToken token)
 	{
-		repo = _viewing ?? sync.Repo ?? _repo ?? string.Empty;
+		repo = Target();
 		epoch = _epoch;
 		token = _epochCts.Token;
 		return transport.State == TransportState.Connected && repo.Length > 0 && (repo != _repo || _needsOpen);
@@ -490,34 +509,50 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 		await _opening.WaitAsync();
 		try
 		{
-			if (!Wants(out var repo, out var epoch, out var token))
+			string repo;
+			int epoch;
+			CancellationToken token;
+			lock (_gate)
 			{
-				return;
+				if (!WantsOpen(out repo, out epoch, out token))
+				{
+					return;
+				}
+
+				_openedAsView = repo == _viewing;
 			}
 
 			var sessions = Read<ChatSessionsPayload>(await RequestAsync(MessageTypes.ChatOpen, new ChatOpenPayload(repo), token));
-			List<ChatSession> catchUp;
+			List<ChatSession> catchUp = [];
 			lock (_gate)
 			{
-				if (repo != _repo)
+				if (repo != Target())
 				{
-					Reset(repo);
+					// Back (or another pick) while it was on its way: nothing of it is shown. The call waiting behind this one opens the right chat.
+					Reset(null);
 				}
-
-				Apply(sessions);
-				_needsOpen = _epoch != epoch;
-
-				// A session the server lists as running is loaded too, so that its run is known (Stop) after a reload.
-				foreach (var info in sessions.Sessions.Where(i => i.Running))
+				else
 				{
-					var running = GetOrCreate(info.Id);
-					running.Loaded = true;
+					if (repo != _repo)
+					{
+						Reset(repo);
+					}
 
-					// Running at once (Stop works), before its history says which run it is.
-					running.SetListed(info);
+					Apply(sessions);
+					_needsOpen = _epoch != epoch;
+
+					// A session the server lists as running is loaded too, so that its run is known (Stop) after a reload.
+					foreach (var info in sessions.Sessions.Where(i => i.Running))
+					{
+						var running = GetOrCreate(info.Id);
+						running.Loaded = true;
+
+						// Running at once (Stop works), before its history says which run it is.
+						running.SetListed(info);
+					}
+
+					catchUp = [.. _sessions.Values.Where(s => s.Loaded)];
 				}
-
-				catchUp = [.. _sessions.Values.Where(s => s.Loaded)];
 			}
 
 			Raise();
@@ -543,6 +578,9 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 			}
 		}
 	}
+
+	/// <summary>The repo the chat should be open on: the viewed project, else the folder's, else the one open; call under the lock.</summary>
+	private string Target() => _viewing ?? sync.Repo ?? _repo ?? string.Empty;
 
 	/// <summary>Reads the session's stored events after the last one held, page by page until <c>final</c>.</summary>
 	private async Task LoadHistoryAsync(ChatSession session, CancellationToken ct)

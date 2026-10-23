@@ -710,6 +710,75 @@ public sealed class ChatEngineTests : IDisposable
 		process.Exit();
 	}
 
+	[Fact]
+	public async Task View_BackWhileItsOpenIsOnItsWay_EndsOnTheFoldersChat_AndWritesNothingMeanwhile()
+	{
+		_server.Chats.CreateSession("Other_PC", "their question");
+		await ReadyAsync();
+		await UntilAsync(() => _chat.Repo == "My_Repo");
+
+		// Pick the other project, then Back before its chat.open answered: the server's subscription already moved there.
+		_server.Transport.ReplyDelay = TimeSpan.FromMilliseconds(300);
+		var view = _chat.ViewAsync("Other_PC");
+		var back = _chat.ViewAsync(null);
+
+		Assert.True(_chat.IsReadOnly);
+		await WritesNothingAsync();
+
+		await Task.WhenAll(view, back).WaitAsync(TimeSpan.FromSeconds(10), Ct);
+		await UntilAsync(() => _chat.Repo == "My_Repo" && !_chat.IsReadOnly);
+		Assert.Null(_chat.Viewing);
+		Assert.Empty(_chat.Sessions);
+		Assert.Equal("My_Repo", _server.Transport.Sent.Last(e => e.Type == MessageTypes.ChatOpen).Payload.Deserialize<ChatOpenPayload>(JsonSerializerOptions.Web)!.Repo);
+	}
+
+	[Fact]
+	public async Task View_BackWithoutAFolderWhileItsOpenIsOnItsWay_ShowsNothing_AndItsPushesStayOut()
+	{
+		await _chat.InitializeAsync();
+		_server.Transport.ReplyDelay = TimeSpan.FromMilliseconds(300);
+		var view = _chat.ViewAsync("Other_PC");
+		await _chat.ViewAsync(null);
+		await view.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+		Assert.Null(_chat.Repo);
+		Assert.Null(_chat.Viewing);
+		Assert.True(_chat.IsReadOnly);
+
+		// The subscription is still on the other project: its runs reach this page, but stay out of it.
+		_server.Transport.ReplyDelay = TimeSpan.Zero;
+		var pushed = 0;
+		_server.Transport.Received += e => Interlocked.Add(ref pushed, e.Type == MessageTypes.ChatEvent ? 1 : 0); // runs after the engine's handler
+		Directory.CreateDirectory(_server.PathOf("Other_PC", string.Empty));
+		_server.Chat.Send(new ChatSendPayload("Other_PC", null, "work"), new EnvelopeContext("other-tab", null, (_, _) => Task.CompletedTask));
+		var process = await _server.Agent.NextAsync();
+		process.Write(Init, Delta);
+		await UntilAsync(() => Volatile.Read(ref pushed) >= 2);
+		Assert.False(_chat.Running);
+		Assert.Empty(_chat.Current.Items);
+		await WritesNothingAsync();
+		process.Exit();
+	}
+
+	[Fact]
+	public async Task View_PickAgainWhileTheFoldersOpenIsOnItsWay_EndsOnTheViewedChat()
+	{
+		_server.Chats.CreateSession("Other_PC", "their question");
+		await ReadyAsync();
+		await _chat.ViewAsync("Other_PC");
+		await UntilAsync(() => _chat.Repo == "Other_PC");
+
+		_server.Transport.ReplyDelay = TimeSpan.FromMilliseconds(300);
+		var back = _chat.ViewAsync(null);
+		var again = _chat.ViewAsync("Other_PC");
+		await Task.WhenAll(back, again).WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+		await UntilAsync(() => _chat.Repo == "Other_PC" && _chat.Sessions.Count == 1);
+		Assert.Equal("Other_PC", _chat.Viewing);
+		Assert.True(_chat.IsReadOnly);
+		Assert.Equal("Other_PC", _server.Transport.Sent.Last(e => e.Type == MessageTypes.ChatOpen).Payload.Deserialize<ChatOpenPayload>(JsonSerializerOptions.Web)!.Repo);
+	}
+
 	private static async Task UntilAsync(Func<bool> condition)
 	{
 		var deadline = DateTime.UtcNow.AddSeconds(10);
@@ -747,5 +816,15 @@ public sealed class ChatEngineTests : IDisposable
 		await ReadyAsync();
 		await _chat.SendAsync(text);
 		return await _server.Agent.NextAsync();
+	}
+
+	/// <summary>Send, Stop, Approve and the tools are refused while <see cref="ChatEngine.IsReadOnly"/>: none of them reaches the server.</summary>
+	private async Task WritesNothingAsync()
+	{
+		Assert.False(await _chat.SendAsync("hi"));
+		await _chat.StopAsync();
+		Assert.False(await _chat.ApproveAsync("nope", ChatDecisions.Allow));
+		await Assert.ThrowsAsync<InvalidOperationException>(() => _chat.ToolsAsync(check: false));
+		Assert.DoesNotContain(_server.Transport.Sent, e => e.Type is MessageTypes.ChatSend or MessageTypes.ChatCancel or MessageTypes.ChatApprove or MessageTypes.AgentToolsGet or MessageTypes.AgentToolsCheck or MessageTypes.ChatAttach);
 	}
 }
