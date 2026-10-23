@@ -2,7 +2,7 @@
 @using AiChromeProxy.Domain.Projects
 
 <span class="projects-host">
-    <button type="button" class="crumb-folder crumb-button" data-testid="projects-button" aria-haspopup="menu" aria-expanded="@(_open ? "true" : "false")"
+    <button @ref="_button" type="button" class="crumb-folder crumb-button" data-testid="projects-button" aria-haspopup="menu" aria-expanded="@(_open ? "true" : "false")"
             disabled="@(!Enabled)" title="@(Enabled ? (Label is null ? "Projects on the server" : $"{Label}: projects on the server") : "Not connected")" @onclick="ToggleAsync">
         <Icon Name="folder" />
         @if (Label is null)
@@ -58,6 +58,7 @@
 
 @code {
     private readonly Dictionary<string, ElementReference> _items = new(StringComparer.Ordinal);
+    private ElementReference _button;
     private bool _open;
     private bool _focusFirst;
     private int _focused = -1;
@@ -144,7 +145,9 @@
         switch (e.Key)
         {
             case "Escape" or "Tab":
+                // The focused item goes away with the menu: the focus returns to the button that opened it.
                 Close();
+                await _button.FocusAsync();
                 return;
             case "Enter" or " ":
                 if (_error is not null)
