@@ -7,7 +7,7 @@ using AiChromeProxy.Domain.Chat;
 namespace AiChromeProxy.Client.Chat;
 
 /// <summary>
-/// The browser side of the chat: opens the open folder's chat on the server (<c>chat.open</c>, once the folder is synced and the
+/// The browser side of the chat: opens the open folder's chat (or, with <see cref="ViewAsync"/>, another project's, read-only) on the server (<c>chat.open</c>, once the folder is synced and the
 /// connection is up, and again after every reconnect), keeps a <see cref="ChatSession"/> per session it has seen and sends, stops and
 /// approves. State is keyed on the events' own <c>sessionId</c>/<c>runId</c>: the sender gets the <c>prompt</c> of its run before the
 /// <c>chat.started</c> reply, and another tab's runs arrive the same way. After a reconnect the stored events missed are read with
@@ -15,6 +15,9 @@ namespace AiChromeProxy.Client.Chat;
 /// </summary>
 public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvider time)
 {
+	/// <summary>The error line of a message typed while another project is viewed.</summary>
+	public const string ReadOnlyNote = "Read-only: open this folder on its computer to chat.";
+
 	/// <summary>How long a request waits for its reply (a reconnect cancels it sooner).</summary>
 	public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
 
@@ -40,6 +43,9 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 	private decimal? _liveCost;
 	private ChatSession _current = new(null);
 	private bool _stopping;
+
+	/// <summary>The repo shown read-only instead of the open folder's (another computer's project), or null.</summary>
+	private string? _viewing;
 
 	/// <summary>Raised after every visible change; the UI re-renders (it coalesces bursts, e.g. with <c>RenderCoalescer</c>).</summary>
 	public event Action? Changed;
@@ -128,6 +134,18 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 		}
 	}
 
+	/// <summary>Gets the repo shown read-only (another computer's project on the server), or null for the open folder's chat.</summary>
+	public string? Viewing
+	{
+		get
+		{
+			lock (_gate)
+			{
+				return _viewing;
+			}
+		}
+	}
+
 	/// <summary>Starts listening to the connection and the folder; opens the chat when both are ready already.</summary>
 	public async Task InitializeAsync()
 	{
@@ -150,6 +168,26 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 		}
 
 		Raise();
+	}
+
+	/// <summary>
+	/// Shows another project's chat read-only (<paramref name="repo"/>), or the open folder's again (null). <c>chat.open</c> moves this
+	/// connection's subscription there, so the folder's own chat gets no pushes meanwhile; its history catches up on return.
+	/// </summary>
+	public async Task ViewAsync(string? repo)
+	{
+		lock (_gate)
+		{
+			_viewing = repo;
+			if (repo is null && sync.Repo is null)
+			{
+				// Back without a folder of its own: nothing to show.
+				Reset(null);
+			}
+		}
+
+		Raise();
+		await EnsureOpenAsync();
 	}
 
 	/// <summary>Shows a session and loads its history (what is missing of it when it was seen before).</summary>
@@ -185,6 +223,13 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 	/// <returns>Whether the run started (false: the refusal is an error line of the session).</returns>
 	public async Task<bool> SendAsync(string text, IReadOnlyList<string>? attachments = null)
 	{
+		if (Viewing is not null)
+		{
+			Current.AddError(ReadOnlyNote);
+			Raise();
+			return false;
+		}
+
 		ChatSession session;
 		string? repo;
 		CancellationToken token;
@@ -253,7 +298,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 		{
 			repo = _repo ?? sync.Repo;
 			runId = _current.ActiveRunId ?? _sessions.Values.Select(s => s.ActiveRunId).FirstOrDefault(id => id is not null);
-			if (_stopping || !IsRunning() || (runId is null && repo is null))
+			if (_viewing is not null || _stopping || !IsRunning() || (runId is null && repo is null))
 			{
 				return;
 			}
@@ -279,6 +324,11 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 	/// <returns>Whether the answer was sent (false: the card is gone, or the request failed, which shows as an error line).</returns>
 	public async Task<bool> ApproveAsync(string requestId, string decision)
 	{
+		if (Viewing is not null)
+		{
+			return false;
+		}
+
 		ChatApproval? card;
 		lock (_gate)
 		{
@@ -400,7 +450,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 	/// <summary>Whether the chat should be (re)opened now, and on which repo; call under the lock.</summary>
 	private bool WantsOpen(out string repo, out int epoch, out CancellationToken token)
 	{
-		repo = sync.Repo ?? _repo ?? string.Empty;
+		repo = _viewing ?? sync.Repo ?? _repo ?? string.Empty;
 		epoch = _epoch;
 		token = _epochCts.Token;
 		return transport.State == TransportState.Connected && repo.Length > 0 && (repo != _repo || _needsOpen);
@@ -431,14 +481,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 			{
 				if (repo != _repo)
 				{
-					_sessions.Clear();
-					_listed = [];
-					_current = new ChatSession(null);
-					_awaitingText = null;
-					_since = null;
-					_liveCost = null;
-					_stopping = false;
-					_repo = repo;
+					Reset(repo);
 				}
 
 				Apply(sessions);
@@ -530,6 +573,19 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 		}
 
 		return session;
+	}
+
+	/// <summary>Forgets the shown repo's sessions and run state; call under the lock.</summary>
+	private void Reset(string? repo)
+	{
+		_sessions.Clear();
+		_listed = [];
+		_current = new ChatSession(null);
+		_awaitingText = null;
+		_since = null;
+		_liveCost = null;
+		_stopping = false;
+		_repo = repo;
 	}
 
 	private void Apply(ChatSessionsPayload payload)

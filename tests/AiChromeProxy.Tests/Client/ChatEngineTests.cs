@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AiChromeProxy.Application.Chat;
+using AiChromeProxy.Application.Transport;
 using AiChromeProxy.Client.Chat;
 using AiChromeProxy.Client.Sync;
 using AiChromeProxy.Domain;
@@ -643,6 +644,46 @@ public sealed class ChatEngineTests : IDisposable
 		Assert.False(await _chat.SendAsync("look", ["ffffffffffffffffffffffffffffffff"]));
 
 		Assert.Contains(_chat.Current.Items, i => i.Kind == ChatItemKind.Error && i.Text == "An attachment has expired; attach it again.");
+	}
+
+	[Fact]
+	public async Task View_OtherReposChatReadOnly_BackReopensTheFolders()
+	{
+		var other = _server.Chats.CreateSession("Other_PC", "their question");
+		_server.Chats.Append(other.Id, [new ChatEvent(other.Id, "r1", 0, ChatEventKinds.Prompt, Text: "their question")]);
+		await ReadyAsync();
+		await UntilAsync(() => _chat.Repo == "My_Repo");
+
+		await _chat.ViewAsync("Other_PC");
+		await UntilAsync(() => _chat.Repo == "Other_PC" && _chat.Sessions.Count == 1);
+
+		Assert.Equal("Other_PC", _chat.Viewing);
+		Assert.Equal("their question", _chat.Sessions[0].Title);
+		Assert.False(await _chat.SendAsync("hi"));
+		Assert.Contains(_chat.Current.Items, i => i.Kind == ChatItemKind.Error && i.Text == ChatEngine.ReadOnlyNote);
+		Assert.DoesNotContain(_server.Transport.Sent, e => e.Type == MessageTypes.ChatSend);
+
+		await _chat.ViewAsync(null);
+		await UntilAsync(() => _chat.Repo == "My_Repo");
+		Assert.Null(_chat.Viewing);
+		Assert.Empty(_chat.Sessions);
+	}
+
+	[Fact]
+	public async Task View_RunningElsewhere_StopAndApproveSendNothing()
+	{
+		await ReadyAsync();
+		_server.Chat.Send(new ChatSendPayload("My_Repo", null, "work"), new EnvelopeContext("other-tab", null, (_, _) => Task.CompletedTask));
+		var process = await _server.Agent.NextAsync();
+
+		// The same repo viewed from "another computer": the run is listed as running, but this page may not stop it.
+		await _chat.ViewAsync("My_Repo");
+		await UntilAsync(() => _chat.Running);
+		await _chat.StopAsync();
+		Assert.False(await _chat.ApproveAsync("nope", ChatDecisions.Allow));
+
+		Assert.DoesNotContain(_server.Transport.Sent, e => e.Type is MessageTypes.ChatCancel or MessageTypes.ChatApprove);
+		process.Exit();
 	}
 
 	private static async Task UntilAsync(Func<bool> condition)
