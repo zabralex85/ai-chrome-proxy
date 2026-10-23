@@ -315,6 +315,12 @@
         _link = null;
         Mirror.Leave();
         await Chat.ViewAsync(null);
+
+        // Reopening the folder's chat shows a new draft: the restored chat tab gets its session back.
+        if (TabSet.ChatSessionId(_tabs.Active) is { } id)
+        {
+            await Chat.OpenSessionAsync(id);
+        }
     }
 
     private async Task PingEveryAsync(TimeSpan interval)

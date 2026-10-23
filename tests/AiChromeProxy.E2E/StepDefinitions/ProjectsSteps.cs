@@ -47,5 +47,9 @@ public sealed class ProjectsSteps(IPage page)
 		await Expect(page.GetByTestId("read-only")).ToHaveCountAsync(0);
 		await Expect(page.GetByTestId("folder-name")).ToHaveTextAsync(folder);
 		await Expect(page.GetByTestId("mirror-tree")).ToHaveCountAsync(0);
+		await Expect(page.GetByTestId("tree")).ToBeVisibleAsync();
+
+		// Enabled once the folder's own chat is open again (the engine's read-only lock is off).
+		await Expect(page.GetByTestId("chat-input")).ToBeEnabledAsync();
 	}
 }

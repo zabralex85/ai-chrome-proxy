@@ -152,7 +152,7 @@
         @foreach (var id in Tabs.Open.Where(TabSet.IsFile))
         {
             var path = TabSet.PathOf(id)!;
-            <FileView @key="(Mirror?.Generation ?? Engine.FolderGeneration, ReadOnly, id)" Engine="Engine" Path="@path" Active="@(id == Tabs.Active)" Live="@Pool.Contains(path)" Link="Link" Mirror="Mirror" />
+            <FileView @key="(Mirror?.Generation ?? Engine.FolderGeneration, Mirror is not null, id)" Engine="Engine" Path="@path" Active="@(id == Tabs.Active)" Live="@Pool.Contains(path)" Link="Link" Mirror="Mirror" />
         }
     </div>
 
@@ -192,7 +192,8 @@
     [Parameter]
     public MirrorBrowser? Mirror { get; set; }
 
-    private bool ReadOnly => Mirror is not null;
+    /// <summary>The chat may not write (another project viewed, or its subscription not back on the folder yet): the engine decides.</summary>
+    private bool ReadOnly => Chat.IsReadOnly;
 
     /// <summary>Raised after every tab change so the page re-renders (the tree highlights the active file).</summary>
     [Parameter]
@@ -224,7 +225,7 @@
     private string TabId(string id) => $"tab-{Tabs.Open.ToList().IndexOf(id)}";
 
     private bool _menuOpen;
-    private (bool ReadOnly, int Generation) _generation;
+    private (bool Viewing, int Generation) _generation;
 
     /// <summary>Which file tabs may hold a live editor (at most <see cref="ViewerPool.Capacity"/>).</summary>
     private ViewerPool Pool { get; } = new();
@@ -232,7 +233,7 @@
     /// <summary>Before the file views render: forgets closed tabs and the old folder's, and marks the tab on screen as the most recently shown.</summary>
     private void SyncPool()
     {
-        var generation = (ReadOnly, Mirror?.Generation ?? Engine.FolderGeneration);
+        var generation = (Mirror is not null, Mirror?.Generation ?? Engine.FolderGeneration);
         if (_generation != generation)
         {
             _generation = generation;

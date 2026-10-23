@@ -110,7 +110,7 @@
                 _filesCallback = await View.AcceptFilesAsync(_zone, _picker, files =>
                 {
                     // A paste or drop while the box is disabled (no connection or folder, another project viewed) attaches nothing.
-                    if (!Enabled)
+                    if (!Enabled || Chat.IsReadOnly)
                     {
                         return Task.WhenAll(files.Select(f => Source.ForgetAsync(f.Handle)));
                     }
