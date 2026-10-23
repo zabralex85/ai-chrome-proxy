@@ -107,4 +107,22 @@ public static class MessageTypes
 
 	/// <summary>Server → client: the package is stored (<c>Packages.NuGetStoredPayload</c>).</summary>
 	public const string PackagesNuGetStored = "packages.nuget.stored";
+
+	/// <summary>Client → server: lists the projects on the server (empty payload); reply <see cref="Repos"/>.</summary>
+	public const string ReposList = "repos.list";
+
+	/// <summary>Server → client: the projects (<c>Projects.ReposPayload</c>).</summary>
+	public const string Repos = "repos";
+
+	/// <summary>Client → server: one page of a project's mirror files (<c>Projects.MirrorListPayload</c>); reply <see cref="MirrorFiles"/>.</summary>
+	public const string MirrorList = "mirror.list";
+
+	/// <summary>Server → client: the page (<c>Projects.MirrorFilesPayload</c>).</summary>
+	public const string MirrorFiles = "mirror.files";
+
+	/// <summary>Client → server: one chunk of a mirror file (<c>Projects.MirrorReadPayload</c>); reply <see cref="MirrorData"/>.</summary>
+	public const string MirrorRead = "mirror.read";
+
+	/// <summary>Server → client: the chunk (<c>Sync.SyncDataPayload</c>, as <see cref="SyncData"/>).</summary>
+	public const string MirrorData = "mirror.data";
 }
