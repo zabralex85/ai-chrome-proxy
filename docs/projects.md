@@ -2,9 +2,9 @@
 
 Every folder synced to the server is a project there, whichever computer synced it. The folder name in the top bar opens **Projects on the server**: each project with "this folder" (the one open in this browser), "Claude is working", "online" (a browser has the folder open now) and when its chat was last active ("no chat yet" when it has none). Keyboard: arrows, Home and End move, Enter or Space picks, Esc or Tab closes. Picking the project already shown does nothing. Design: [server projects spec](superpowers/specs/2026-10-23-server-projects-design.md).
 
-Picking another project shows it **read-only**: its chat (history and live answers), its file tree and its files, all read from the server. The top bar shows a **Read-only** pill and **Back to my folder**, which returns to the folder open in this browser, with its tabs and chat. The folder keeps syncing meanwhile; its errors and conflicts show on the **Back** button. The Explorer shows the server's tree with a **Refresh** button, without sync state, context menu, sync status or conflicts. Chat links (`path:line`, `path#Symbol`) open the viewed project's files; the file bar shows the size and "On the server".
+Picking another project shows it **read-only**: its chat (history and live answers), its file tree and its files, all read from the server. The top bar shows a **Read-only** pill and **Back to my folder**, which returns to the folder open in this browser, with its tabs and chat. The folder keeps syncing meanwhile; its attention state (access needed, unsupported browser, N errors; not conflicts) shows on the **Back** button. The Explorer shows the server's tree with a **Refresh** button, without sync state, context menu, sync status or conflicts. Chat links (`path:line`, `path#Symbol`) open the viewed project's files; the file bar shows the size and "On the server".
 
-Nothing in the view changes the other project: sending, **Stop**, permission answers, attachments (including paste and drop into the input), **New chat**, tree actions and **Project settings** are disabled with the tooltip "Read-only". The chat stays read-only after **Back to my folder** until the local folder's own chat has opened again (`ChatEngine.IsReadOnlyLocked`), and the Claude tools are refused too. To work in that project, open its folder on its computer.
+Nothing in the view changes the other project: sending, **Stop**, permission answers, attachments (including paste and drop into the input), **New chat**, tree actions and **Project settings** are disabled. The chat input placeholder and the **New chat** tooltip say "Read-only: open this folder on its computer to chat."; the **Project settings** tooltip says "Read-only"; **Stop**, the attach control and the permission buttons are disabled without a read-only tooltip. The chat stays read-only after **Back to my folder** until the local folder's own chat has opened again (`ChatEngine.IsReadOnlyLocked`), and the Claude tools are refused too. To work in that project, open its folder on its computer.
 
 ## Protocol
 
@@ -18,7 +18,7 @@ Excluded paths (the mirror's `.gitignore` and the project's extra excludes) are 
 
 ## Refresh
 
-While a project is viewed and the tab is visible, `mirror.list` runs again every 30 s (`MirrorBrowser`), once when a run of the viewed project ends (`RunEndWatch`, once per ended run) and on **Refresh**. An open file is read again when its size or time changed; its tab shows "This file is no longer on the server" when it is gone.
+While a project is viewed, `mirror.list` runs again on four triggers: every 30 s, only while the tab is visible and connected (`MirrorBrowser`); once when a run of the viewed project ends (`RunEndWatch`, once per ended run); after a reconnect; and on **Refresh**. The last three do not depend on the tab being visible. An open file is read again when its size or time changed; its tab shows "This file is no longer on the server" when it is gone.
 
 ## Known limitations
 
