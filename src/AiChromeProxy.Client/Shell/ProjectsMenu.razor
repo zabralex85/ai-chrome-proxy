@@ -3,7 +3,7 @@
 
 <span class="projects-host">
     <button type="button" class="crumb-folder crumb-button" data-testid="projects-button" aria-haspopup="menu" aria-expanded="@(_open ? "true" : "false")"
-            disabled="@(!Enabled)" title="@(Enabled ? "Projects on the server" : "Not connected")" @onclick="ToggleAsync">
+            disabled="@(!Enabled)" title="@(Enabled ? (Label is null ? "Projects on the server" : $"{Label}: projects on the server") : "Not connected")" @onclick="ToggleAsync">
         <Icon Name="folder" />
         @if (Label is null)
         {
@@ -18,7 +18,7 @@
     @if (_open)
     {
         <button type="button" class="menu-backdrop" tabindex="-1" aria-label="Close the projects menu" @onclick="Close"></button>
-        <div class="chat-menu projects-menu" role="menu" aria-label="Projects on the server" data-testid="projects-menu" @onkeydown="OnKeyAsync">
+        <div class="chat-menu projects-menu" role="menu" aria-label="Projects on the server" data-testid="projects-menu" @onkeydown="OnKeyAsync" @onkeydown:preventDefault="true">
             @if (_error is not null)
             {
                 <div class="chat-menu-empty" role="alert">
@@ -139,13 +139,26 @@
 
     private async Task OnKeyAsync(KeyboardEventArgs e)
     {
-        if (e.Key == "Escape")
+        // Keys do not reach the browser (the list must not scroll), so the menu does what they would: Tab leaves, Enter/Space press.
+        var names = _repos?.Repos.Select(r => r.Name).ToList() ?? [];
+        switch (e.Key)
         {
-            Close();
-            return;
+            case "Escape" or "Tab":
+                Close();
+                return;
+            case "Enter" or " ":
+                if (_error is not null)
+                {
+                    await LoadAsync();
+                }
+                else if (_focused >= 0 && _focused < names.Count)
+                {
+                    await PickAsync(names[_focused]);
+                }
+
+                return;
         }
 
-        var names = _repos?.Repos.Select(r => r.Name).ToList() ?? [];
         _focused = ProjectLine.Move(e.Key, _focused, names.Count);
         if (_focused >= 0 && _items.TryGetValue(names[_focused], out var item))
         {

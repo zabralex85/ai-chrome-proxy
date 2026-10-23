@@ -29,7 +29,7 @@
         </span>
     }
     <span class="spacer"></span>
-    <button type="button" class="icon-button" data-testid="open-settings" title="Project settings" aria-label="Project settings" disabled="@(!SettingsEnabled)" @onclick="OnOpenSettings">
+    <button type="button" class="icon-button" data-testid="open-settings" title="@SettingsTitle" aria-label="@SettingsTitle" disabled="@(!SettingsEnabled)" @onclick="OnOpenSettings">
         <Icon Name="gear" />
     </button>
     <button type="button" class="icon-button @(FilesAttention is null ? null : "has-attention")" data-testid="toggle-files" title="@FilesTitle" aria-label="@FilesTitle"
@@ -122,6 +122,8 @@
     public EventCallback OnBack { get; set; }
 
     private string PingTitle => PingMs is { } ms ? $"Ping {ms} ms" : "Ping: no answer yet";
+
+    private string SettingsTitle => Viewing is null ? "Project settings" : "Read-only";
 
     private string FilesTitle => FilesAttention is null ? "Toggle the file tree" : $"Show the file tree: {FilesAttention}";
 

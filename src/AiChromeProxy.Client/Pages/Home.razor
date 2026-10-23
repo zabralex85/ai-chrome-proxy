@@ -70,7 +70,7 @@
     /// <summary>The project viewed read-only, or null.</summary>
     private string? _viewing;
 
-    private bool _wasRunning;
+    private readonly RunEndWatch _runEnd = new();
     private string? _theme;
     private string? _themeApplied;
     private FileLink? _link;
@@ -207,13 +207,11 @@
         _tabs.CloseResolved(ConflictedPaths());
 
         // A run of the viewed project ended: its edits are on the server now.
-        var running = Chat.Running;
-        if (_viewing is not null && _wasRunning && !running)
+        if (_runEnd.Ended(_viewing, Chat.Repo, Chat.Running))
         {
             _ = Mirror.RefreshAsync(_stop.Token);
         }
 
-        _wasRunning = running;
         _render?.Request();
     }
 
@@ -291,11 +289,15 @@
             return;
         }
 
+        if (string.Equals(repo, _viewing, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
         _savedTabs ??= _tabs;
         _tabs = new TabSet();
         _link = null;
         _viewing = repo;
-        _wasRunning = false;
         await Task.WhenAll(Mirror.ViewAsync(repo, _stop.Token), Chat.ViewAsync(repo));
     }
 
