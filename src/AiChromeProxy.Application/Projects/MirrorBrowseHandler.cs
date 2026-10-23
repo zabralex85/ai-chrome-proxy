@@ -108,6 +108,10 @@ public sealed class MirrorBrowseHandler(string type, IMirrorStore store, IProjec
 		}
 
 		var rules = await MirrorRules.LoadAsync(store, projects, repo, ct);
+
+		// ponytail: every page enumerates and sorts the whole repo again, O(pages x files) per refresh (every 30 s per viewing tab), and walks
+		// ignored folders (node_modules, bin) before filtering them out. Upgrade path: prune IgnoreRules' skipped folders during the enumeration, or
+		// cache the sorted list per refresh (keyed by repo, dropped after the last page or a timeout).
 		var files = store.ListFileInfos(repo).Where(f => !rules.IsIgnored(f.Path)).OrderBy(f => f.Path, StringComparer.Ordinal).ToList();
 		return FilesPage(repo, files, payload.After);
 	}
