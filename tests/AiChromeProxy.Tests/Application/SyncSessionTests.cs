@@ -4,6 +4,7 @@ using System.Text.Json;
 using AiChromeProxy.Application.Sync;
 using AiChromeProxy.Application.Transport;
 using AiChromeProxy.Domain;
+using AiChromeProxy.Domain.Projects;
 using AiChromeProxy.Domain.Sync;
 using AiChromeProxy.Infrastructure.Sync;
 using AiChromeProxy.Tests.Server;
@@ -688,6 +689,10 @@ public sealed class SyncSessionTests : IDisposable
 		public string? RepoFolder(string repo) => null;
 
 		public IReadOnlyList<string> ListFiles(string repo) => [];
+
+		public IReadOnlyList<string> ListRepos() => [];
+
+		public IReadOnlyList<MirrorFile> ListFileInfos(string repo) => [];
 
 		public bool HasFiles(string repo, Func<string, bool> excluded) => false;
 

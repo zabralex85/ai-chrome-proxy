@@ -1,3 +1,5 @@
+using AiChromeProxy.Domain.Projects;
+
 namespace AiChromeProxy.Application.Sync;
 
 /// <summary>
@@ -28,6 +30,12 @@ public interface IMirrorStore
 
 	/// <summary>Paths of the regular files in the repo folder; links and junctions (and what is behind them) are skipped.</summary>
 	IReadOnlyList<string> ListFiles(string repo);
+
+	/// <summary>The repos of the mirror: folders directly under the root with a valid repo name; files, links and junctions are skipped.</summary>
+	IReadOnlyList<string> ListRepos();
+
+	/// <summary>Like <see cref="ListFiles"/>, with each file's size and last write time; unsorted, empty when the repo folder is missing.</summary>
+	IReadOnlyList<MirrorFile> ListFileInfos(string repo);
 
 	/// <summary>Whether the repo folder has a regular file (as listed by <see cref="ListFiles"/>) that is not <paramref name="excluded"/>; stops at the first.</summary>
 	bool HasFiles(string repo, Func<string, bool> excluded);

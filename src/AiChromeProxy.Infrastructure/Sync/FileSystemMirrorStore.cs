@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using AiChromeProxy.Application.Sync;
 using AiChromeProxy.Application.Transport;
 using AiChromeProxy.Domain;
+using AiChromeProxy.Domain.Projects;
 using AiChromeProxy.Domain.Sync;
 using Microsoft.Extensions.Options;
 
@@ -92,6 +93,33 @@ public sealed class FileSystemMirrorStore(IOptions<MirrorOptions> options) : IMi
 	}
 
 	public IReadOnlyList<string> ListFiles(string repo) => [.. Files(repo)];
+
+	public IReadOnlyList<string> ListRepos()
+	{
+		if (!Directory.Exists(_root))
+		{
+			return [];
+		}
+
+		return [.. new DirectoryInfo(_root).EnumerateDirectories("*", new EnumerationOptions { AttributesToSkip = FileAttributes.ReparsePoint })
+			.Select(d => d.Name)
+			.Where(RepoName.IsValid)];
+	}
+
+	public IReadOnlyList<MirrorFile> ListFileInfos(string repo)
+	{
+		var repoRoot = RepoRoot(repo);
+		if (!Directory.Exists(repoRoot) || IsLink(repoRoot))
+		{
+			return [];
+		}
+
+		// The enumeration's own data: a file deleted meanwhile does not throw.
+		return [.. new DirectoryInfo(repoRoot).EnumerateFiles("*", Recursive)
+			.Select(f => (RelativePath: Path.GetRelativePath(repoRoot, f.FullName).Replace(Path.DirectorySeparatorChar, '/'), File: f))
+			.Where(e => SyncPath.IsValid(e.RelativePath))
+			.Select(e => new MirrorFile(e.RelativePath, e.File.Length, new DateTimeOffset(e.File.LastWriteTimeUtc, TimeSpan.Zero)))];
+	}
 
 	public bool HasFiles(string repo, Func<string, bool> excluded) => Files(repo).Any(p => !excluded(p));
 

@@ -232,6 +232,48 @@ public sealed class FileSystemMirrorStoreTests : IDisposable
 	}
 
 	[Fact]
+	public void ListRepos_ValidFolders_SkipsFilesJunctionsAndInvalidNames()
+	{
+		var outside = Path.Combine(_temp, "outside");
+		Directory.CreateDirectory(outside);
+		Directory.CreateDirectory(Path.Combine(_root, "Other_PC"));
+		Directory.CreateDirectory(Path.Combine(_root, "has space"));
+		File.WriteAllText(Path.Combine(_root, "file.txt"), "f");
+		Junction(Path.Combine(_root, "linked"), outside);
+
+		Assert.Equal(["Other_PC", Repo], _store.ListRepos().Order(StringComparer.Ordinal));
+	}
+
+	[Fact]
+	public void ListRepos_NoMirrorRoot_Empty()
+	{
+		var store = new FileSystemMirrorStore(Options.Create(new MirrorOptions { Root = Path.Combine(_temp, "missing") }));
+
+		Assert.Empty(store.ListRepos());
+	}
+
+	[Fact]
+	public void ListFileInfos_SizesAndTimes_SkipsTempFilesAndJunctions()
+	{
+		var outside = Path.Combine(_temp, "outside");
+		Directory.CreateDirectory(outside);
+		File.WriteAllText(Path.Combine(outside, "secret.txt"), "s");
+		Directory.CreateDirectory(Path.Combine(_repoRoot, "src"));
+		File.WriteAllText(Path.Combine(_repoRoot, "a.txt"), "abc");
+		File.WriteAllText(Path.Combine(_repoRoot, "src", "b.cs"), "b");
+		File.WriteAllText(Path.Combine(_repoRoot, "c.txt.aicp-tmp"), "t");
+		var written = new DateTime(2026, 10, 23, 10, 0, 0, DateTimeKind.Utc);
+		File.SetLastWriteTimeUtc(Path.Combine(_repoRoot, "a.txt"), written);
+		Junction(Path.Combine(_repoRoot, "link"), outside);
+
+		var files = _store.ListFileInfos(Repo).OrderBy(f => f.Path, StringComparer.Ordinal).ToList();
+
+		Assert.Equal(["a.txt", "src/b.cs"], files.Select(f => f.Path));
+		Assert.Equal((3L, new DateTimeOffset(written)), (files[0].Size, files[0].Modified));
+		Assert.Empty(_store.ListFileInfos("not-synced-yet"));
+	}
+
+	[Fact]
 	public void Delete_RemovesFileAndEmptyParents_KeepsRepoFolderAndNonEmptyParents()
 	{
 		Directory.CreateDirectory(Path.Combine(_repoRoot, "a", "b", "c"));
