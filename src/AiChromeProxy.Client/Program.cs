@@ -2,6 +2,7 @@ using AiChromeProxy.Client;
 using AiChromeProxy.Client.Chat;
 using AiChromeProxy.Client.Navigator;
 using AiChromeProxy.Client.Packages;
+using AiChromeProxy.Client.Projects;
 using AiChromeProxy.Client.Shell;
 using AiChromeProxy.Client.Sync;
 using AiChromeProxy.Client.Transport;
@@ -25,6 +26,7 @@ builder.Services.AddSingleton<IFolderAccess>(s => s.GetRequiredService<JsFolderA
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<SyncEngine>();
 builder.Services.AddSingleton<ChatEngine>();
+builder.Services.AddSingleton<MirrorBrowser>();
 builder.Services.AddSingleton<JsPackageFolder>();
 builder.Services.AddSingleton<IPackageFolder>(s => s.GetRequiredService<JsPackageFolder>());
 builder.Services.AddSingleton<PackagesEngine>();

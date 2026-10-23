@@ -136,6 +136,9 @@ public sealed partial class SyncEngine(ITransport transport, IFolderAccess folde
 	/// <summary>Gets the repo name the server uses for the open folder (set once the session opened, null while there is none); the chat opens on it.</summary>
 	public string? Repo => _repo;
 
+	/// <summary>Gets a value indicating whether the tab is visible (scans and other polling pause while it is hidden).</summary>
+	public bool Visible => _visible;
+
 	public SyncPhase Phase { get; private set; }
 
 	/// <summary>
