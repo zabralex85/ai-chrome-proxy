@@ -1,4 +1,5 @@
 @using AiChromeProxy.Client.Navigator
+@using AiChromeProxy.Client.Projects
 @using AiChromeProxy.Client.Sync
 @using Microsoft.JSInterop
 @inject IFileViewer Viewer
@@ -8,11 +9,16 @@
 @* One per open file tab, kept (hidden) while the tab is in the background so that the scroll position stays; the editor itself lives only while the pool allows it. *@
 <section class="file-view" hidden="@(!Active)" data-testid="file-view" data-path="@Path">
     @{
-        var file = Engine.FileAt(Path);
+        var file = Mirror is null ? Engine.FileAt(Path) : null;
     }
     <header class="file-details file-bar" data-testid="file-details">
         <Icon Name="@("file-" + Format.FileKind(Path))" Size="16" Class="@("kind-" + Format.FileKind(Path))" />
         <span class="mono file-bar-path" title="@Path">@Path</span>
+        @if (Mirror?.FileAt(Path) is { } remote)
+        {
+            <span class="muted" title="@(Format.Count(remote.Size) + " bytes")">@Format.Bytes(remote.Size)</span>
+            <span class="state state-synced">On the server</span>
+        }
         @if (file is not null)
         {
             <span class="muted" title="@(Format.Count(file.Size) + " bytes")">@Format.Bytes(file.Size)</span>
@@ -51,7 +57,7 @@
 
     /// <summary>The last link revealed in this file: the "Symbol not found" note follows it across re-reads.</summary>
     private FileLink? _revealed;
-    private (string? Sha256, int Writes)? _read;
+    private string? _read;
     private bool _disposed;
 
     [Parameter, EditorRequired]
@@ -71,6 +77,10 @@
     /// <summary>The last link from the chat; revealed once when it is for this file.</summary>
     [Parameter]
     public FileLink? Link { get; set; }
+
+    /// <summary>The project viewed read-only: the file is read from the server; null reads the open folder.</summary>
+    [Parameter]
+    public MirrorBrowser? Mirror { get; set; }
 
     public async ValueTask DisposeAsync()
     {
@@ -131,7 +141,10 @@
         }
     }
 
-    private (string? Sha256, int Writes) Stamp() => (Engine.FileAt(Path)?.Sha256, Engine.WriteCount);
+    /// <summary>What changes when the file should be read again: the listing's size and time on the server, else the sync's hash and write count.</summary>
+    private string Stamp() => Mirror is { } mirror
+        ? mirror.FileAt(Path) is { } remote ? $"{remote.Size}:{remote.Modified.UtcTicks}" : "missing"
+        : $"{Engine.FileAt(Path)?.Sha256}:{Engine.WriteCount}";
 
     private async Task ReadAndShowAsync()
     {
@@ -140,7 +153,7 @@
         string? failure = null;
         try
         {
-            bytes = await Folder.ReadFileAsync(Path);
+            bytes = Mirror is { } mirror ? await mirror.ReadFileAsync(Path, CancellationToken.None) : await Folder.ReadFileAsync(Path);
         }
         catch (Exception ex) when (ex is JSException or InvalidOperationException or IOException)
         {
@@ -153,7 +166,7 @@
             return;
         }
 
-        var (text, note) = failure is null ? FileContent.Decide(bytes) : (null, failure);
+        var (text, note) = failure is null ? FileContent.Decide(bytes, Mirror is null ? FileContent.Missing : FileContent.MissingOnServer) : (null, failure);
         _note = note;
         try
         {

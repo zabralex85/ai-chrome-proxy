@@ -2619,3 +2619,8 @@ h1:focus-visible {
 .topbar-back {
     margin-left: 6px;
 }
+
+.mirror-note {
+    margin: 0 10px 6px;
+    font-size: 12px;
+}

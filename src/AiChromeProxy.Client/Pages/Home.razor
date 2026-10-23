@@ -30,7 +30,7 @@
             HistoryOpen="@_historyOpen" OnToggleHistory="() => _historyOpen = !_historyOpen" />
     @* Collapsed panels stay rendered (hidden by CSS) so the tree keeps its expanded folders and active row. *@
     <Explorer Engine="Engine" Packages="Packages" Collapsed="@(!_filesOpen)" Selected="@TabSet.SelectedPath(_tabs.Active)" OnSelect="OpenFile" OnRenamed="TreeRenamed" OnDeleted="TreeDeleted"
-              OnShowErrors="() => _tabs.Show(TabSet.Errors)" OnShowConflict="ShowFirstConflict" />
+              OnShowErrors="() => _tabs.Show(TabSet.Errors)" OnShowConflict="ShowFirstConflict" Mirror="@(_viewing is null ? null : Mirror)" />
     @if (_filesOpen)
     {
         <div class="resizer resizer-left" data-testid="sidebar-resizer" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize the file tree"
@@ -38,7 +38,7 @@
              @onpointerdown="e => StartDragAsync(Side.Left, e)" @onkeydown="e => ResizeByKeyAsync(Side.Left, e)"></div>
     }
     @* An EventCallback re-renders the component that created it once the handler ran: the tree then highlights the active tab's file. *@
-    <MainArea Engine="Engine" Tabs="_tabs" ChatConnected="@(Transport.State == TransportState.Connected)" ChatFolderOpen="@(Engine.Folder == FolderStatus.Ready && Engine.FolderName is not null)" OnOpenFile="OpenLink" Link="_link" OnChanged="StateHasChanged" />
+    <MainArea Engine="Engine" Tabs="_tabs" ChatConnected="@(Transport.State == TransportState.Connected)" ChatFolderOpen="@(Engine.Folder == FolderStatus.Ready && Engine.FolderName is not null)" OnOpenFile="OpenLink" Link="_link" OnChanged="StateHasChanged" Mirror="@(_viewing is null ? null : Mirror)" />
     <ActionsHistory Engine="Engine" Chat="Chat" Collapsed="@(!_historyOpen)" State="@Transport.State" PingMs="@_pingMs" />
     @if (_historyOpen)
     {
@@ -217,11 +217,11 @@
 
     private string[] ConflictedPaths() => [.. Engine.Remote.Where(r => r.Status == RemoteStatus.Conflict).Select(r => r.Change.Path)];
 
-    /// <summary>A conflicted file opens its Conflict tab instead of the file tab.</summary>
+    /// <summary>A conflicted file opens its Conflict tab instead of the file tab (not while viewing: the path is the other project's).</summary>
     private void OpenFile(string path)
     {
         _link = null; // a pending link never outlives the click that made it
-        _tabs.Show(ConflictedPaths().Contains(path) ? TabSet.ConflictTab(path) : TabSet.FileTab(path));
+        _tabs.Show(_viewing is null && ConflictedPaths().Contains(path) ? TabSet.ConflictTab(path) : TabSet.FileTab(path));
     }
 
     /// <summary>A rename in the tree: the tabs of the file (or of the files in the folder) follow it, the viewer re-opens on the new path.</summary>

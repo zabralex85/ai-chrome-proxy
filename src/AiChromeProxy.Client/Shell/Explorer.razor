@@ -1,4 +1,5 @@
 @using AiChromeProxy.Client.Packages
+@using AiChromeProxy.Client.Projects
 @using AiChromeProxy.Client.Sync
 
 <aside class="panel panel-left @(Collapsed ? "collapsed" : null)" data-testid="file-tree" aria-label="Files">
@@ -14,7 +15,31 @@
         <PackagesView Engine="Packages" Unsupported="@(Engine.Folder == FolderStatus.Unsupported)" />
     </div>
     <div id="left-panel-explorer" class="panel-body" role="tabpanel" aria-labelledby="left-tab-explorer-id" data-testid="explorer" hidden="@_packages">
-        @if (Engine.Folder == FolderStatus.Unsupported)
+        @if (Mirror is not null)
+        {
+            <div class="folder-row">
+                <Icon Name="folder" Class="kind-folder" />
+                <span class="folder-name" title="@Mirror.Repo">@Mirror.Repo</span>
+                <button type="button" class="button link" data-testid="mirror-refresh" disabled="@Mirror.Loading" @onclick="() => Mirror.RefreshAsync(CancellationToken.None)">Refresh</button>
+            </div>
+            <p class="muted mirror-note">Read-only: the files on the server.</p>
+            @if (Mirror.Problem is { } problem)
+            {
+                <div class="empty-state" role="alert" data-testid="mirror-problem">
+                    <Icon Name="warning" Size="32" Class="empty-icon" />
+                    <p>@problem</p>
+                </div>
+            }
+            else if (Mirror.Loading && Mirror.Files.Count == 0)
+            {
+                <p class="muted mirror-note" role="status">Loading…</p>
+            }
+            else
+            {
+                <MirrorTreeView Files="Mirror.Files" Selected="@Selected" OnSelect="OnSelect" />
+            }
+        }
+        else if (Engine.Folder == FolderStatus.Unsupported)
         {
             <div class="empty-state" role="alert" data-testid="unsupported">
                 <Icon Name="warning" Size="32" Class="empty-icon" />
@@ -86,7 +111,10 @@
             <FileTreeView Engine="Engine" Selected="@Selected" OnSelect="OnSelect" OnRenamed="OnRenamed" OnDeleted="OnDeleted" />
         }
     </div>
-    <SyncStatus Engine="Engine" OnShowErrors="OnShowErrors" OnShowConflict="OnShowConflict" />
+    @if (Mirror is null)
+    {
+        <SyncStatus Engine="Engine" OnShowErrors="OnShowErrors" OnShowConflict="OnShowConflict" />
+    }
 </aside>
 
 @code {
@@ -95,6 +123,10 @@
 
     [Parameter, EditorRequired]
     public PackagesEngine Packages { get; set; } = null!;
+
+    /// <summary>The project viewed read-only (its tree replaces the folder's), or null.</summary>
+    [Parameter]
+    public MirrorBrowser? Mirror { get; set; }
 
     private bool _packages;
 

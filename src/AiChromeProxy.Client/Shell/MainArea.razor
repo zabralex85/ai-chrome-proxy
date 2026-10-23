@@ -1,5 +1,6 @@
 @using AiChromeProxy.Client.Chat
 @using AiChromeProxy.Client.Navigator
+@using AiChromeProxy.Client.Projects
 @using AiChromeProxy.Client.Sync
 @inject ChatEngine Chat
 
@@ -61,7 +62,7 @@
         {
             <button type="button" class="menu-backdrop" tabindex="-1" aria-label="Close the chats menu" @onclick="() => _menuOpen = false"></button>
             <div class="chat-menu" role="menu" data-testid="chat-menu" aria-label="Chats" @onkeydown="OnMenuKey">
-                <button type="button" role="menuitem" class="chat-menu-item new-chat" data-testid="new-chat" @onclick="NewChatAsync">
+                <button type="button" role="menuitem" class="chat-menu-item new-chat" data-testid="new-chat" disabled="@ReadOnly" title="@(ReadOnly ? ChatEngine.ReadOnlyNote : null)" @onclick="NewChatAsync">
                     <Icon Name="plus" Size="14" /><span>New chat</span>
                 </button>
                 @foreach (var info in Chat.Sessions)
@@ -136,7 +137,7 @@
                 <ProjectSettingsView Engine="Engine" />
                 break;
             case var chatTab when TabSet.IsChat(chatTab):
-                <ChatView Chat="Chat" OnOpenFile="OnOpenFile" FolderOpen="ChatFolderOpen" OnNoteDismissed="async () => await _input.FocusAsync()" />
+                <ChatView Chat="Chat" OnOpenFile="OnOpenFile" FolderOpen="@(ChatFolderOpen && !ReadOnly)" ReadOnly="ReadOnly" OnNoteDismissed="async () => await _input.FocusAsync()" />
                 break;
             case var conflictTab when TabSet.IsConflict(conflictTab):
                 <ConflictView Engine="Engine" Path="@(TabSet.ConflictPath(conflictTab)!)" />
@@ -151,11 +152,11 @@
         @foreach (var id in Tabs.Open.Where(TabSet.IsFile))
         {
             var path = TabSet.PathOf(id)!;
-            <FileView @key="(Engine.FolderGeneration, id)" Engine="Engine" Path="@path" Active="@(id == Tabs.Active)" Live="@Pool.Contains(path)" Link="Link" />
+            <FileView @key="(Mirror?.Generation ?? Engine.FolderGeneration, ReadOnly, id)" Engine="Engine" Path="@path" Active="@(id == Tabs.Active)" Live="@Pool.Contains(path)" Link="Link" Mirror="Mirror" />
         }
     </div>
 
-    <ChatInput @ref="_input" Chat="Chat" Enabled="ChatEnabled" Placeholder="@Format.ChatPlaceholder(ChatConnected, ChatFolderOpen)" OnSend="SendAsync" />
+    <ChatInput @ref="_input" Chat="Chat" Enabled="ChatEnabled" Placeholder="@Format.ChatPlaceholder(ChatConnected, ChatFolderOpen, ReadOnly)" OnSend="SendAsync" />
 </section>
 
 @code {
@@ -185,7 +186,13 @@
     public bool ChatFolderOpen { get; set; }
 
     /// <summary>The chat input is enabled: connected, with a folder open.</summary>
-    private bool ChatEnabled => ChatConnected && ChatFolderOpen;
+    private bool ChatEnabled => ChatConnected && ChatFolderOpen && !ReadOnly;
+
+    /// <summary>The project viewed read-only (file tabs read from the server, the chat cannot send), or null.</summary>
+    [Parameter]
+    public MirrorBrowser? Mirror { get; set; }
+
+    private bool ReadOnly => Mirror is not null;
 
     /// <summary>Raised after every tab change so the page re-renders (the tree highlights the active file).</summary>
     [Parameter]
@@ -217,7 +224,7 @@
     private string TabId(string id) => $"tab-{Tabs.Open.ToList().IndexOf(id)}";
 
     private bool _menuOpen;
-    private int _generation;
+    private (bool ReadOnly, int Generation) _generation;
 
     /// <summary>Which file tabs may hold a live editor (at most <see cref="ViewerPool.Capacity"/>).</summary>
     private ViewerPool Pool { get; } = new();
@@ -225,9 +232,10 @@
     /// <summary>Before the file views render: forgets closed tabs and the old folder's, and marks the tab on screen as the most recently shown.</summary>
     private void SyncPool()
     {
-        if (_generation != Engine.FolderGeneration)
+        var generation = (ReadOnly, Mirror?.Generation ?? Engine.FolderGeneration);
+        if (_generation != generation)
         {
-            _generation = Engine.FolderGeneration;
+            _generation = generation;
             Pool.Clear();
         }
 

@@ -1,0 +1,107 @@
+@using AiChromeProxy.Domain.Projects
+
+@* The tree of a project viewed read-only: the same rows and keys as FileTreeView, without menus, edits or sync badges. *@
+@{
+    var tabStop = FileTree.TabStop(_rows, _active);
+}
+<div class="tree" role="tree" aria-label="Files on the server" data-testid="mirror-tree" @onkeydown="OnKeyDownAsync">
+    @foreach (var row in _rows)
+    {
+        var node = row.Node;
+        <div @key="node.Path" @ref="_rowElements[node.Path]" role="treeitem" tabindex="@(node.Path == tabStop ? 0 : -1)"
+             aria-level="@(row.Depth + 1)" aria-expanded="@(node.IsFolder ? (_expanded.Contains(node.Path) ? "true" : "false") : null)" aria-selected="@(node.Path == Selected ? "true" : "false")"
+             class="tree-row @(node.Path == Selected ? "selected" : null)" style="padding-left: @(8 + (row.Depth * 14))px" title="@node.Path"
+             @onclick="() => ClickAsync(node)" @onfocus="() => _active = node.Path">
+            @if (node.IsFolder)
+            {
+                var open = _expanded.Contains(node.Path);
+                <Icon Name="@(open ? "chevron-down" : "chevron-right")" Class="chevron" />
+                <Icon Name="@(open ? "folder-open" : "folder")" Class="kind-folder" />
+            }
+            else
+            {
+                var kind = Format.FileKind(node.Name);
+                <span class="chevron"></span>
+                <Icon Name="@("file-" + kind)" Class="@("kind-" + kind)" />
+            }
+            <span class="tree-name">@node.Name</span>
+        </div>
+    }
+</div>
+
+@code {
+    private readonly HashSet<string> _expanded = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ElementReference> _rowElements = new(StringComparer.Ordinal);
+    private IReadOnlyList<MirrorFile>? _files;
+    private IReadOnlyList<TreeNode> _roots = [];
+    private IReadOnlyList<TreeRow> _rows = [];
+    private string? _active;
+    private bool _focusActive;
+
+    [Parameter, EditorRequired]
+    public IReadOnlyList<MirrorFile> Files { get; set; } = [];
+
+    /// <summary>The file of the active tab, highlighted.</summary>
+    [Parameter]
+    public string? Selected { get; set; }
+
+    [Parameter]
+    public EventCallback<string> OnSelect { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        // A new list only after a listing: rebuild the tree then, not on every render.
+        if (!ReferenceEquals(Files, _files))
+        {
+            _files = Files;
+            _roots = FileTree.Build(Files.Select(f => f.Path));
+        }
+
+        _rows = FileTree.Rows(_roots, _expanded);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusActive && _active is not null && _rowElements.TryGetValue(_active, out var row))
+        {
+            _focusActive = false;
+            try
+            {
+                await row.FocusAsync();
+            }
+            catch (JSException)
+            {
+                // The row is gone (the listing changed).
+            }
+        }
+    }
+
+    private async Task ClickAsync(TreeNode node)
+    {
+        _active = node.Path;
+        if (!node.IsFolder)
+        {
+            await OnSelect.InvokeAsync(node.Path);
+            return;
+        }
+
+        if (!_expanded.Remove(node.Path))
+        {
+            _expanded.Add(node.Path);
+        }
+
+        _rows = FileTree.Rows(_roots, _expanded);
+    }
+
+    private async Task OnKeyDownAsync(KeyboardEventArgs e)
+    {
+        var (active, open) = FileTree.OnKey(e.Key, _rows, _active, _expanded);
+        _focusActive = e.Key is "ArrowUp" or "ArrowDown" or "Home" or "End" or "ArrowLeft" or "ArrowRight";
+        _active = active;
+        _rows = FileTree.Rows(_roots, _expanded);
+        if (open is not null)
+        {
+            await OnSelect.InvokeAsync(open);
+        }
+    }
+}

@@ -109,6 +109,12 @@
                 _callback = await View.SendOnEnterAsync(_box, text => InvokeAsync(() => SubmitAsync(text)));
                 _filesCallback = await View.AcceptFilesAsync(_zone, _picker, files =>
                 {
+                    // A paste or drop while the box is disabled (no connection or folder, another project viewed) attaches nothing.
+                    if (!Enabled)
+                    {
+                        return Task.WhenAll(files.Select(f => Source.ForgetAsync(f.Handle)));
+                    }
+
                     _ = InvokeAsync(() => _attachments.AddAsync(Chat.Repo, files));
                     return Task.CompletedTask;
                 });

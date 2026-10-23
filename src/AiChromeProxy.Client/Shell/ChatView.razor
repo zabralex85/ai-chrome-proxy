@@ -83,12 +83,12 @@
                 <div class="approval-actions">
                     @if (!approval.Truncated)
                     {
-                        <button type="button" class="button primary" data-testid="approval-allow" disabled="@answered"
+                        <button type="button" class="button primary" data-testid="approval-allow" disabled="@(answered || ReadOnly)"
                                 @onclick="() => AnswerAsync(approval, ChatDecisions.Allow)">Allow</button>
-                        <button type="button" class="button secondary" data-testid="approval-allow-always" disabled="@answered"
+                        <button type="button" class="button secondary" data-testid="approval-allow-always" disabled="@(answered || ReadOnly)"
                                 @onclick="() => AnswerAsync(approval, ChatDecisions.AllowAlways)">Allow always in this project</button>
                     }
-                    <button type="button" class="button secondary" data-testid="approval-deny" disabled="@answered"
+                    <button type="button" class="button secondary" data-testid="approval-deny" disabled="@(answered || ReadOnly)"
                             @onclick="() => AnswerAsync(approval, ChatDecisions.Deny)">Deny</button>
                 </div>
             </div>
@@ -145,6 +145,10 @@
     /// <summary>A folder is open: the diagrams' Save items are enabled.</summary>
     [Parameter]
     public bool FolderOpen { get; set; }
+
+    /// <summary>Another project is viewed: permission requests are shown but cannot be answered from here.</summary>
+    [Parameter]
+    public bool ReadOnly { get; set; }
 
     /// <summary>The "Saved to" note was dismissed: the page puts the focus back in the message box.</summary>
     [Parameter]

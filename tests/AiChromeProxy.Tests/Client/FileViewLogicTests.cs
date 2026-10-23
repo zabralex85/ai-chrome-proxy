@@ -101,4 +101,11 @@ public sealed class FileViewLogicTests
 		Assert.Equal((null, "Too large to show (6.0 MB)"), FileContent.Decide(new FileBytes(new byte[FileText.MaxBytes + 1], 6L * 1024 * 1024)));
 		Assert.Equal((null, "This file is no longer in the folder"), FileContent.Decide(null));
 	}
+
+	[Fact]
+	public void Decide_MissingNoteIsTheCallers()
+	{
+		Assert.Equal((null, FileContent.Missing), FileContent.Decide(null));
+		Assert.Equal((null, "This file is no longer on the server"), FileContent.Decide(null, FileContent.MissingOnServer));
+	}
 }
