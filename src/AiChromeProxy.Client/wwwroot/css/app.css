@@ -2583,3 +2583,39 @@ h1:focus-visible {
 .packages-note {
     margin-top: 10px;
 }
+
+/* Projects on the server (top bar) */
+.projects-host {
+    position: relative;
+    display: inline-flex;
+}
+
+.crumb-button {
+    padding: 2px 6px;
+    border: 0;
+    border-radius: var(--radius);
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+
+.crumb-button:hover:not(:disabled),
+.crumb-button[aria-expanded="true"] {
+    background: var(--bg-hover);
+}
+
+.projects-menu {
+    left: 0;
+    right: auto;
+    width: 420px;
+}
+
+.pill-readonly {
+    border-color: var(--warn);
+    color: var(--warn);
+}
+
+.topbar-back {
+    margin-left: 6px;
+}

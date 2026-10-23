@@ -1,12 +1,21 @@
+@using AiChromeProxy.Client.Projects
 @using AiChromeProxy.Client.Transport
 @inject NavigationManager Navigation
 
 <header class="topbar" data-testid="top-bar">
     <span class="brand" data-testid="app-name"><Icon Name="logo" Class="brand-mark" />ai-chrome-proxy</span>
-    @if (FolderName is not null)
+    <span class="crumb-sep" aria-hidden="true">/</span>
+    <ProjectsMenu Mirror="Mirror" Label="@(Viewing ?? FolderName)" LocalRepo="@LocalRepo" Viewing="@Viewing" Enabled="@(State == TransportState.Connected)" OnPick="OnPickProject" />
+    @if (Viewing is not null)
     {
-        <span class="crumb-sep" aria-hidden="true">/</span>
-        <span class="crumb-folder" data-testid="folder-name" title="@FolderName"><Icon Name="folder" />@FolderName</span>
+        <span class="pill pill-readonly" data-testid="read-only" title="Files and chat of this project are read from the server">Read-only</span>
+        <button type="button" class="button secondary topbar-back @(BackAttention is null ? null : "has-attention")" data-testid="back-to-folder" @onclick="OnBack">
+            Back to my folder
+            @if (BackAttention is not null)
+            {
+                <span class="attention"><Icon Name="warning" Size="14" />@BackAttention</span>
+            }
+        </button>
     }
     <span class="pill pill-@State.ToString().ToLowerInvariant()" data-testid="connection-state" title="@PingTitle" role="status"><span class="dot" aria-hidden="true"></span>@Format.Connection(State)</span>
     <button type="button" class="icon-button" data-testid="theme-toggle" data-theme-choice="@(Theme ?? "system")" title="@ThemeTitle" aria-label="@ThemeTitle" @onclick="OnToggleTheme">
@@ -90,6 +99,27 @@
 
     [Parameter]
     public EventCallback OnToggleHistory { get; set; }
+
+    [Parameter, EditorRequired]
+    public MirrorBrowser Mirror { get; set; } = null!;
+
+    /// <summary>The open folder's repo name, or null.</summary>
+    [Parameter]
+    public string? LocalRepo { get; set; }
+
+    /// <summary>The project viewed read-only, or null.</summary>
+    [Parameter]
+    public string? Viewing { get; set; }
+
+    /// <summary>What the local folder needs from the user while another project is viewed (<see cref="Format.Attention"/>), or null.</summary>
+    [Parameter]
+    public string? BackAttention { get; set; }
+
+    [Parameter]
+    public EventCallback<string> OnPickProject { get; set; }
+
+    [Parameter]
+    public EventCallback OnBack { get; set; }
 
     private string PingTitle => PingMs is { } ms ? $"Ping {ms} ms" : "Ping: no answer yet";
 

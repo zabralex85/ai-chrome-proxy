@@ -1,4 +1,5 @@
 using System.Globalization;
+using AiChromeProxy.Client.Chat;
 using AiChromeProxy.Client.Sync;
 using AiChromeProxy.Client.Transport;
 
@@ -134,8 +135,9 @@ public static class Format
 	}
 
 	/// <summary>The chat box's placeholder: how to use it, or why it is off.</summary>
-	public static string ChatPlaceholder(bool connected, bool folderOpen) => (connected, folderOpen) switch
+	public static string ChatPlaceholder(bool connected, bool folderOpen, bool readOnly = false) => (connected, folderOpen) switch
 	{
+		_ when readOnly => ChatEngine.ReadOnlyNote,
 		(true, true) => "Message Claude. Enter sends, Shift+Enter adds a line.",
 		(_, false) => "Open a folder to chat with Claude",
 		_ => "Waiting for the connection… you can write when it is back",
