@@ -48,8 +48,9 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 	private string? _viewing;
 
 	/// <summary>
-	/// The last <c>chat.open</c> sent was for a viewed project. The server moves the subscription when it gets the open, before the reply, so the
-	/// chat stays read-only until the folder's own open is sent (with or without a folder).
+	/// A <c>chat.open</c> for a viewed project was sent and no other open has been answered since. The server moves the subscription when it gets an
+	/// open, before the reply, and the viewed project's pushes may still be on their way: the chat stays read-only (and those pushes stay out while no
+	/// chat is shown) until the folder's own open is answered, with or without a folder.
 	/// </summary>
 	private bool _openedAsView;
 
@@ -512,6 +513,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 			string repo;
 			int epoch;
 			CancellationToken token;
+			bool asView;
 			lock (_gate)
 			{
 				if (!WantsOpen(out repo, out epoch, out token))
@@ -519,7 +521,8 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 					return;
 				}
 
-				_openedAsView = repo == _viewing;
+				asView = repo == _viewing;
+				_openedAsView |= asView;
 			}
 
 			var sessions = Read<ChatSessionsPayload>(await RequestAsync(MessageTypes.ChatOpen, new ChatOpenPayload(repo), token));
@@ -540,6 +543,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 
 					Apply(sessions);
 					_needsOpen = _epoch != epoch;
+					_openedAsView = asView;
 
 					// A session the server lists as running is loaded too, so that its run is known (Stop) after a reload.
 					foreach (var info in sessions.Sessions.Where(i => i.Running))
@@ -579,8 +583,11 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 		}
 	}
 
-	/// <summary>The repo the chat should be open on: the viewed project, else the folder's, else the one open; call under the lock.</summary>
-	private string Target() => _viewing ?? sync.Repo ?? _repo ?? string.Empty;
+	/// <summary>
+	/// The repo the chat should be open on: the viewed project, else the folder's, else the one open unless it was opened as a view (between a
+	/// reconnect and the folder's next scan the sync engine names no repo); call under the lock.
+	/// </summary>
+	private string Target() => _viewing ?? sync.Repo ?? (_openedAsView ? null : _repo) ?? string.Empty;
 
 	/// <summary>Reads the session's stored events after the last one held, page by page until <c>final</c>.</summary>
 	private async Task LoadHistoryAsync(ChatSession session, CancellationToken ct)

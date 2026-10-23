@@ -733,6 +733,72 @@ public sealed class ChatEngineTests : IDisposable
 	}
 
 	[Fact]
+	public async Task View_BackWhileItsOpenIsOnItsWay_ItsLateEventsStayOutUntilTheFoldersOpenAnswered()
+	{
+		await ReadyAsync();
+		await UntilAsync(() => _chat.Repo == "My_Repo");
+
+		// Other_PC's reply is dropped (Back came first); the folder's chat.open is then on its way.
+		_server.Transport.ReplyDelay = TimeSpan.FromSeconds(1);
+		var view = _chat.ViewAsync("Other_PC");
+		var back = _chat.ViewAsync(null);
+		await UntilAsync(() => _server.Transport.Sent.Count(e => e.Type == MessageTypes.ChatOpen) == 3);
+
+		// An event of Other_PC that was in transit when the subscription moved lands now.
+		_server.Transport.Push(Envelope.Create(MessageTypes.ChatEvent, new ChatEvent("their-session", "r1", 1, ChatEventKinds.Prompt, Text: "their work")));
+		Assert.False(_chat.Running);
+		Assert.True(_chat.IsReadOnly);
+		await _chat.StopAsync();
+		Assert.DoesNotContain(_server.Transport.Sent, e => e.Type == MessageTypes.ChatCancel);
+
+		await Task.WhenAll(view, back).WaitAsync(TimeSpan.FromSeconds(10), Ct);
+		await UntilAsync(() => _chat.Repo == "My_Repo" && !_chat.IsReadOnly);
+		Assert.False(_chat.Running);
+	}
+
+	[Fact]
+	public async Task OpenFailing_WithoutAView_NeverLocks()
+	{
+		// The local folder only: a reopen is lost with the connection, the next one succeeds; nothing of it is read-only.
+		await ReadyAsync();
+		await UntilAsync(() => _chat.Repo == "My_Repo");
+		_server.Transport.ReplyDelay = TimeSpan.FromMinutes(5);
+		_server.Reconnect();
+		await UntilAsync(() => _server.Transport.Sent.Count(e => e.Type == MessageTypes.ChatOpen) == 2);
+		Assert.False(_chat.IsReadOnly);
+
+		_server.Transport.ReplyDelay = TimeSpan.Zero;
+		_server.Reconnect();
+		await UntilAsync(() => _server.Transport.Sent.Count(e => e.Type == MessageTypes.ChatOpen) == 3 && _chat.Repo == "My_Repo");
+		Assert.False(_chat.IsReadOnly);
+	}
+
+	[Fact]
+	public async Task View_BackThenTheFoldersOpenIsLost_StaysReadOnlyUntilTheFoldersOpenAnswered()
+	{
+		await ReadyAsync();
+		await _chat.ViewAsync("Other_PC");
+		await UntilAsync(() => _chat.Repo == "Other_PC");
+
+		// Back, but the folder's chat.open is lost with the connection: the server dropped the subscription, the reconnect opens the folder's chat.
+		_server.Transport.ReplyDelay = TimeSpan.FromMinutes(5);
+		var back = _chat.ViewAsync(null);
+		Assert.True(_chat.IsReadOnly);
+		_server.Transport.ReplyDelay = TimeSpan.Zero;
+		_server.Reconnect();
+		await back.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+		// Until the folder's next scan the sync engine names no repo: the viewed project is not reopened as if it were the folder's.
+		await Task.Delay(200, Ct);
+		Assert.True(_chat.IsReadOnly);
+		Assert.False(await _chat.SendAsync("hi"));
+		Assert.DoesNotContain(_server.Transport.Sent, e => e.Type == MessageTypes.ChatSend);
+
+		await _sync.SyncOnceAsync(Ct);
+		await UntilAsync(() => _chat.Repo == "My_Repo" && !_chat.IsReadOnly);
+	}
+
+	[Fact]
 	public async Task View_BackWithoutAFolderWhileItsOpenIsOnItsWay_ShowsNothing_AndItsPushesStayOut()
 	{
 		await _chat.InitializeAsync();
