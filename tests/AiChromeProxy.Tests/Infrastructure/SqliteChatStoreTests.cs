@@ -90,6 +90,25 @@ public sealed class SqliteChatStoreTests : IDisposable
 		Assert.Null(chat.SessionRepo("nope"));
 	}
 
+	[Theory]
+	[MemberData(nameof(Stores))]
+	public void LastActivity_NewestUpdatePerRepo_SameInBothStores(bool memory)
+	{
+		IChatStore chat = memory ? new MemoryChatStore(_clock) : Chat();
+		var first = chat.CreateSession("a", "one");
+		var b = chat.CreateSession("b", "two");
+		chat.CreateSession("a", "three");
+		chat.Touch(first.Id);
+		var newest = chat.ListSessions("a")[0].Updated;
+
+		var last = chat.LastActivity();
+
+		Assert.Equal(2, last.Count);
+		Assert.Equal(newest, last["a"]);
+		Assert.Equal(b.Updated, last["B"]);
+		Assert.False(last.ContainsKey("c"));
+	}
+
 	[Fact]
 	public void ClaudeSession_NullUntilSet_Persists()
 	{

@@ -37,6 +37,14 @@ public sealed class MemoryChatStore : IChatStore
 		}
 	}
 
+	public IReadOnlyDictionary<string, DateTimeOffset> LastActivity()
+	{
+		lock (_lock)
+		{
+			return _sessions.GroupBy(s => s.Repo, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.Max(s => s.Updated), StringComparer.OrdinalIgnoreCase);
+		}
+	}
+
 	public void SetClaudeSession(string id, string claudeId)
 	{
 		lock (_lock)

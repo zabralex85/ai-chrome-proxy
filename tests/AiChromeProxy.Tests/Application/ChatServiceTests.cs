@@ -884,6 +884,30 @@ public sealed class ChatServiceTests : IDisposable
 		Assert.Equal(ErrorCodes.TooLarge, await ErrorAsync(client, MessageTypes.ChatSend, new ChatSendPayload(Repo, null, "hi", [.. Enumerable.Range(0, 11).Select(i => i.ToString("x32"))])));
 	}
 
+	[Fact]
+	public async Task IsRunning_FromStartToExit()
+	{
+		var client = new Client("c1");
+		await OpenAsync(client, Repo);
+		Assert.False(_service.IsRunning(Repo));
+
+		await SendAsync(client, Repo, null, "hi");
+		var process = await _runner.NextAsync();
+		Assert.True(_service.IsRunning(Repo));
+		Assert.True(_service.IsRunning("REPO"));
+		Assert.False(_service.IsRunning("other"));
+
+		process.Write(Result);
+		process.Exit();
+		await client.WaitAsync(e => e.Kind == ChatEventKinds.Result);
+		var deadline = DateTime.UtcNow.AddSeconds(10);
+		while (_service.IsRunning(Repo))
+		{
+			Assert.True(DateTime.UtcNow < deadline, "The run did not end.");
+			await Task.Delay(10, Ct);
+		}
+	}
+
 	private static string McpJsonText(string command) => $$$$"""{"mcpServers":{"team-db":{"command":"{{{{command}}}}","args":["-y","db-mcp"]}}}""";
 
 	private static string TeamDbApproval(string command) => ClaudeToolEntries.Approval("team-db", McpJson.Parse(McpJsonText(command))["team-db"].Hash);

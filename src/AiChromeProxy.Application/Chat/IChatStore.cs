@@ -15,6 +15,9 @@ public interface IChatStore
 	/// <summary>The repo's sessions, most recently updated first; <c>Running</c> is always false (the service knows).</summary>
 	IReadOnlyList<ChatSessionInfo> ListSessions(string repo);
 
+	/// <summary>Each repo with sessions and the newest <c>Updated</c> among them; keys compare ignoring case.</summary>
+	IReadOnlyDictionary<string, DateTimeOffset> LastActivity();
+
 	/// <summary>Remembers Claude's own session id, used with <c>--resume</c> from the next run.</summary>
 	void SetClaudeSession(string id, string claudeId);
 

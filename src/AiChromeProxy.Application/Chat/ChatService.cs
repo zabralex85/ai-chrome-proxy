@@ -95,6 +95,9 @@ public sealed class ChatService : IDisposable, IAsyncDisposable
 	/// <summary>The connection is gone: it gets no more pushes (its runs go on).</summary>
 	public void Unsubscribe(string connectionId) => _subscribers.TryRemove(connectionId, out _);
 
+	/// <summary>Whether Claude is working in the repo now (one run per repo).</summary>
+	public bool IsRunning(string repo) => _runs.ContainsKey(repo);
+
 	/// <summary><c>chat.history</c>: one page of stored events after <paramref name="afterSeq"/>, at most <see cref="ChatLimits.MaxEventBytes"/> serialized.</summary>
 	public ChatEventsPayload History(string? sessionId, long afterSeq)
 	{

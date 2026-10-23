@@ -54,6 +54,30 @@ public sealed class SqliteChatStore : IChatStore
 		return sessions;
 	}
 
+	public IReadOnlyDictionary<string, DateTimeOffset> LastActivity()
+	{
+		var last = new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
+		using (var connection = AicpDatabase.Open(_path))
+		{
+			using (var command = Command(connection, "SELECT repo, MAX(updated) FROM chat_session GROUP BY repo"))
+			{
+				using (var reader = command.ExecuteReader())
+				{
+					while (reader.Read())
+					{
+						var repo = reader.GetString(0);
+						var at = DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(1));
+
+						// Two spellings of one repo (SQLite groups by exact text) keep the newer.
+						last[repo] = last.TryGetValue(repo, out var seen) && seen > at ? seen : at;
+					}
+				}
+			}
+		}
+
+		return last;
+	}
+
 	public void SetClaudeSession(string id, string claudeId)
 	{
 		using (var connection = AicpDatabase.Open(_path))

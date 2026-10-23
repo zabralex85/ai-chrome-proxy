@@ -27,6 +27,15 @@ public sealed class SyncSessions(IMirrorStore store, IProjectStore projects, ILo
 	/// <summary>Re-checks the whole mirror in every session with <paramref name="repo"/> (its settings changed).</summary>
 	public Task RecheckAsync(string repo) => ChangedAsync(repo, null);
 
+	/// <summary>Whether a sync session (a browser with the folder open) has the repo now.</summary>
+	public bool IsOpen(string repo)
+	{
+		lock (_watches)
+		{
+			return _watches.ContainsKey(repo);
+		}
+	}
+
 	/// <summary>A session opened <paramref name="to"/> after <paramref name="from"/>, or was disposed (<paramref name="to"/> null).</summary>
 	private void RepoChanged(SyncSession session, string? from, string? to)
 	{

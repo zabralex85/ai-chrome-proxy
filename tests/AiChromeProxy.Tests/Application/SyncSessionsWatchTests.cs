@@ -103,6 +103,20 @@ public sealed class SyncSessionsWatchTests : IDisposable
 		_sessions.Close("c1");
 	}
 
+	[Fact]
+	public async Task IsOpen_WhileASessionHasTheRepo()
+	{
+		Assert.False(_sessions.IsOpen("r"));
+
+		await OpenAsync("c1", "r");
+
+		Assert.True(_sessions.IsOpen("r"));
+		Assert.True(_sessions.IsOpen("R"));
+		Assert.False(_sessions.IsOpen("s"));
+		_sessions.Close("c1");
+		Assert.False(_sessions.IsOpen("r"));
+	}
+
 	private async Task OpenAsync(string connection, string repo)
 	{
 		var pushed = _pushed.TryGetValue(connection, out var list) ? list : _pushed[connection] = [];
