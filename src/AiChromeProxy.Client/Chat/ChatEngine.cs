@@ -223,7 +223,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 	/// <returns>Whether the run started (false: the refusal is an error line of the session).</returns>
 	public async Task<bool> SendAsync(string text, IReadOnlyList<string>? attachments = null)
 	{
-		if (Viewing is not null)
+		if (IsReadOnly())
 		{
 			Current.AddError(ReadOnlyNote);
 			Raise();
@@ -298,7 +298,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 		{
 			repo = _repo ?? sync.Repo;
 			runId = _current.ActiveRunId ?? _sessions.Values.Select(s => s.ActiveRunId).FirstOrDefault(id => id is not null);
-			if (_viewing is not null || _stopping || !IsRunning() || (runId is null && repo is null))
+			if (IsReadOnlyLocked() || _stopping || !IsRunning() || (runId is null && repo is null))
 			{
 				return;
 			}
@@ -324,7 +324,7 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 	/// <returns>Whether the answer was sent (false: the card is gone, or the request failed, which shows as an error line).</returns>
 	public async Task<bool> ApproveAsync(string requestId, string decision)
 	{
-		if (Viewing is not null)
+		if (IsReadOnly())
 		{
 			return false;
 		}
@@ -349,6 +349,11 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 		CancellationToken token;
 		lock (_gate)
 		{
+			if (IsReadOnlyLocked())
+			{
+				throw new InvalidOperationException(ReadOnlyNote);
+			}
+
 			token = _epochCts.Token;
 			repo = _repo ?? sync.Repo;
 		}
@@ -358,6 +363,21 @@ public sealed class ChatEngine(ITransport transport, SyncEngine sync, TimeProvid
 	}
 
 	private static T Read<T>(Envelope envelope) => envelope.Payload.Deserialize<T>(JsonSerializerOptions.Web)!;
+
+	/// <summary>
+	/// Whether the chat on screen is not the open folder's: another project is viewed, or the subscription still sits on one (after
+	/// <see cref="ViewAsync"/> back, until the folder's own <c>chat.open</c> succeeded). Nothing may write to it then.
+	/// </summary>
+	private bool IsReadOnly()
+	{
+		lock (_gate)
+		{
+			return IsReadOnlyLocked();
+		}
+	}
+
+	private bool IsReadOnlyLocked() =>
+		_viewing is not null || (_repo is { } open && sync.Repo is { } local && !string.Equals(open, local, StringComparison.OrdinalIgnoreCase));
 
 	private string Describe(Exception ex) => ex switch
 	{

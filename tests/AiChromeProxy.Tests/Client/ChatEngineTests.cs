@@ -670,6 +670,30 @@ public sealed class ChatEngineTests : IDisposable
 	}
 
 	[Fact]
+	public async Task View_BackBeforeTheFolderOpens_StillReadOnly_AndToolsRefused()
+	{
+		_server.Chats.CreateSession("Other_PC", "their question");
+		await ReadyAsync();
+		await UntilAsync(() => _chat.Repo == "My_Repo");
+		await _chat.ViewAsync("Other_PC");
+		await UntilAsync(() => _chat.Repo == "Other_PC");
+
+		// Back to the folder, but its chat.open is still on its way: the subscription is on the other project.
+		_server.Transport.ReplyDelay = TimeSpan.FromMinutes(5);
+		var back = _chat.ViewAsync(null);
+		Assert.Null(_chat.Viewing);
+
+		Assert.False(await _chat.SendAsync("hi"));
+		await _chat.StopAsync();
+		Assert.False(await _chat.ApproveAsync("nope", ChatDecisions.Allow));
+		await Assert.ThrowsAsync<InvalidOperationException>(() => _chat.ToolsAsync(check: true));
+		Assert.DoesNotContain(_server.Transport.Sent, e => e.Type is MessageTypes.ChatSend or MessageTypes.ChatCancel or MessageTypes.ChatApprove or MessageTypes.AgentToolsGet or MessageTypes.AgentToolsCheck);
+
+		_server.Transport.SetState(AiChromeProxy.Client.Transport.TransportState.Reconnecting);
+		await back;
+	}
+
+	[Fact]
 	public async Task View_RunningElsewhere_StopAndApproveSendNothing()
 	{
 		await ReadyAsync();
