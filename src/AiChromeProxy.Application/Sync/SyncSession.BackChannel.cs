@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using AiChromeProxy.Application.Transport;
 using AiChromeProxy.Domain;
@@ -133,12 +132,8 @@ public sealed partial class SyncSession
 		return Reply(MessageTypes.SyncAck, payload, request);
 	}
 
-	/// <summary>The mirror's <c>.gitignore</c> and the project's extra excludes: excluded files are never deleted, pushed or served.</summary>
-	private async Task<IgnoreRules> RulesAsync(string repo, CancellationToken ct)
-	{
-		var gitignore = await store.ReadAsync(repo, ".gitignore", 0, (int)SyncLimits.MaxFileSize, ct);
-		return IgnoreRules.Create(gitignore is null ? null : Encoding.UTF8.GetString(gitignore), projects.GetSettings(repo).Excludes);
-	}
+	/// <summary>The repo's <see cref="MirrorRules"/>: excluded files are never deleted, pushed or served.</summary>
+	private Task<IgnoreRules> RulesAsync(string repo, CancellationToken ct) => MirrorRules.LoadAsync(store, projects, repo, ct);
 
 	/// <summary>
 	/// Starts a decision batch. A mirror without any synced file while bases are kept (the mirror root moved, the mirror or the repo folder
