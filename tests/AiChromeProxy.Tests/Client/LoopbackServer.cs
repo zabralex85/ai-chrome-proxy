@@ -41,6 +41,7 @@ public sealed class LoopbackServer : IDisposable
 			new ChatAttachHandler(Attachments),
 			.. PackagesHandler.Types.Select(t => new PackagesHandler(t, Packages)),
 			.. ClaudeToolsHandler.Types.Select(t => new ClaudeToolsHandler(t, Projects, store, new ToolsProbe(this), TimeProvider.System, new ListLogger<ClaudeToolsHandler>())),
+			.. MirrorBrowseHandler.Types.Select(t => new MirrorBrowseHandler(t, store, Projects, Chats, Chat, _sessions)),
 		]);
 		Transport.Reply = ReplyAsync;
 		Transport.SetState(TransportState.Connected);

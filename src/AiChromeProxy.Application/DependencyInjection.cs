@@ -47,6 +47,11 @@ public static class DependencyInjection
 			services.AddSingleton<IEnvelopeHandler>(sp => new PackagesHandler(type, sp.GetRequiredService<PackageUploads>()));
 		}
 
+		foreach (var type in MirrorBrowseHandler.Types)
+		{
+			services.AddSingleton<IEnvelopeHandler>(sp => ActivatorUtilities.CreateInstance<MirrorBrowseHandler>(sp, type));
+		}
+
 		services.AddSingleton<EnvelopeRouter>();
 		return services;
 	}
